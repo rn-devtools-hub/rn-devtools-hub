@@ -61,37 +61,20 @@ see the [integration guide](docs/integration.md#prerequisites-by-capability).
 # 1. In your React Native / Expo project, as a devDependency:
 npm install --save-dev rn-devtools-hub
 
-# 2. Start the hub (from the project root, in a separate terminal)
-npx rn-devtools-hub
+# 2. Wire it up automatically (detects your libraries, writes the glue,
+#    hooks the entry point, adds the `devtools` script):
+npx rn-devtools-hub init
+
+# 3. Start the hub (Bun required)
+npm run devtools
 # -> Dashboard: http://localhost:8973/?token=... (URL printed at startup)
 ```
 
-3. In the app, the minimal wiring (3 lines, inert in production):
-
-```ts
-// index.js or the root layout, BEFORE everything else
-if (__DEV__) {
-  require("./devtools.setup"); // your glue file, see the guide
-}
-```
-
-The minimal glue file (`devtools.setup.ts`):
-
-```ts
-import { devtools } from "rn-devtools-hub/client";
-import Constants from "expo-constants"; // or your own IP resolution
-
-const host = Constants.expoConfig?.hostUri?.split(":")[0] ?? "localhost";
-
-devtools.init({
-  serverUrl: `ws://${host}:8973`,
-  appName: "my-app",
-  deviceName: "my-device",
-});
-devtools.attachConsole();
-devtools.attachCrashReporting();
-devtools.startPerformanceSampler();
-```
+`init` inspects your project and generates only the code it can actually
+run: axios interception if you use axios, the Storage panel if you have
+AsyncStorage, device info if you have expo-device, and so on. It never
+overwrites an existing glue file (use `--force`), and `--dry-run` shows
+what it would change.
 
 That's it: logs, crashes and performance already flow in. Every additional
 integration (network, cache, storage, SQLite, mirror...) is a recipe of a few

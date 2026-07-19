@@ -43,6 +43,7 @@
     "dist",
     "server",
     "bin",
+    "src/cli",
     "assets/logo.svg"
   ],
   "scripts": {

@@ -1935,7 +1935,7 @@
   // ================================================================
   // MIRROR panel: adb / simctl captures on the hub side + Android touch
   // ================================================================
-  const mirror = { sources: [], timer: null, busy: false, appStreaming: false, started: false };
+  const mirror = { sources: [], timer: null, busy: false, appStreaming: false, started: false, activeUntil: 0 };
 
   const currentMirrorSource = () =>
     mirror.sources.find((s) => s.id === $("mirrorSource").value) ?? null;
@@ -1972,13 +1972,39 @@
     mirror.sources[0] ?? null;
 
   const stopMirror = async () => {
-    if (mirror.timer) clearInterval(mirror.timer);
+    if (mirror.timer) clearTimeout(mirror.timer);
     mirror.timer = null;
+    mirror.activeUntil = 0;
     if (mirror.appStreaming) {
       mirror.appStreaming = false;
       await sendCommand("screen.stream.stop").catch(() => {});
     }
     $("mirrorToggle").textContent = "Resume";
+  };
+
+  // Self-scheduling loop: never two captures in flight, and an adaptive
+  // rate. Right after an interaction we capture more often to follow the
+  // animation (scroll inertia), then fall back to the idle rate.
+  const FRAME_INTERVAL_IDLE = 700;
+  const FRAME_INTERVAL_ACTIVE = 260;
+
+  const startFrameLoop = () => {
+    if (mirror.timer) clearTimeout(mirror.timer);
+    const loop = async () => {
+      await refreshMirrorFrame();
+      const interval = Date.now() < (mirror.activeUntil ?? 0)
+        ? FRAME_INTERVAL_ACTIVE
+        : FRAME_INTERVAL_IDLE;
+      mirror.timer = setTimeout(loop, interval);
+    };
+    loop();
+  };
+
+  // After a tap/swipe/key: burst of captures so the result shows up
+  // immediately, then a fast rate for two seconds
+  const boostFrames = () => {
+    mirror.activeUntil = Date.now() + 2000;
+    [60, 180, 400].forEach((delay) => setTimeout(refreshMirrorFrame, delay));
   };
 
   const startMirror = async (source) => {
@@ -2150,7 +2176,7 @@
         durationMs: Date.now() - start.at,
       });
     }
-    setTimeout(refreshMirrorFrame, 350);
+    boostFrames();
   });
 
   $("mirrorImage").addEventListener("pointercancel", () => { dragStart = null; });
@@ -2182,7 +2208,7 @@
         x2: Math.round(width / 2), y2: Math.round(centerY + distance),
         durationMs: 120,
       });
-      setTimeout(refreshMirrorFrame, 300);
+      boostFrames();
     }, 90);
   }, { passive: false });
 
@@ -2205,7 +2231,7 @@
     } else {
       return;
     }
-    setTimeout(refreshMirrorFrame, 250);
+    boostFrames();
   });
 
   document.querySelectorAll("[data-mirror-key]").forEach((button) => {
@@ -2220,7 +2246,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source: source.id, type: "key", key: button.dataset.mirrorKey }),
       }).catch(() => {});
-      setTimeout(refreshMirrorFrame, 350);
+      boostFrames();
     });
   });
 

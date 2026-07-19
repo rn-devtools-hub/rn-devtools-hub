@@ -1,0 +1,74 @@
+{
+  "name": "rn-devtools-hub",
+  "version": "0.0.0",
+  "description": "Local inspector for React Native and Expo apps: network, crashes, storage, SQLite, screen mirror, device actions and MCP server, streamed to a web dashboard over WebSocket. Zero native dependencies.",
+  "license": "MIT",
+  "author": "Joberno Joseph",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/josephjoberno/rn-devtools-hub.git"
+  },
+  "homepage": "https://josephjoberno.github.io/rn-devtools-hub/",
+  "bugs": "https://github.com/josephjoberno/rn-devtools-hub/issues",
+  "keywords": [
+    "react-native",
+    "expo",
+    "devtools",
+    "debugger",
+    "inspector",
+    "network-inspector",
+    "flipper-alternative",
+    "reactotron-alternative",
+    "mcp",
+    "screen-mirror"
+  ],
+  "type": "module",
+  "bin": {
+    "rn-devtools-hub": "./bin/rn-devtools-hub.mjs"
+  },
+  "main": "./dist/client/index.js",
+  "types": "./dist/client/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "server",
+    "bin",
+    "assets/logo.svg"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "hub": "bun server/server.mjs",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build",
+    "release": "release-it",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.0",
+    "@commitlint/config-conventional": "^19.8.0",
+    "@release-it/conventional-changelog": "^10.0.0",
+    "husky": "^9.1.7",
+    "release-it": "^19.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "peerDependencies": {},
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

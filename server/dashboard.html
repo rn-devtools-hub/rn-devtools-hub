@@ -1,0 +1,2268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rn-devtools-hub</title>
+<style>
+  /* ------------------------------------------------------------------
+     Committed dark theme (dev tool). Roles from the validated palette:
+     surface #1a1a19, ink #fff/#c3c2b7, blue series #3987e5,
+     good/warning/serious/critical statuses.
+  ------------------------------------------------------------------ */
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #232322;
+    --ink:         #ffffff;
+    --ink-2:       #c3c2b7;
+    --muted:       #898781;
+    --grid:        #2c2c2a;
+    --baseline:    #383835;
+    --border:      rgba(255,255,255,0.10);
+    --series-1:    #3987e5;
+    --series-1-dim:#184f95;
+    --good:        #0ca30c;
+    --warning:     #fab219;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    /* Custom curves: native CSS easings lack character */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: var(--sans);
+    background: var(--page);
+    color: var(--ink);
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---------- Header ---------- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: 0.2px; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--critical); }
+  .conn-dot.ok { background: var(--good); }
+  #deviceSelect {
+    background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 8px; font-size: 12px; font-family: var(--sans);
+  }
+  header .spacer { flex: 1; }
+  header button {
+    background: var(--surface-2); color: var(--ink-2);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 10px; font-size: 12px; cursor: pointer;
+    transition: color 150ms var(--ease-out), transform 160ms var(--ease-out);
+  }
+  header button:hover { color: var(--ink); }
+  header button:active { transform: scale(0.97); }
+
+  /* ---------- Tabs ---------- */
+  nav {
+    display: flex; gap: 2px; padding: 0 12px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  nav button {
+    background: none; border: none; color: var(--ink-2);
+    padding: 9px 13px; font-size: 12.5px; cursor: pointer;
+    border-bottom: 2px solid transparent; font-family: var(--sans);
+    white-space: nowrap;
+    transition: color 150ms var(--ease-out), border-bottom-color 180ms var(--ease-out);
+  }
+  nav button:hover { color: var(--ink); }
+  nav button.active { color: var(--ink); border-bottom-color: var(--series-1); }
+  nav button .crash-count { color: var(--critical); font-size: 11px; margin-left: 5px; font-variant-numeric: tabular-nums; }
+  nav button .count {
+    color: var(--muted); font-size: 11px; margin-left: 5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  main { flex: 1; overflow: auto; padding: 16px 20px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ---------- Stat tiles ---------- */
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .tile { min-width: 0; overflow: hidden; }
+  .tile .label { color: var(--muted); font-size: 11.5px; margin-bottom: 6px; }
+  .tile .value {
+    font-size: 26px; font-weight: 600; line-height: 1.1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tile .sub {
+    color: var(--ink-2); font-size: 11px; margin-top: 5px;
+    overflow-wrap: anywhere; word-break: break-word;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden; line-height: 1.35;
+  }
+  .tile .value.good { color: var(--good); }
+  .tile .value.warn { color: var(--warning); }
+  .tile .value.crit { color: var(--critical); }
+
+  .charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .chart-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; min-width: 0;
+  }
+  .chart-card h3 { margin: 0 0 10px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+  .chart-wrap { position: relative; overflow-x: auto; }
+  svg text { font-family: var(--sans); }
+
+  .viz-tooltip {
+    position: absolute; pointer-events: none; display: none;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 9px; font-size: 11.5px;
+    color: var(--ink); white-space: nowrap; z-index: 10;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- Tables ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th {
+    text-align: left; color: var(--muted); font-weight: 500;
+    padding: 6px 10px; border-bottom: 1px solid var(--grid);
+    position: sticky; top: 0; background: var(--page);
+  }
+  td {
+    padding: 6px 10px; border-bottom: 1px solid var(--grid);
+    color: var(--ink-2); font-variant-numeric: tabular-nums;
+    max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  tr.row { cursor: pointer; }
+  tr.row:hover td { background: var(--surface); }
+  tr.row.selected td { background: var(--surface-2); color: var(--ink); }
+  td.mono, .mono { font-family: var(--mono); font-size: 11.5px; }
+  td.crit { color: var(--critical); }
+
+  /* ---------- HTTP method badges (visual distinction GET/POST/...) ---------- */
+  .method-badge {
+    display: inline-block; padding: 1px 7px; border-radius: 5px;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.4px; border: 1px solid transparent;
+  }
+  .method-badge.m-get    { color: var(--series-1); background: rgba(57,135,229,0.12); border-color: rgba(57,135,229,0.25); }
+  .method-badge.m-post   { color: var(--good);     background: rgba(12,163,12,0.12);  border-color: rgba(12,163,12,0.28); }
+  .method-badge.m-put    { color: var(--warning);  background: rgba(250,178,25,0.10); border-color: rgba(250,178,25,0.25); }
+  .method-badge.m-patch  { color: var(--serious);  background: rgba(236,131,90,0.12); border-color: rgba(236,131,90,0.28); }
+  .method-badge.m-delete { color: var(--critical); background: rgba(208,59,59,0.12);  border-color: rgba(208,59,59,0.30); }
+  .method-badge.m-other  { color: var(--ink-2);    background: var(--surface-2);      border-color: var(--border); }
+
+  /* ---------- JSON syntax highlighting ---------- */
+  .j-key  { color: #6da7ec; }           /* keys: light blue */
+  .j-str  { color: #1baf7a; }           /* strings: aqua */
+  .j-num  { color: #fab219; }           /* numbers: yellow */
+  .j-bool { color: #d55181; }           /* booleans: magenta */
+  .j-null { color: var(--muted); font-style: italic; }
+
+  /* ---------- Collapsible JSON tree ---------- */
+  .json-view {
+    font-family: var(--mono); font-size: 11px; line-height: 1.55;
+    background: var(--page); border-radius: 6px; padding: 8px 10px;
+    word-break: break-word; overflow-x: auto; color: var(--ink-2);
+  }
+  .json-view details { display: block; }
+  .json-view summary {
+    display: inline-block; cursor: pointer; color: var(--muted);
+    list-style: none; user-select: none;
+    border-radius: 4px; padding: 1px 3px; margin-left: -3px;
+  }
+  .json-view summary:hover { background: var(--surface-2); }
+  .json-view summary::-webkit-details-marker { display: none; }
+  .json-view summary::before { content: "▸ "; font-size: 9px; color: var(--muted); }
+  .json-view details[open] > summary::before { content: "▾ "; }
+  .json-view details[open] > summary .jt-preview { display: none; }
+  .json-view .jt-children {
+    display: block; padding-left: 16px;
+    border-left: 1px solid var(--grid); margin-left: 3px;
+  }
+  .json-view .jt-row { display: block; }
+
+  .ep-hit { color: var(--series-1); }
+
+  /* ---------- Design panel ---------- */
+  .design-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .design-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; min-width: 0;
+  }
+  .design-card h3 { margin: 0 0 10px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+  .icon-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+  .icon-preview { text-align: center; }
+  .icon-preview img { background: #fff; object-fit: cover; display: block; margin: 0 auto 4px; }
+  .icon-preview .r0 { border-radius: 0; }
+  .icon-preview .r22 { border-radius: 22%; }
+  .icon-preview .r50 { border-radius: 50%; }
+  .icon-preview span { font-size: 10.5px; color: var(--muted); }
+  .splash-frame {
+    width: 150px; height: 300px; border-radius: 18px;
+    border: 2px solid var(--baseline); margin: 0 auto;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .splash-frame img { max-width: 60%; max-height: 60%; object-fit: contain; }
+  .font-specimen { margin-bottom: 12px; }
+  .font-specimen .name { font-size: 11px; color: var(--muted); margin-bottom: 2px; font-family: var(--mono); }
+  .font-specimen .sample { font-size: 19px; color: var(--ink); }
+  .design-meta td { max-width: none; white-space: normal; word-break: break-all; }
+
+  /* ---------- Mirror panel ---------- */
+  .mirror-layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .mirror-stage {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px; min-width: 260px;
+    display: flex; align-items: center; justify-content: center; min-height: 200px;
+  }
+  .mirror-stage img {
+    max-width: 340px; max-height: 72vh; border-radius: 8px;
+    cursor: grab; display: block;
+    touch-action: none; user-select: none; -webkit-user-drag: none;
+  }
+  .mirror-stage img:active { cursor: grabbing; }
+  .mirror-stage img:focus { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .mirror-side { display: flex; flex-direction: column; gap: 12px; width: 240px; }
+
+  .dev-mode-badge {
+    font-size: 11px; color: var(--ink-2); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px;
+    white-space: nowrap;
+  }
+
+  /* Capability badges: light up when a phone-interaction technology
+     becomes available (adb plugged in, simulator booted...) */
+  .cap-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--muted); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px;
+    white-space: nowrap; cursor: default;
+    transition: color 200ms var(--ease-out);
+  }
+  .cap-badge::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted);
+    transition: background-color 200ms var(--ease-out);
+  }
+  .cap-badge.on { color: var(--ink-2); }
+  .cap-badge.on::before { background: var(--good); }
+
+  .actions-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px;
+  }
+  .action-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .action-card button {
+    background: var(--series-1-dim); color: var(--ink); border: none;
+    border-radius: 6px; padding: 8px 12px; font-size: 12.5px; cursor: pointer;
+    transition: background-color 150ms var(--ease-out), transform 160ms var(--ease-out);
+  }
+  .action-card button:hover { background: var(--series-1); }
+  .action-card button:active { transform: scale(0.97); }
+  .action-card button.danger { background: rgba(208,59,59,0.18); color: var(--critical); border: 1px solid rgba(208,59,59,0.35); }
+  .action-card button.danger:hover { background: rgba(208,59,59,0.30); }
+  .action-card button:disabled {
+    opacity: 0.4; cursor: not-allowed; transform: none;
+  }
+  .action-card .hint { font-size: 11px; color: var(--muted); }
+
+  /* ---------- SQL highlighting (reserved words) ---------- */
+  .sql-kw { color: #6da7ec; font-weight: 600; }
+  .sql-str { color: #1baf7a; }
+  .sql-num { color: #fab219; }
+  .sql-editor { position: relative; width: 100%; }
+  .sql-editor pre.sql-mirror {
+    margin: 0; padding: 6px 9px; min-height: 64px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.45;
+    white-space: pre-wrap; word-break: break-word;
+    border: 1px solid transparent; border-radius: 6px;
+    pointer-events: none; position: absolute; inset: 0; overflow: hidden;
+    color: var(--ink);
+  }
+  .sql-editor textarea {
+    position: relative; width: 100%; min-height: 64px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.45;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 9px; resize: vertical;
+    color: transparent; caret-color: var(--ink);
+    -webkit-text-fill-color: transparent;
+  }
+  .sql-editor textarea::selection { background: rgba(57,135,229,0.30); }
+
+  .mini-btn {
+    background: var(--surface-2); color: var(--ink-2);
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 3px 9px; font-size: 11px; cursor: pointer;
+    transition: color 150ms var(--ease-out), transform 160ms var(--ease-out);
+  }
+  .mini-btn:hover { color: var(--ink); }
+  .mini-btn:active { transform: scale(0.97); }
+
+  .progress-track {
+    width: 90px; height: 5px; border-radius: 3px;
+    background: var(--surface-2); overflow: hidden; display: inline-block;
+    vertical-align: middle; margin-right: 6px;
+  }
+  .progress-fill {
+    height: 100%; border-radius: 3px; background: var(--series-1);
+    transition: width 200ms var(--ease-out);
+  }
+  .progress-fill.done { background: var(--good); }
+  .progress-fill.failed { background: var(--critical); }
+
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .status-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .status-badge.s2::before { background: var(--good); }
+  .status-badge.s3::before { background: var(--series-1); }
+  .status-badge.s4::before { background: var(--serious); }
+  .status-badge.s5::before { background: var(--critical); }
+  .status-badge.s0::before { background: var(--warning); }
+
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 420px); gap: 14px; }
+  .detail {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+    position: sticky; top: 0; align-self: start;
+    max-height: calc(100vh - 160px); overflow: auto;
+  }
+  .detail h4 { margin: 8px 0 4px; font-size: 11.5px; color: var(--muted); font-weight: 500; }
+  .detail pre {
+    margin: 0; padding: 8px 10px; background: var(--page);
+    border-radius: 6px; font-family: var(--mono); font-size: 11px;
+    white-space: pre-wrap; word-break: break-word; color: var(--ink-2);
+  }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+
+  .toolbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar input[type="text"], .toolbar select, .toolbar textarea {
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 9px; font-size: 12px; font-family: var(--sans);
+  }
+  .toolbar input[type="text"] { min-width: 220px; }
+  .toolbar button {
+    background: var(--series-1-dim); color: var(--ink); border: none;
+    border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer;
+    transition: background-color 150ms var(--ease-out), transform 160ms var(--ease-out);
+  }
+  .toolbar button:hover { background: var(--series-1); }
+  .toolbar button:active { transform: scale(0.97); }
+
+  /* Row hover: targeted transition, never on streaming feeds */
+  tr.row td { transition: background-color 120ms var(--ease-out); }
+
+  /* No animation on the tiles: they re-render continuously with the
+     event stream, any animation would become noise */
+
+  .crash-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--critical);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .crash-card.rejection { border-left-color: var(--warning); }
+  .crash-card .crash-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; }
+  .crash-card .crash-kind { font-size: 11px; color: var(--critical); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+  .crash-card.rejection .crash-kind { color: var(--warning); }
+  .crash-card .crash-msg { color: var(--ink); font-size: 13px; word-break: break-word; }
+  .crash-card pre {
+    margin: 8px 0 0; padding: 8px 10px; background: var(--page);
+    border-radius: 6px; font-family: var(--mono); font-size: 10.5px;
+    white-space: pre-wrap; word-break: break-word; color: var(--ink-2);
+    max-height: 200px; overflow: auto;
+  }
+
+  .log-line { display: flex; gap: 10px; padding: 3px 6px; border-radius: 4px; font-family: var(--mono); font-size: 11.5px; }
+  .log-line:hover { background: var(--surface); }
+  .log-line .ts { color: var(--muted); flex-shrink: 0; }
+  .log-line .lvl { flex-shrink: 0; width: 42px; }
+  .log-line.warn .lvl { color: var(--warning); }
+  .log-line.error .lvl { color: var(--critical); }
+  .log-line.log .lvl, .log-line.info .lvl { color: var(--ink-2); }
+  .log-line .msg { color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+
+  #sqlOutput { margin-top: 10px; }
+  textarea#sqlInput {
+    width: 100%; min-height: 64px; font-family: var(--mono); font-size: 12px;
+    resize: vertical;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="conn-dot" id="connDot"></div>
+    <h1>rn-devtools-hub <span>local inspector</span></h1>
+    <select id="deviceSelect"><option value="">No device</option></select>
+    <span class="dev-mode-badge" id="devModeBadge" style="display:none"></span>
+    <span id="capBadges" style="display:flex; gap:6px"></span>
+    <div class="spacer"></div>
+    <button id="exportBtn">Export report</button>
+    <button id="clearBtn">Clear history</button>
+  </header>
+
+  <nav id="tabs">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="crashes">Crashes<span class="crash-count" id="cCrashes"></span></button>
+    <button data-tab="network">Network<span class="count" id="cNetwork"></span></button>
+    <button data-tab="uploads">Uploads<span class="count" id="cUploads"></span></button>
+    <button data-tab="cache">Cache</button>
+    <button data-tab="storage">Storage<span class="count" id="cStorage"></span></button>
+    <button data-tab="screens">Screens<span class="count" id="cScreens"></span></button>
+    <button data-tab="logs">Logs<span class="count" id="cLogs"></span></button>
+    <button data-tab="sqlite">SQLite</button>
+    <button data-tab="endpoints">Endpoints</button>
+    <button data-tab="actions">Actions</button>
+    <button data-tab="design">Design</button>
+    <button data-tab="mirror">Mirror</button>
+  </nav>
+
+  <main>
+    <!-- ================= OVERVIEW ================= -->
+    <section class="panel active" id="panel-overview">
+      <div class="tiles" id="overviewTiles"></div>
+      <div class="charts">
+        <div class="chart-card">
+          <h3>JS thread lag (p95, ms)</h3>
+          <div class="chart-wrap" id="lagChart"><div class="empty">Waiting for data</div></div>
+        </div>
+        <div class="chart-card">
+          <h3>HTTP statuses</h3>
+          <div class="chart-wrap" id="statusChart"><div class="empty">Waiting for data</div></div>
+        </div>
+        <div class="chart-card">
+          <h3>Request durations (ms)</h3>
+          <div class="chart-wrap" id="durationChart"><div class="empty">Waiting for data</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= CRASHES ================= -->
+    <section class="panel" id="panel-crashes">
+      <div class="tiles" id="crashTiles"></div>
+      <div id="crashList"></div>
+      <div class="empty" id="crashEmpty">No crashes captured. That is good news.</div>
+    </section>
+
+    <!-- ================= NETWORK ================= -->
+    <section class="panel" id="panel-network">
+      <div class="toolbar">
+        <input type="text" id="netFilter" placeholder="Filter by URL, method, status...">
+        <select id="netSource"><option value="">All sources</option></select>
+        <button id="netExportHar">Export HAR</button>
+      </div>
+      <div class="split">
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Time</th><th>Method</th><th>URL</th><th>Status</th><th>Duration</th><th>Size</th><th>Source</th></tr></thead>
+            <tbody id="netRows"></tbody>
+          </table>
+          <div class="empty" id="netEmpty">No requests captured</div>
+        </div>
+        <div class="detail" id="netDetail"><div class="empty">Select a request</div></div>
+      </div>
+    </section>
+
+    <!-- ================= UPLOADS ================= -->
+    <section class="panel" id="panel-uploads">
+      <div class="tiles" id="uploadTiles"></div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Time</th><th>Scan</th><th>Status</th><th>Progress</th><th>Files</th></tr></thead>
+          <tbody id="uploadRows"></tbody>
+        </table>
+        <div class="empty" id="uploadEmpty">No upload events</div>
+      </div>
+    </section>
+
+    <!-- ================= CACHE ================= -->
+    <section class="panel" id="panel-cache">
+      <div class="toolbar">
+        <button id="cacheRefresh">Refresh snapshot</button>
+        <button id="cacheInvalidate">Invalidate all</button>
+        <button id="cacheRefetch">Refetch active queries</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Query key</th><th>Status</th><th>Freshness</th><th>Observers</th><th>Updated</th></tr></thead>
+          <tbody id="cacheRows"></tbody>
+        </table>
+        <div class="empty" id="cacheEmpty">No snapshot. Click Refresh.</div>
+      </div>
+      <div class="detail" id="cacheDetail" style="margin-top:12px; position:static; max-height:400px"></div>
+    </section>
+
+    <!-- ================= STORAGE (AsyncStorage) ================= -->
+    <section class="panel" id="panel-storage">
+      <div class="toolbar">
+        <button id="storageRefresh">Refresh keys</button>
+        <input type="text" id="storageFilter" placeholder="Filter keys...">
+      </div>
+      <div class="split">
+        <div style="overflow-x:auto">
+          <h3 style="font-size:12.5px; color:var(--ink-2); margin:0 0 8px">Stored keys</h3>
+          <table>
+            <thead><tr><th>Key</th><th>Size</th><th>Last write (session)</th></tr></thead>
+            <tbody id="storageRows"></tbody>
+          </table>
+          <div class="empty" id="storageEmpty">Click Refresh to list the keys</div>
+
+          <h3 style="font-size:12.5px; color:var(--ink-2); margin:16px 0 8px">Live writes</h3>
+          <table>
+            <thead><tr><th>Time</th><th>Operation</th><th>Key</th><th>Size</th><th>Preview</th></tr></thead>
+            <tbody id="storageWriteRows"></tbody>
+          </table>
+          <div class="empty" id="storageWriteEmpty">No writes captured yet</div>
+        </div>
+        <div class="detail" id="storageDetail"><div class="empty">Select a key</div></div>
+      </div>
+    </section>
+
+    <!-- ================= SCREENS ================= -->
+    <section class="panel" id="panel-screens">
+      <div class="tiles" id="screenTiles"></div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Time</th><th>Screen</th><th>Time spent on previous</th></tr></thead>
+          <tbody id="screenRows"></tbody>
+        </table>
+        <div class="empty" id="screenEmpty">No navigation captured</div>
+      </div>
+    </section>
+
+    <!-- ================= LOGS ================= -->
+    <section class="panel" id="panel-logs">
+      <div class="toolbar">
+        <input type="text" id="logFilter" placeholder="Filter logs...">
+        <select id="logLevel">
+          <option value="">All levels</option>
+          <option value="log">log</option>
+          <option value="info">info</option>
+          <option value="warn">warn</option>
+          <option value="error">error</option>
+        </select>
+      </div>
+      <div id="logList"></div>
+      <div class="empty" id="logEmpty">No logs captured</div>
+    </section>
+
+    <!-- ================= SQLITE ================= -->
+    <section class="panel" id="panel-sqlite">
+      <div class="toolbar" style="align-items:stretch; flex-direction:column">
+        <div class="sql-editor">
+          <pre class="sql-mirror" id="sqlMirror"></pre>
+          <textarea id="sqlInput" spellcheck="false">SELECT name, type FROM sqlite_master WHERE type IN ('table','index') ORDER BY type, name</textarea>
+        </div>
+        <div style="display:flex; gap:8px">
+          <button id="sqlRun">Run (read-only)</button>
+          <button id="sqlTables" style="background:var(--surface-2)">Tables</button>
+        </div>
+      </div>
+      <div id="sqlOutput" style="overflow-x:auto"></div>
+    </section>
+
+    <!-- ================= ENDPOINTS ================= -->
+    <section class="panel" id="panel-endpoints">
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Group</th><th>Name</th><th>Path</th><th>Calls</th><th>Errors</th><th>p50</th><th>p95</th></tr></thead>
+          <tbody id="endpointRows"></tbody>
+        </table>
+        <div class="empty" id="endpointEmpty">The app has not sent its endpoint map yet</div>
+      </div>
+    </section>
+    <!-- ================= ACTIONS ================= -->
+    <section class="panel" id="panel-actions">
+      <div class="actions-grid" id="actionsGrid"></div>
+      <div class="empty" id="actionsEmpty">The app has not declared any actions yet</div>
+    </section>
+
+    <!-- ================= DESIGN ================= -->
+    <section class="panel" id="panel-design">
+      <div class="toolbar">
+        <button id="designRefresh">Load project design</button>
+      </div>
+      <div id="designContent"><div class="empty">Click to load app.json and the project assets</div></div>
+    </section>
+
+    <!-- ================= MIRROR ================= -->
+    <section class="panel" id="panel-mirror">
+      <div class="toolbar">
+        <select id="mirrorSource"><option value="">Detecting...</option></select>
+        <button id="mirrorToggle" disabled>Pause</button>
+        <button id="mirrorRefresh" style="background:var(--surface-2)">Re-detect</button>
+        <span class="mono" id="mirrorStatus" style="color:var(--muted)"></span>
+      </div>
+      <div class="mirror-layout">
+        <div class="mirror-stage">
+          <img id="mirrorImage" alt="" tabindex="0" draggable="false" style="display:none">
+          <div class="empty" id="mirrorEmpty">Automatic detection in progress...</div>
+        </div>
+        <div class="mirror-side">
+          <div class="action-card" id="mirrorKeysCard" style="display:none">
+            <div class="hint">
+              Click to tap, drag to swipe, wheel to scroll.
+              Click the image then type to send text.
+            </div>
+            <button data-mirror-key="back">Back</button>
+            <button data-mirror-key="home">Home</button>
+            <button data-mirror-key="recents">Recents</button>
+            <button data-mirror-key="menu">Dev menu</button>
+          </div>
+          <details class="action-card">
+            <summary class="hint" style="cursor:pointer">Control the phone without a cable (adb over Wi-Fi)</summary>
+            <div class="hint" style="margin-top:8px; line-height:1.6">
+              adb over Wi-Fi enables the mirror with tap and keys without a USB cable.
+              On the phone:<br>
+              1. Settings, About phone: tap "Build number" 7 times<br>
+              2. Settings, Developer options: enable "Wireless debugging"<br>
+              3. Open "Wireless debugging", choose "Pair device with pairing code"<br>
+              4. Enter here the ip:port address and the 6-digit code shown:
+            </div>
+            <div style="display:flex; gap:6px">
+              <input type="text" id="adbPairHost" placeholder="ip:port (pairing)"
+                     style="background:var(--page); color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:6px 9px; font-size:12px; flex:1">
+              <input type="text" id="adbPairCode" placeholder="code" maxlength="6"
+                     style="background:var(--page); color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:6px 9px; font-size:12px; width:64px">
+            </div>
+            <button id="adbPairBtn">1. Pair</button>
+            <div class="hint" style="line-height:1.6">
+              5. Then connect using the ip:port address shown on the MAIN
+              "Wireless debugging" screen (different port from pairing):
+            </div>
+            <input type="text" id="adbWifiHost" placeholder="ip:port (connection)"
+                   style="background:var(--page); color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:6px 9px; font-size:12px; width:100%">
+            <button id="adbWifiConnect">2. Connect</button>
+            <div class="hint">
+              Alternative with a cable: plug in once via USB, run
+              "adb tcpip 5555" in a terminal, unplug, then connect here
+              with phone-ip:5555. Pairing is not required in that case.
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="viz-tooltip" id="vizTooltip"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ================= State =================
+  const state = {
+    devices: [],
+    selectedDevice: "",
+    // events indexed by device then by type
+    byDevice: new Map(),
+    pendingCommands: new Map(),
+    selectedRequestId: null,
+  };
+  let requestSeq = 0;
+
+  const $ = (id) => document.getElementById(id);
+
+  const deviceStore = (deviceId) => {
+    if (!state.byDevice.has(deviceId)) {
+      state.byDevice.set(deviceId, {
+        network: new Map(),   // requestId -> {request, response|error}
+        networkOrder: [],
+        uploads: [],
+        uploadStats: null,
+        screens: [],
+        logs: [],
+        perf: [],
+        cache: [],
+        crashes: [],
+        storageWrites: [],
+        storageKeys: [],
+        capabilities: null,
+        endpoints: null,
+        appInfo: null,
+        netInfo: null,
+        actions: [],
+      });
+    }
+    return state.byDevice.get(deviceId);
+  };
+
+  const current = () => deviceStore(state.selectedDevice || "?");
+
+  // ================= WebSocket =================
+  let ws = null;
+  const connect = () => {
+    ws = new WebSocket(`ws://${location.host}`);
+    ws.onopen = () => {
+      $("connDot").classList.add("ok");
+      const token = new URLSearchParams(location.search).get("token") ?? "";
+      ws.send(JSON.stringify({ kind: "hello", role: "dashboard", token }));
+    };
+    ws.onclose = () => {
+      $("connDot").classList.remove("ok");
+      setTimeout(connect, 1500);
+    };
+    ws.onmessage = (msg) => {
+      let data;
+      try { data = JSON.parse(msg.data); } catch { return; }
+
+      if (data.kind === "devices") {
+        state.devices = data.devices;
+        renderDeviceSelect();
+      } else if (data.kind === "events") {
+        ingest(data.deviceId, data.events);
+        scheduleRender();
+      } else if (data.kind === "commandResult") {
+        const resolver = state.pendingCommands.get(data.requestId);
+        if (resolver) {
+          state.pendingCommands.delete(data.requestId);
+          resolver(data);
+        }
+      } else if (data.kind === "historyCleared") {
+        state.byDevice.clear();
+        scheduleRender();
+      }
+    };
+  };
+
+  const sendCommand = (command, payload) => new Promise((resolve) => {
+    const requestId = `r${++requestSeq}`;
+    state.pendingCommands.set(requestId, resolve);
+    ws?.send(JSON.stringify({
+      kind: "command", deviceId: state.selectedDevice, requestId, command, payload,
+    }));
+    setTimeout(() => {
+      if (state.pendingCommands.has(requestId)) {
+        state.pendingCommands.delete(requestId);
+        resolve({ error: "Timed out (device unreachable?)" });
+      }
+    }, 8000);
+  });
+
+  // ================= Ingestion =================
+  const ingest = (deviceId, events) => {
+    const store = deviceStore(deviceId);
+    for (const event of events) {
+      const p = event.payload || {};
+      switch (event.type) {
+        case "network.request": {
+          store.network.set(p.requestId, { ts: event.ts, request: p });
+          store.networkOrder.push(p.requestId);
+          if (store.networkOrder.length > 1500) {
+            const removed = store.networkOrder.splice(0, store.networkOrder.length - 1500);
+            removed.forEach((id) => store.network.delete(id));
+          }
+          break;
+        }
+        case "network.response":
+        case "network.error": {
+          const entry = store.network.get(p.requestId);
+          if (entry) entry[event.type === "network.error" ? "error" : "response"] = p;
+          break;
+        }
+        case "upload.progress": store.uploads.push({ ts: event.ts, ...p }); break;
+        case "upload.stats": store.uploadStats = { ts: event.ts, ...p }; break;
+        case "nav.screen": store.screens.push({ ts: event.ts, ...p }); break;
+        case "console": store.logs.push({ ts: event.ts, ...p }); break;
+        case "perf.sample": store.perf.push({ ts: event.ts, ...p }); break;
+        case "query.cache": store.cache = p.queries || []; break;
+        case "crash": store.crashes.push({ ts: event.ts, ...p }); break;
+        case "storage.write": store.storageWrites.push({ ts: event.ts, ...p }); break;
+        case "endpoints": store.endpoints = p; break;
+        case "app.info": store.appInfo = p; break;
+        case "net.info": store.netInfo = { ts: event.ts, ...p }; break;
+        case "actions.register": store.actions = p.actions || []; break;
+        case "capabilities": store.capabilities = p; break;
+        case "screen.frame":
+          // Real-time app stream: displayed directly, no history
+          if (deviceId === state.selectedDevice && p?.base64) {
+            const mirrorImg = document.getElementById("mirrorImage");
+            mirrorImg.src = `data:image/jpeg;base64,${p.base64}`;
+            mirrorImg.style.display = "";
+            document.getElementById("mirrorEmpty").style.display = "none";
+          }
+          break;
+      }
+    }
+    ["uploads", "screens", "logs", "perf", "crashes", "storageWrites"].forEach((key) => {
+      if (store[key].length > 2000) store[key].splice(0, store[key].length - 2000);
+    });
+  };
+
+  // ================= Rendering =================
+  let renderScheduled = false;
+  const scheduleRender = () => {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    requestAnimationFrame(() => { renderScheduled = false; renderAll(); });
+  };
+
+  const fmtTime = (ts) => new Date(ts).toLocaleTimeString("en-GB", { hour12: false }) +
+    "." + String(ts % 1000).padStart(3, "0");
+  const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  // JSON syntax highlighting (keys, strings, numbers, booleans, null)
+  const highlightJson = (value) => {
+    if (value === undefined) return "";
+    let json;
+    try {
+      json = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    } catch {
+      return esc(String(value));
+    }
+    if (json === undefined) return "";
+    return esc(json).replace(
+      /(&quot;(?:[^&]|&(?!quot;))*?&quot;)(\s*:)?|\b(true|false)\b|\bnull\b|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/g,
+      (match, str, colon, bool, num) => {
+        if (str) {
+          return colon
+            ? `<span class="j-key">${str}</span>${colon}`
+            : `<span class="j-str">${str}</span>`;
+        }
+        if (bool) return `<span class="j-bool">${bool}</span>`;
+        if (num) return `<span class="j-num">${num}</span>`;
+        return `<span class="j-null">${match}</span>`;
+      }
+    );
+  };
+
+  const jsonTree = (value, depth = 0, label = null) => {
+    const key = label === null ? "" : `<span class="j-key">${esc(label)}</span>: `;
+    if (value === null) return `<span class="jt-row">${key}<span class="j-null">null</span></span>`;
+    if (typeof value === "string") return `<span class="jt-row">${key}<span class="j-str">${esc(JSON.stringify(value))}</span></span>`;
+    if (typeof value === "number") return `<span class="jt-row">${key}<span class="j-num">${esc(value)}</span></span>`;
+    if (typeof value === "boolean") return `<span class="jt-row">${key}<span class="j-bool">${value}</span></span>`;
+    if (typeof value !== "object") return `<span class="jt-row">${key}<span>${esc(String(value))}</span></span>`;
+    const isArray = Array.isArray(value);
+    const entries = Object.entries(value);
+    const summary = isArray ? `[ ${entries.length} items ]` : `{ ${entries.length} keys }`;
+    const children = entries.map(([childKey, child]) =>
+      jsonTree(child, depth + 1, isArray ? childKey : JSON.stringify(childKey))
+    ).join("");
+    return `<details${depth < 2 ? " open" : ""}><summary>${key}<span class="jt-preview">${summary}</span></summary><span class="jt-children">${children || `<span class="j-null">empty</span>`}</span></details>`;
+  };
+
+  const jsonView = (value) => {
+    let parsed = value;
+    if (typeof value === "string") {
+      try { parsed = JSON.parse(value); } catch { /* keep the string */ }
+    }
+    return `<div class="json-view">${jsonTree(parsed)}</div>`;
+  };
+
+  // Visual badge per HTTP method (GET blue, POST green, DELETE red...)
+  const methodBadge = (method) => {
+    const m = String(method ?? "").toUpperCase();
+    const cls = ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(m)
+      ? `m-${m.toLowerCase()}`
+      : "m-other";
+    return `<span class="method-badge ${cls}">${esc(m)}</span>`;
+  };
+
+  // SQL highlighting: strings then reserved words
+  const SQL_KEYWORDS = /\b(SELECT|FROM|WHERE|AND|OR|NOT|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|AS|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|ON|COUNT|SUM|AVG|MIN|MAX|DISTINCT|CASE|WHEN|THEN|ELSE|END|IN|IS|NULL|LIKE|GLOB|BETWEEN|ASC|DESC|PRAGMA|TABLE|INDEX|UNION|ALL|EXISTS|CAST|COALESCE|IFNULL|LENGTH|SUBSTR|UPPER|LOWER|DATE|DATETIME|STRFTIME)\b/gi;
+  const highlightSql = (sql) =>
+    esc(sql)
+      .replace(/('(?:[^']|'')*')/g, `<span class="sql-str">$1</span>`)
+      .replace(SQL_KEYWORDS, (m) => `<span class="sql-kw">${m}</span>`);
+
+  const renderDeviceSelect = () => {
+    const select = $("deviceSelect");
+    const previous = state.selectedDevice;
+    select.innerHTML = state.devices.length
+      ? state.devices.map((d) =>
+          `<option value="${d.id}">${esc(d.deviceName)} (${d.connected ? "connected" : "offline"})</option>`
+        ).join("")
+      : `<option value="">No device</option>`;
+    if (state.devices.some((d) => d.id === previous)) {
+      select.value = previous;
+    } else if (state.devices.length) {
+      state.selectedDevice = state.devices[0].id;
+      select.value = state.selectedDevice;
+    }
+    scheduleRender();
+  };
+
+  $("deviceSelect").addEventListener("change", (e) => {
+    state.selectedDevice = e.target.value;
+    state.selectedRequestId = null;
+    scheduleRender();
+  });
+
+  $("clearBtn").addEventListener("click", () => {
+    ws?.send(JSON.stringify({ kind: "clearHistory" }));
+  });
+
+  // ---------- Bug report export (Markdown, ready for GitHub/forums) ----------
+  const buildBugReport = (store) => {
+    const info = store.appInfo ?? {};
+    const entries = networkEntries(store);
+    const failedRequests = entries
+      .filter((e) => e.error || (e.response?.status >= 400))
+      .slice(-20);
+    const errorLogs = store.logs
+      .filter((l) => l.level === "error" || l.level === "warn")
+      .slice(-30);
+    const lastPerf = store.perf[store.perf.length - 1];
+    const stats = store.uploadStats;
+    const lastScreens = store.screens.slice(-10);
+
+    const lines = [];
+    lines.push(`# Bug report - ${info.appName ?? "app"}`);
+    lines.push("");
+    lines.push(`Generated on ${new Date().toLocaleString("en-GB")}`);
+    lines.push("");
+    lines.push("## Environment");
+    lines.push("");
+    lines.push("| Field | Value |");
+    lines.push("| --- | --- |");
+    const infoRows = [
+      ["App", `${info.appName ?? "?"} v${info.appVersion ?? "?"} (build ${info.buildVersion ?? "?"})`],
+      ["Expo SDK", info.expoSdk],
+      ["Device", `${info.brand ?? ""} ${info.modelName ?? info.deviceName ?? "?"}`.trim()],
+      ["OS", `${info.osName ?? info.platform ?? "?"} ${info.osVersion ?? ""}`.trim()],
+      ["Memory", info.totalMemoryMb ? `${info.totalMemoryMb} MB` : null],
+      ["JS engine", info.jsEngine],
+      ["Physical device", info.isDevice === false ? "no (simulator)" : "yes"],
+      ["CPU", (info.supportedCpuArchitectures ?? []).join(", ")],
+    ];
+    for (const [label, value] of infoRows) {
+      if (value) lines.push(`| ${label} | ${value} |`);
+    }
+    lines.push("");
+
+    if (store.netInfo) {
+      lines.push("## Connection");
+      lines.push("");
+      lines.push(`- Type: ${store.netInfo.type ?? "?"}`);
+      if (store.netInfo.ipAddress) lines.push(`- IP address: ${store.netInfo.ipAddress}`);
+      lines.push(`- Connected: ${store.netInfo.isConnected ? "yes" : "no"}`);
+      lines.push(`- Internet reachable: ${store.netInfo.isInternetReachable ? "yes" : "no"}`);
+      lines.push("");
+    }
+
+    if (store.crashes.length) {
+      lines.push(`## Crashes (${store.crashes.length})`);
+      lines.push("");
+      for (const crash of store.crashes.slice(-10)) {
+        lines.push(`### ${crash.isFatal ? "FATAL" : crash.kind} - ${fmtTime(crash.ts)}`);
+        lines.push("");
+        lines.push(`> ${crash.message}`);
+        if (crash.stack) {
+          lines.push("");
+          lines.push("```");
+          lines.push(String(crash.stack).split("\n").slice(0, 25).join("\n"));
+          lines.push("```");
+        }
+        lines.push("");
+      }
+    }
+
+    if (failedRequests.length) {
+      lines.push(`## Failed requests (last ${failedRequests.length})`);
+      lines.push("");
+      lines.push("| Time | Method | URL | Status | Duration |");
+      lines.push("| --- | --- | --- | --- | --- |");
+      for (const entry of failedRequests) {
+        const status = entry.response?.status ?? entry.error?.status ?? "network";
+        const duration = entry.response?.durationMs ?? entry.error?.durationMs ?? "";
+        lines.push(`| ${fmtTime(entry.ts)} | ${entry.request.method} | ${shortUrl(entry.request.url)} | ${status} | ${duration}${duration ? " ms" : ""} |`);
+      }
+      lines.push("");
+    }
+
+    if (stats) {
+      lines.push("## Uploads");
+      lines.push("");
+      lines.push(`- Pending: ${stats.pendingUploads}`);
+      lines.push(`- Active: ${stats.activeUploads}`);
+      lines.push(`- Failed: ${stats.failedUploads}`);
+      lines.push("");
+    }
+
+    if (lastPerf) {
+      lines.push("## Performance");
+      lines.push("");
+      lines.push(`- JS lag p95: ${lastPerf.jsLagP95Ms} ms (max ${lastPerf.jsLagMaxMs} ms)`);
+      lines.push(`- Session uptime: ${Math.round((lastPerf.uptimeMs ?? 0) / 1000)}s`);
+      lines.push("");
+    }
+
+    if (lastScreens.length) {
+      lines.push("## Journey (last screens)");
+      lines.push("");
+      for (const screen of lastScreens) {
+        lines.push(`- ${fmtTime(screen.ts)}: ${screen.screen}`);
+      }
+      lines.push("");
+    }
+
+    if (errorLogs.length) {
+      lines.push(`## Warn/error logs (last ${errorLogs.length})`);
+      lines.push("");
+      lines.push("```");
+      for (const log of errorLogs) {
+        const message = (log.args ?? []).map((a) =>
+          typeof a === "string" ? a : JSON.stringify(a)
+        ).join(" ");
+        lines.push(`${fmtTime(log.ts)} [${log.level}] ${message.slice(0, 300)}`);
+      }
+      lines.push("```");
+      lines.push("");
+    }
+
+    return lines.join("\n");
+  };
+
+  $("exportBtn").addEventListener("click", async () => {
+    const markdown = buildBugReport(current());
+    // Copy to the clipboard + download the file
+    try { await navigator.clipboard.writeText(markdown); } catch { /* insecure http */ }
+    const blob = new Blob([markdown], { type: "text/markdown" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `bug-report-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.md`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    $("exportBtn").textContent = "Copied + downloaded";
+    setTimeout(() => { $("exportBtn").textContent = "Export report"; }, 2000);
+  });
+
+  // ---------- Tabs ----------
+  $("tabs").addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-tab]");
+    if (!button) return;
+    document.querySelectorAll("nav button").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+    button.classList.add("active");
+    $(`panel-${button.dataset.tab}`).classList.add("active");
+    // Mirror: automatic detection and start when the tab opens
+    if (button.dataset.tab === "mirror") mirrorAuto();
+    scheduleRender();
+  });
+
+  const renderAll = () => {
+    const store = current();
+    renderCounts(store);
+    renderOverview(store);
+    renderNetwork(store);
+    renderUploads(store);
+    renderCache(store);
+    renderScreens(store);
+    renderLogs(store);
+    renderCrashes(store);
+    renderStorage(store);
+    renderEndpoints(store);
+    renderActions(store);
+    const devModeBadge = $("devModeBadge");
+    devModeBadge.style.display = store.appInfo?.devMode ? "" : "none";
+    devModeBadge.textContent = store.appInfo?.devMode ?? "";
+  };
+
+  const renderCounts = (store) => {
+    $("cNetwork").textContent = store.networkOrder.length || "";
+    $("cUploads").textContent = store.uploads.length || "";
+    $("cScreens").textContent = store.screens.length || "";
+    $("cLogs").textContent = store.logs.length || "";
+    $("cCrashes").textContent = store.crashes.length || "";
+  };
+
+  // ---------- Crashes ----------
+  const renderCrashes = (store) => {
+    const crashes = store.crashes;
+    $("crashEmpty").style.display = crashes.length ? "none" : "";
+
+    const fatals = crashes.filter((c) => c.isFatal).length;
+    const rejections = crashes.filter((c) => c.kind === "unhandledRejection").length;
+    const tile = (label, value, cls = "") =>
+      `<div class="tile"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`;
+    $("crashTiles").innerHTML = crashes.length ? (
+      tile("Total", crashes.length, "crit") +
+      tile("Fatal", fatals, fatals ? "crit" : "good") +
+      tile("Unhandled rejections", rejections, rejections ? "warn" : "good")
+    ) : "";
+
+    $("crashList").innerHTML = crashes.slice(-100).reverse().map((crash) => `
+      <div class="crash-card ${crash.kind === "unhandledRejection" ? "rejection" : ""}">
+        <div class="crash-head">
+          <span class="crash-kind">${crash.isFatal ? "fatal" : esc(crash.kind ?? "error")}</span>
+          <span class="ts mono" style="color:var(--muted); font-size:11px">${fmtTime(crash.ts)}</span>
+        </div>
+        <div class="crash-msg">${esc(crash.message)}</div>
+        ${crash.stack ? `<pre>${esc(crash.stack)}</pre>` : ""}
+      </div>`).join("");
+  };
+
+  // ---------- Overview: tiles + charts ----------
+  const networkEntries = (store) =>
+    store.networkOrder.map((id) => store.network.get(id)).filter(Boolean);
+
+  const renderOverview = (store) => {
+    const entries = networkEntries(store);
+    const done = entries.filter((e) => e.response || e.error);
+    const errors = done.filter((e) => e.error || (e.response?.status >= 400));
+    const durations = done
+      .map((e) => e.response?.durationMs ?? e.error?.durationMs)
+      .filter((d) => typeof d === "number")
+      .sort((a, b) => a - b);
+    const median = durations.length ? durations[Math.floor(durations.length / 2)] : null;
+    const lastPerf = store.perf[store.perf.length - 1];
+    const stats = store.uploadStats;
+    const errorRate = done.length ? Math.round((errors.length / done.length) * 100) : 0;
+
+    const tile = (label, value, cls = "", sub = "") =>
+      `<div class="tile"><div class="label">${label}</div>
+       <div class="value ${cls}">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+
+    $("overviewTiles").innerHTML =
+      tile("Requests", entries.length, "", `${errors.length} failed`) +
+      tile("Error rate", `${errorRate}%`, errorRate > 10 ? "crit" : errorRate > 0 ? "warn" : "good") +
+      tile("Median duration", median !== null ? `${median} ms` : "–") +
+      tile("Pending uploads", stats ? stats.pendingUploads + stats.activeUploads : "–",
+        "", stats ? `${stats.failedUploads} failed` : "") +
+      tile("JS lag p95", lastPerf ? `${lastPerf.jsLagP95Ms} ms` : "–",
+        lastPerf && lastPerf.jsLagP95Ms > 200 ? "crit" : lastPerf && lastPerf.jsLagP95Ms > 60 ? "warn" : "good") +
+      tile("Screens visited", store.screens.length) +
+      tile("Error logs", store.logs.filter((l) => l.level === "error").length,
+        store.logs.some((l) => l.level === "error") ? "crit" : "good") +
+      tile("Crashes", store.crashes.length, store.crashes.length ? "crit" : "good",
+        store.crashes.filter((c) => c.isFatal).length ? `${store.crashes.filter((c) => c.isFatal).length} fatal` : "") +
+      (store.netInfo ? tile("Connection", esc(store.netInfo.type ?? "?"),
+        store.netInfo.isInternetReachable ? "good" : "crit",
+        `${store.netInfo.ipAddress ? esc(store.netInfo.ipAddress) + " · " : ""}internet ${store.netInfo.isInternetReachable ? "reachable" : "unreachable"}`) : "") +
+      (store.appInfo ? `<div class="tile" title="${esc(JSON.stringify(store.appInfo, null, 2))}">
+        <div class="label">Device</div>
+        <div class="value">${esc(store.appInfo.modelName ?? store.appInfo.deviceName ?? "?")}</div>
+        <div class="sub">${esc(store.appInfo.osName ?? "")} ${esc(store.appInfo.osVersion ?? "")} · v${esc(store.appInfo.appVersion ?? "?")} (${esc(store.appInfo.buildVersion ?? "?")}) · ${esc(store.appInfo.jsEngine ?? "")}${store.appInfo.totalMemoryMb ? ` · ${(store.appInfo.totalMemoryMb / 1024).toFixed(1)} GB RAM` : ""}</div>
+      </div>` : "");
+
+    renderLagChart(store.perf);
+    renderStatusChart(done);
+    renderDurationChart(durations);
+  };
+
+  // JS lag sparkline (single series: no legend, crosshair hover)
+  const renderLagChart = (perf) => {
+    const host = $("lagChart");
+    if (perf.length < 2) { host.innerHTML = `<div class="empty">Waiting for data</div>`; return; }
+    const data = perf.slice(-80);
+    const W = Math.max(host.clientWidth - 4, 280), H = 90, PAD = 6;
+    const max = Math.max(...data.map((d) => d.jsLagP95Ms), 50);
+    const x = (i) => PAD + (i / (data.length - 1)) * (W - PAD * 2);
+    const y = (v) => H - PAD - (v / max) * (H - PAD * 2);
+    const points = data.map((d, i) => `${x(i)},${y(d.jsLagP95Ms)}`).join(" ");
+
+    host.innerHTML = `
+      <svg width="${W}" height="${H}" data-kind="lag">
+        <line x1="${PAD}" y1="${y(0)}" x2="${W - PAD}" y2="${y(0)}" stroke="var(--baseline)" stroke-width="1"/>
+        <polyline points="${points}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>
+        <text x="${W - PAD}" y="${y(max) + 10}" text-anchor="end" fill="var(--muted)" font-size="10">${max} ms</text>
+        <line class="crosshair" x1="0" y1="${PAD}" x2="0" y2="${H - PAD}" stroke="var(--grid)" stroke-width="1" style="display:none"/>
+        <circle class="cursor" r="4" fill="var(--series-1)" stroke="var(--surface)" stroke-width="2" style="display:none"/>
+      </svg>`;
+
+    const svg = host.querySelector("svg");
+    const crosshair = svg.querySelector(".crosshair");
+    const cursor = svg.querySelector(".cursor");
+    svg.addEventListener("mousemove", (e) => {
+      const rect = svg.getBoundingClientRect();
+      const index = Math.round(((e.clientX - rect.left - PAD) / (W - PAD * 2)) * (data.length - 1));
+      const clamped = Math.max(0, Math.min(data.length - 1, index));
+      const d = data[clamped];
+      crosshair.style.display = cursor.style.display = "";
+      crosshair.setAttribute("x1", x(clamped)); crosshair.setAttribute("x2", x(clamped));
+      cursor.setAttribute("cx", x(clamped)); cursor.setAttribute("cy", y(d.jsLagP95Ms));
+      showTooltip(e.pageX, e.pageY, `${fmtTime(d.ts)} · p95 ${d.jsLagP95Ms} ms · max ${d.jsLagMaxMs} ms`);
+    });
+    svg.addEventListener("mouseleave", () => {
+      crosshair.style.display = cursor.style.display = "none";
+      hideTooltip();
+    });
+  };
+
+  // Horizontal bars of status families (status colors + direct labels)
+  const renderStatusChart = (done) => {
+    const host = $("statusChart");
+    if (!done.length) { host.innerHTML = `<div class="empty">Waiting for data</div>`; return; }
+    const families = [
+      { key: "2xx", label: "2xx", color: "var(--good)", test: (s) => s >= 200 && s < 300 },
+      { key: "3xx", label: "3xx", color: "var(--series-1)", test: (s) => s >= 300 && s < 400 },
+      { key: "4xx", label: "4xx", color: "var(--serious)", test: (s) => s >= 400 && s < 500 },
+      { key: "5xx", label: "5xx", color: "var(--critical)", test: (s) => s >= 500 },
+      { key: "off", label: "Network", color: "var(--warning)", test: () => false },
+    ];
+    const counts = families.map((f) => ({ ...f, count: 0 }));
+    for (const entry of done) {
+      const status = entry.response?.status ?? entry.error?.status;
+      const family = status ? counts.find((f) => f.test(status)) : counts[4];
+      (family ?? counts[4]).count++;
+    }
+    const max = Math.max(...counts.map((c) => c.count), 1);
+    const rows = counts.filter((c) => c.count > 0);
+    const BAR_H = 18, GAP = 8, LABEL_W = 52, W = Math.max(($("statusChart").clientWidth || 300) - 4, 280);
+    const H = rows.length * (BAR_H + GAP) + 4;
+
+    $("statusChart").innerHTML = `
+      <svg width="${W}" height="${H}">
+        ${rows.map((row, i) => {
+          const barWidth = Math.max(((W - LABEL_W - 60) * row.count) / max, 2);
+          const yPos = i * (BAR_H + GAP);
+          return `
+            <text x="0" y="${yPos + 13}" fill="var(--ink-2)" font-size="11">${row.label}</text>
+            <rect x="${LABEL_W}" y="${yPos}" width="${barWidth}" height="${BAR_H}"
+                  rx="4" fill="${row.color}"
+                  data-tip="${row.label}: ${row.count} requests"/>
+            <text x="${LABEL_W + barWidth + 8}" y="${yPos + 13}" fill="var(--ink)" font-size="11"
+                  font-variant-numeric="tabular-nums">${row.count}</text>`;
+        }).join("")}
+      </svg>`;
+    attachRectTooltips($("statusChart"));
+  };
+
+  // Duration histogram (single sequential hue)
+  const renderDurationChart = (durations) => {
+    const host = $("durationChart");
+    if (!durations.length) { host.innerHTML = `<div class="empty">Waiting for data</div>`; return; }
+    const buckets = [
+      { label: "<100", max: 100 }, { label: "<300", max: 300 },
+      { label: "<600", max: 600 }, { label: "<1s", max: 1000 },
+      { label: "<3s", max: 3000 }, { label: "3s+", max: Infinity },
+    ].map((b) => ({ ...b, count: 0 }));
+    for (const d of durations) (buckets.find((b) => d < b.max)).count++;
+
+    const max = Math.max(...buckets.map((b) => b.count), 1);
+    const W = Math.max(host.clientWidth - 4, 280), H = 110, PAD_BOTTOM = 18;
+    const barWidth = Math.floor((W - 10) / buckets.length) - 8;
+
+    host.innerHTML = `
+      <svg width="${W}" height="${H}">
+        ${buckets.map((bucket, i) => {
+          const height = Math.max(((H - PAD_BOTTOM - 14) * bucket.count) / max, bucket.count ? 3 : 0);
+          const xPos = 5 + i * (barWidth + 8);
+          const yPos = H - PAD_BOTTOM - height;
+          return `
+            <rect x="${xPos}" y="${yPos}" width="${barWidth}" height="${height}"
+                  rx="4" fill="var(--series-1)" data-tip="${bucket.label} ms: ${bucket.count} requests"/>
+            ${bucket.count ? `<text x="${xPos + barWidth / 2}" y="${yPos - 4}" text-anchor="middle"
+                  fill="var(--ink-2)" font-size="10" font-variant-numeric="tabular-nums">${bucket.count}</text>` : ""}
+            <text x="${xPos + barWidth / 2}" y="${H - 4}" text-anchor="middle" fill="var(--muted)" font-size="10">${bucket.label}</text>`;
+        }).join("")}
+        <line x1="0" y1="${H - PAD_BOTTOM}" x2="${W}" y2="${H - PAD_BOTTOM}" stroke="var(--baseline)" stroke-width="1"/>
+      </svg>`;
+    attachRectTooltips(host);
+  };
+
+  // Shared tooltip
+  const tooltip = $("vizTooltip");
+  const showTooltip = (pageX, pageY, text) => {
+    tooltip.textContent = text;
+    tooltip.style.display = "block";
+    tooltip.style.left = `${pageX + 12}px`;
+    tooltip.style.top = `${pageY - 28}px`;
+  };
+  const hideTooltip = () => { tooltip.style.display = "none"; };
+  const attachRectTooltips = (host) => {
+    host.querySelectorAll("rect[data-tip]").forEach((rect) => {
+      rect.addEventListener("mousemove", (e) => showTooltip(e.pageX, e.pageY, rect.dataset.tip));
+      rect.addEventListener("mouseleave", hideTooltip);
+    });
+  };
+
+  // ---------- Network ----------
+  $("netFilter").addEventListener("input", scheduleRender);
+  $("netSource").addEventListener("change", scheduleRender);
+  $("netExportHar").addEventListener("click", () => {
+    const entries = networkEntries(current()).map((entry) => {
+      const response = entry.response ?? entry.error ?? {};
+      const duration = response.durationMs ?? 0;
+      const requestBody = entry.request.body;
+      const responseBody = response.body;
+      const toHeaders = (headers) => Object.entries(headers ?? {}).map(([name, value]) => ({
+        name,
+        value: String(value ?? ""),
+      }));
+      const bodyText = requestBody == null
+        ? undefined
+        : typeof requestBody === "string" ? requestBody : JSON.stringify(requestBody);
+      const responseText = responseBody == null
+        ? ""
+        : typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody);
+      return {
+        startedDateTime: new Date(entry.ts).toISOString(),
+        time: duration,
+        request: {
+          method: String(entry.request.method ?? "GET").toUpperCase(),
+          url: entry.request.url,
+          httpVersion: "HTTP/1.1",
+          headers: toHeaders(entry.request.headers),
+          queryString: [],
+          cookies: [],
+          headersSize: -1,
+          bodySize: bodyText?.length ?? 0,
+          ...(bodyText !== undefined ? { postData: { mimeType: "application/json", text: bodyText } } : {}),
+        },
+        response: {
+          status: Number(response.status ?? 0),
+          statusText: entry.error ? String(entry.error.message ?? "Network error") : "",
+          httpVersion: "HTTP/1.1",
+          headers: toHeaders(response.headers),
+          cookies: [],
+          content: { size: responseText.length, mimeType: "application/json", text: responseText },
+          redirectURL: "",
+          headersSize: -1,
+          bodySize: responseText.length,
+        },
+        cache: {},
+        timings: { send: 0, wait: duration, receive: 0 },
+        _source: entry.request.source,
+      };
+    });
+    downloadJson(`rn-devtools-${new Date().toISOString().replaceAll(":", "-")}.har`, {
+      log: { version: "1.2", creator: { name: "rn-devtools-hub", version: "0.1.0" }, entries },
+    });
+  });
+
+  const statusFamilyClass = (status) =>
+    !status ? "s0" : status >= 500 ? "s5" : status >= 400 ? "s4" : status >= 300 ? "s3" : "s2";
+
+  const renderNetwork = (store) => {
+    const filter = $("netFilter").value.toLowerCase();
+    const sourceFilter = $("netSource").value;
+    const entries = networkEntries(store).slice().reverse();
+
+    const sources = [...new Set(entries.map((e) => e.request.source))];
+    const select = $("netSource");
+    const currentSource = select.value;
+    select.innerHTML = `<option value="">All sources</option>` +
+      sources.map((s) => `<option value="${esc(s)}"${s === currentSource ? " selected" : ""}>${esc(s)}</option>`).join("");
+
+    const rows = entries.filter((entry) => {
+      if (sourceFilter && entry.request.source !== sourceFilter) return false;
+      if (!filter) return true;
+      const status = entry.response?.status ?? entry.error?.status ?? "";
+      return `${entry.request.method} ${entry.request.url} ${status}`.toLowerCase().includes(filter);
+    }).slice(0, 300);
+
+    // Duration colored by slowness (beyond 1s then 3s)
+    const durationCell = (duration) => {
+      if (duration == null) return "";
+      const color = duration >= 3000
+        ? "var(--critical)"
+        : duration >= 1000
+          ? "var(--serious)"
+          : "inherit";
+      return `<span style="color:${color}">${duration} ms</span>`;
+    };
+    const bodySize = (entry) => {
+      const body = entry.response?.body;
+      if (body === undefined || body === null) return "";
+      try {
+        return formatBytes(JSON.stringify(body).length);
+      } catch { return ""; }
+    };
+
+    $("netEmpty").style.display = rows.length ? "none" : "";
+    $("netRows").innerHTML = rows.map((entry) => {
+      const status = entry.response?.status ?? entry.error?.status;
+      const duration = entry.response?.durationMs ?? entry.error?.durationMs;
+      return `<tr class="row ${entry.request.requestId === state.selectedRequestId ? "selected" : ""}"
+                  data-request="${entry.request.requestId}">
+        <td class="mono">${fmtTime(entry.ts)}</td>
+        <td>${methodBadge(entry.request.method)}</td>
+        <td title="${esc(entry.request.url)}">${highlightEndpoint(shortUrl(entry.request.url), store.endpoints)}</td>
+        <td><span class="status-badge ${statusFamilyClass(status)}">${status ?? (entry.error ? "ERR" : "…")}</span></td>
+        <td>${durationCell(duration)}</td>
+        <td>${bodySize(entry)}</td>
+        <td>${esc(entry.request.source ?? "")}</td>
+      </tr>`;
+    }).join("");
+    renderNetworkDetail(store);
+  };
+
+  const shortUrl = (url) => {
+    try {
+      const u = new URL(url);
+      return u.pathname + u.search;
+    } catch { return url; }
+  };
+
+  const endpointPaths = (map) => map
+    ? Object.values(map).flatMap((group) => Object.values(group)).map(String).sort((a, b) => b.length - a.length)
+    : [];
+
+  const highlightEndpoint = (url, map) => {
+    const path = endpointPaths(map).find((candidate) => String(url).includes(candidate));
+    if (!path) return esc(url);
+    const index = String(url).indexOf(path);
+    return `${esc(String(url).slice(0, index))}<span class="ep-hit">${esc(path)}</span>${esc(String(url).slice(index + path.length))}`;
+  };
+
+  $("netRows").addEventListener("click", (e) => {
+    const row = e.target.closest("tr[data-request]");
+    if (!row) return;
+    state.selectedRequestId = Number(row.dataset.request);
+    scheduleRender();
+  });
+
+  const renderNetworkDetail = (store) => {
+    const host = $("netDetail");
+    const entry = store.network.get(state.selectedRequestId);
+    if (!entry) { host.innerHTML = `<div class="empty">Select a request</div>`; return; }
+    host.innerHTML = `
+      <div class="mono" style="color:var(--ink); word-break:break-all">
+        ${methodBadge(entry.request.method)} ${esc(entry.request.url)}
+      </div>
+      <div style="display:flex; gap:6px; margin-top:8px">
+        <button class="mini-btn" id="copyCurlBtn">Copy as cURL</button>
+        <button class="mini-btn" id="copyJsonBtn">Copy response</button>
+      </div>
+      <h4>Request headers</h4>${jsonView(entry.request.headers)}
+      ${entry.request.body !== undefined ? `<h4>Request body</h4>${jsonView(entry.request.body)}` : ""}
+      ${entry.response ? `
+        <h4>Response (${entry.response.status}, ${entry.response.durationMs} ms)</h4>
+        ${jsonView(entry.response.body)}` : ""}
+      ${entry.error ? `
+        <h4 style="color:var(--critical)">Error${entry.error.status ? ` (${entry.error.status})` : ""}</h4>
+        ${jsonView(entry.error.body ?? entry.error.message)}` : ""}
+    `;
+
+    const flashButton = (button, label) => {
+      const original = button.textContent;
+      button.textContent = label;
+      setTimeout(() => { button.textContent = original; }, 1500);
+    };
+    $("copyCurlBtn")?.addEventListener("click", async (e) => {
+      const parts = [`curl -X ${String(entry.request.method ?? "GET").toUpperCase()}`];
+      for (const [key, value] of Object.entries(entry.request.headers ?? {})) {
+        if (value && value !== "•••redacted•••") {
+          parts.push(`-H ${JSON.stringify(`${key}: ${value}`)}`);
+        }
+      }
+      if (entry.request.body !== undefined && entry.request.body !== null) {
+        const body = typeof entry.request.body === "string"
+          ? entry.request.body
+          : JSON.stringify(entry.request.body);
+        parts.push(`-d ${JSON.stringify(body)}`);
+      }
+      parts.push(JSON.stringify(entry.request.url));
+      try {
+        await navigator.clipboard.writeText(parts.join(" \\\n  "));
+        flashButton(e.target, "Copied");
+      } catch { flashButton(e.target, "Copy failed"); }
+    });
+    $("copyJsonBtn")?.addEventListener("click", async (e) => {
+      try {
+        await navigator.clipboard.writeText(
+          JSON.stringify(entry.response?.body ?? entry.error?.body ?? null, null, 2)
+        );
+        flashButton(e.target, "Copied");
+      } catch { flashButton(e.target, "Copy failed"); }
+    });
+  };
+
+  // ---------- Uploads ----------
+  const UPLOAD_STATUS_CLASS = { completed: "s2", uploading: "s3", pending: "s0", failed: "s5" };
+  const renderUploads = (store) => {
+    const stats = store.uploadStats;
+    const tile = (label, value, cls = "") =>
+      `<div class="tile"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`;
+    $("uploadTiles").innerHTML = stats ? (
+      tile("Pending", stats.pendingUploads) +
+      tile("Active", stats.activeUploads) +
+      tile("Failed", stats.failedUploads, stats.failedUploads > 0 ? "crit" : "good") +
+      tile("Total in queue", stats.totalInQueue)
+    ) : `<div class="tile"><div class="label">Queue</div><div class="value">–</div></div>`;
+
+    const rows = store.uploads.slice(-200).reverse();
+    $("uploadEmpty").style.display = rows.length ? "none" : "";
+    $("uploadRows").innerHTML = rows.map((u) => {
+      const percent = Math.max(0, Math.min(100, u.percentage ?? 0));
+      const fillClass = u.status === "failed" ? "failed" : u.status === "completed" ? "done" : "";
+      return `
+      <tr>
+        <td class="mono">${fmtTime(u.ts)}</td>
+        <td class="mono" title="${esc(u.scanId)}">${esc(String(u.scanId ?? "").slice(0, 24))}</td>
+        <td><span class="status-badge ${UPLOAD_STATUS_CLASS[u.status] ?? ""}">${esc(u.status ?? "")}</span></td>
+        <td>
+          <span class="progress-track"><span class="progress-fill ${fillClass}" style="width:${u.status === "completed" ? 100 : percent}%"></span></span>
+          <span class="mono">${u.percentage != null ? `${percent}%` : ""}</span>
+        </td>
+        <td>${u.uploadedFiles ?? 0}/${u.totalFiles ?? 0}${u.failedFiles ? ` (${u.failedFiles} failed)` : ""}</td>
+      </tr>`;
+    }).join("");
+  };
+
+  // ---------- Cache React Query ----------
+  $("cacheRefresh").addEventListener("click", async () => {
+    const result = await sendCommand("query.snapshot");
+    if (result?.result) {
+      current().cache = result.result.queries || [];
+      scheduleRender();
+    }
+  });
+  $("cacheInvalidate").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    const response = await sendCommand("query.invalidate");
+    button.textContent = response.error ? "Failed" : "Cache invalidated";
+    setTimeout(() => { button.textContent = "Invalidate all"; button.disabled = false; }, 1600);
+  });
+  $("cacheRefetch").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    const response = await sendCommand("query.refetch");
+    button.textContent = response.error ? "Failed" : "Queries refetched";
+    setTimeout(() => { button.textContent = "Refetch active queries"; button.disabled = false; }, 1600);
+  });
+
+  const renderCache = (store) => {
+    const queries = store.cache;
+    $("cacheEmpty").style.display = queries.length ? "none" : "";
+    $("cacheRows").innerHTML = queries.map((q, index) => `
+      <tr class="row" data-cache="${index}">
+        <td class="mono" title="${esc(JSON.stringify(q.queryKey))}">${esc(JSON.stringify(q.queryKey))}</td>
+        <td><span class="status-badge ${q.status === "success" ? "s2" : q.status === "error" ? "s5" : "s3"}">${esc(q.status)}</span></td>
+        <td>${q.isStale ? "stale" : "fresh"}</td>
+        <td>${q.observers}</td>
+        <td class="mono">${q.dataUpdatedAt ? fmtTime(q.dataUpdatedAt) : ""}</td>
+      </tr>`).join("");
+  };
+
+  $("cacheRows").addEventListener("click", (e) => {
+    const row = e.target.closest("tr[data-cache]");
+    if (!row) return;
+    const query = current().cache[Number(row.dataset.cache)];
+    $("cacheDetail").innerHTML = query
+      ? `<h4>Data (truncated)</h4>${jsonView(query.data)}`
+      : "";
+  });
+
+  // ---------- Screens ----------
+  const renderScreens = (store) => {
+    const screens = store.screens;
+    $("screenEmpty").style.display = screens.length ? "none" : "";
+
+    // Total time per screen
+    const totals = new Map();
+    screens.forEach((s) => {
+      if (s.previousScreen && s.previousDurationMs) {
+        totals.set(s.previousScreen, (totals.get(s.previousScreen) ?? 0) + s.previousDurationMs);
+      }
+    });
+    const top = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+    $("screenTiles").innerHTML = top.map(([screen, ms]) =>
+      `<div class="tile"><div class="label" title="${esc(screen)}">${esc(screen)}</div>
+       <div class="value">${(ms / 1000).toFixed(1)}s</div><div class="sub">cumulative time</div></div>`
+    ).join("");
+
+    $("screenRows").innerHTML = screens.slice(-200).reverse().map((s) => `
+      <tr>
+        <td class="mono">${fmtTime(s.ts)}</td>
+        <td class="mono">${esc(s.screen)}</td>
+        <td>${s.previousScreen ? `${esc(s.previousScreen)} : ${((s.previousDurationMs ?? 0) / 1000).toFixed(1)}s` : ""}</td>
+      </tr>`).join("");
+  };
+
+  // ---------- Logs ----------
+  $("logFilter").addEventListener("input", scheduleRender);
+  $("logLevel").addEventListener("change", scheduleRender);
+
+  const renderLogs = (store) => {
+    const filter = $("logFilter").value.toLowerCase();
+    const level = $("logLevel").value;
+    const logs = store.logs.filter((l) => {
+      if (level && l.level !== level) return false;
+      if (!filter) return true;
+      return JSON.stringify(l.args).toLowerCase().includes(filter);
+    }).slice(-400);
+
+    $("logEmpty").style.display = logs.length ? "none" : "";
+    $("logList").innerHTML = logs.map((l) => {
+      // Object arguments are colorized as JSON
+      const message = (l.args ?? []).map((a) =>
+        typeof a === "string" ? esc(a) : highlightJson(a)
+      ).join(" ");
+      return `<div class="log-line ${l.level}">
+        <span class="ts">${fmtTime(l.ts)}</span>
+        <span class="lvl">${l.level}</span>
+        <span class="msg">${message}</span>
+      </div>`;
+    }).join("");
+  };
+
+  // ---------- Storage (AsyncStorage) ----------
+  $("storageRefresh").addEventListener("click", async () => {
+    const response = await sendCommand("storage.keys");
+    if (response?.result?.keys) {
+      current().storageKeys = response.result.keys;
+      scheduleRender();
+    } else if (response?.error) {
+      $("storageEmpty").textContent = response.error;
+    }
+  });
+  $("storageFilter").addEventListener("input", scheduleRender);
+
+  const renderStorage = (store) => {
+    $("cStorage").textContent = store.storageWrites.length || "";
+    const filter = ($("storageFilter").value || "").toLowerCase();
+
+    const keys = (store.storageKeys || [])
+      .filter((entry) => !filter || entry.key.toLowerCase().includes(filter))
+      .sort((a, b) => (b.lastWriteAt ?? 0) - (a.lastWriteAt ?? 0));
+
+    $("storageEmpty").style.display = keys.length ? "none" : "";
+    $("storageRows").innerHTML = keys.map((entry) => `
+      <tr class="row" data-storage-key="${esc(entry.key)}">
+        <td class="mono" title="${esc(entry.key)}">${esc(entry.key)}</td>
+        <td>${formatBytes(entry.size)}</td>
+        <td class="mono">${entry.lastWriteAt ? fmtTime(entry.lastWriteAt) : "before session"}</td>
+      </tr>`).join("");
+
+    const writes = store.storageWrites
+      .filter((w) => !filter || w.key.toLowerCase().includes(filter))
+      .slice(-100).reverse();
+    $("storageWriteEmpty").style.display = writes.length ? "none" : "";
+    $("storageWriteRows").innerHTML = writes.map((write) => `
+      <tr>
+        <td class="mono">${fmtTime(write.ts)}</td>
+        <td><span class="status-badge ${write.op === "remove" ? "s5" : "s2"}">${esc(write.op)}</span></td>
+        <td class="mono" title="${esc(write.key)}">${esc(write.key)}</td>
+        <td>${formatBytes(write.size)}</td>
+        <td class="mono" title="${esc(write.preview ?? "")}">${esc((write.preview ?? "").slice(0, 60))}</td>
+      </tr>`).join("");
+  };
+
+  const formatBytes = (size) => {
+    if (size == null) return "";
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const downloadJson = (filename, value) => {
+    const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  $("storageRows").addEventListener("click", async (e) => {
+    const row = e.target.closest("tr[data-storage-key]");
+    if (!row) return;
+    const key = row.dataset.storageKey;
+    $("storageDetail").innerHTML = `<div class="empty">Loading...</div>`;
+    const response = await sendCommand("storage.get", { key });
+    if (response?.error) {
+      $("storageDetail").innerHTML = `<pre style="color:var(--critical)">${esc(response.error)}</pre>`;
+      return;
+    }
+    $("storageDetail").innerHTML = `
+      <div class="mono" style="color:var(--ink); word-break:break-all">${esc(key)}</div>
+      <h4>Value (${formatBytes(response.result?.size)})</h4>
+      ${jsonView(response.result?.value)}`;
+  });
+
+  // ---------- SQLite ----------
+  const runSql = async (sql) => {
+    $("sqlOutput").innerHTML = `<div class="empty">Running...</div>`;
+    const response = await sendCommand("sqlite.query", { sql });
+    if (response?.error) {
+      $("sqlOutput").innerHTML = `<pre style="color:var(--critical)">${esc(response.error)}</pre>`;
+      return;
+    }
+    const rows = response?.result?.rows ?? [];
+    if (!rows.length) {
+      $("sqlOutput").innerHTML = `<div class="empty">0 rows</div>`;
+      return;
+    }
+    const columns = Object.keys(rows[0]);
+    $("sqlOutput").innerHTML = `
+      <table>
+        <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((row) =>
+          `<tr>${columns.map((c) => `<td class="mono${c === "name" && row.type === "table" ? " row" : ""}"${c === "name" && row.type === "table" ? ` data-table-name="${esc(row[c])}"` : ""} title="${esc(row[c])}">${esc(row[c])}</td>`).join("")}</tr>`
+        ).join("")}</tbody>
+      </table>
+      <div class="sub" style="color:var(--muted); padding:8px 0">${rows.length} rows</div>`;
+  };
+
+  $("sqlRun").addEventListener("click", () => runSql($("sqlInput").value));
+  const setSql = (sql) => {
+    $("sqlInput").value = sql;
+    syncSqlMirror();
+    runSql(sql);
+  };
+  $("sqlTables").addEventListener("click", () => setSql(
+    "SELECT name, type FROM sqlite_master WHERE type IN ('table','index') ORDER BY type, name"
+  ));
+  $("sqlOutput").addEventListener("click", (e) => {
+    const cell = e.target.closest("[data-table-name]");
+    if (!cell) return;
+    const table = cell.dataset.tableName;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) return;
+    setSql(`SELECT * FROM ${table} LIMIT 50`);
+  });
+
+  // Highlight mirror: the textarea text is transparent, the colorized
+  // pre is rendered right behind it (same font metrics)
+  const syncSqlMirror = () => {
+    const input = $("sqlInput");
+    $("sqlMirror").innerHTML = highlightSql(input.value) + "\n";
+    $("sqlMirror").scrollTop = input.scrollTop;
+  };
+  $("sqlInput").addEventListener("input", syncSqlMirror);
+  $("sqlInput").addEventListener("scroll", syncSqlMirror);
+  syncSqlMirror();
+
+  // ---------- Endpoints ----------
+  const renderEndpoints = (store) => {
+    const map = store.endpoints;
+    $("endpointEmpty").style.display = map ? "none" : "";
+    if (!map) { $("endpointRows").innerHTML = ""; return; }
+
+    const entries = networkEntries(store);
+    const percentile = (values, ratio) => {
+      if (!values.length) return null;
+      const sorted = values.slice().sort((a, b) => a - b);
+      return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1)];
+    };
+    const endpointStats = (path) => {
+      const matching = entries.filter((entry) => String(entry.request.url).includes(path));
+      const durations = matching
+        .map((entry) => entry.response?.durationMs ?? entry.error?.durationMs)
+        .filter((duration) => typeof duration === "number");
+      return {
+        calls: matching.length,
+        errors: matching.filter((entry) => entry.error || entry.response?.status >= 400).length,
+        p50: percentile(durations, 0.5),
+        p95: percentile(durations, 0.95),
+      };
+    };
+
+    const rows = [];
+    for (const [group, endpoints] of Object.entries(map)) {
+      for (const [name, path] of Object.entries(endpoints)) {
+        rows.push({ group, name, path: String(path), ...endpointStats(String(path)) });
+      }
+    }
+    $("endpointRows").innerHTML = rows.map((row) => `
+      <tr class="row" data-path="${esc(row.path)}">
+        <td>${esc(row.group)}</td>
+        <td class="mono">${esc(row.name)}</td>
+        <td class="mono">${esc(row.path)}</td>
+        <td>${row.calls || ""}</td>
+        <td class="${row.errors ? "crit" : ""}">${row.errors || ""}</td>
+        <td>${row.p50 == null ? "" : `${row.p50} ms`}</td>
+        <td>${row.p95 == null ? "" : `${row.p95} ms`}</td>
+      </tr>`).join("");
+  };
+
+  $("endpointRows").addEventListener("click", (e) => {
+    const row = e.target.closest("tr[data-path]");
+    if (!row) return;
+    $("netFilter").value = row.dataset.path;
+    document.querySelector('nav button[data-tab="network"]').click();
+  });
+
+  const renderActions = (store) => {
+    const actions = store.actions || [];
+    $("actionsEmpty").style.display = actions.length ? "none" : "";
+    $("actionsGrid").innerHTML = actions.map((action) => {
+      const unavailable = action.requiresNative && store.appInfo && !store.appInfo.nativeCapable;
+      return `<div class="action-card">
+        <strong>${esc(action.label)}</strong>
+        ${unavailable ? `<div class="hint">Requires a development build</div>` : ""}
+        <button data-action="${esc(action.name)}" class="${action.danger ? "danger" : ""}" ${unavailable ? "disabled" : ""}>Run</button>
+      </div>`;
+    }).join("");
+  };
+
+  $("actionsGrid").addEventListener("click", async (e) => {
+    const button = e.target.closest("button[data-action]");
+    if (!button || button.disabled) return;
+    const action = current().actions.find((item) => item.name === button.dataset.action);
+    if (!action || (action.danger && !confirm(`Run action "${action.label}"?`))) return;
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "Running...";
+    const response = await sendCommand("action.run", { name: action.name });
+    button.textContent = response.error ? `Error: ${response.error}` : "Done";
+    setTimeout(() => {
+      button.textContent = original;
+      button.disabled = false;
+    }, 2000);
+  });
+
+  // ================================================================
+  // DESIGN panel: app.json + assets served by the hub
+  // ================================================================
+  const hubToken = new URLSearchParams(location.search).get("token") ?? "";
+  const designAsset = (path) =>
+    `/design/asset?path=${encodeURIComponent(path)}&token=${encodeURIComponent(hubToken)}`;
+
+  $("designRefresh").addEventListener("click", async () => {
+    $("designContent").innerHTML = `<div class="empty">Loading...</div>`;
+    let manifest;
+    try {
+      const response = await fetch(`/design/manifest?token=${encodeURIComponent(hubToken)}`);
+      manifest = await response.json();
+      if (manifest.error) throw new Error(manifest.error);
+    } catch (error) {
+      $("designContent").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`;
+      return;
+    }
+
+    const iconCard = manifest.icon ? `
+      <div class="design-card">
+        <h3>App icon</h3>
+        <div class="icon-row">
+          <div class="icon-preview"><img src="${designAsset(manifest.icon)}" class="r22" width="96" height="96"><span>96</span></div>
+          <div class="icon-preview"><img src="${designAsset(manifest.icon)}" class="r22" width="64" height="64"><span>64</span></div>
+          <div class="icon-preview"><img src="${designAsset(manifest.icon)}" class="r50" width="48" height="48"><span>round</span></div>
+          <div class="icon-preview"><img src="${designAsset(manifest.icon)}" class="r0" width="32" height="32"><span>32</span></div>
+        </div>
+      </div>` : "";
+
+    const adaptive = manifest.android?.adaptiveIcon;
+    const adaptiveCard = adaptive?.foregroundImage ? `
+      <div class="design-card">
+        <h3>Android adaptive icon</h3>
+        <div class="icon-row">
+          <div class="icon-preview">
+            <img src="${designAsset(adaptive.foregroundImage)}" class="r50" width="96" height="96"
+                 style="background:${esc(adaptive.backgroundColor ?? "#ffffff")}">
+            <span>${esc(adaptive.backgroundColor ?? "")}</span>
+          </div>
+        </div>
+      </div>` : "";
+
+    const splash = manifest.splash;
+    const splashCard = splash ? `
+      <div class="design-card">
+        <h3>Splash screen</h3>
+        <div class="splash-frame" style="background:${esc(splash.backgroundColor ?? "#ffffff")}">
+          ${splash.image ? `<img src="${designAsset(splash.image)}">` : ""}
+        </div>
+        <div class="hint" style="text-align:center; margin-top:6px; color:var(--muted)">
+          ${esc(splash.resizeMode ?? "")} · ${esc(splash.backgroundColor ?? "")}
+        </div>
+      </div>` : "";
+
+    const fontsCard = manifest.fonts?.length ? `
+      <div class="design-card">
+        <h3>Fonts (${manifest.fonts.length})</h3>
+        <div id="fontSpecimens">
+          ${manifest.fonts.map((path, index) => {
+            const name = path.split("/").pop().replace(/\.(ttf|otf)$/i, "");
+            return `<div class="font-specimen">
+              <div class="name">${esc(name)}</div>
+              <div class="sample" style="font-family:'df-${index}'">Package SPX-4821 scanned at 2:32 PM</div>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>` : "";
+
+    const soundsCard = manifest.notificationSounds?.length ? `
+      <div class="design-card">
+        <h3>Notification sounds</h3>
+        ${manifest.notificationSounds.map((sound) => `
+          <div class="font-specimen">
+            <div class="name">${esc(sound.split("/").pop())}</div>
+            <audio controls preload="none" src="${designAsset(sound)}" style="width:100%; height:30px"></audio>
+          </div>`).join("")}
+      </div>` : "";
+
+    const metaCard = `
+      <div class="design-card">
+        <h3>Identity</h3>
+        <table class="design-meta">
+          ${[
+            ["Name", manifest.name], ["Slug", manifest.slug], ["Version", manifest.version],
+            ["Scheme", manifest.scheme], ["Bundle iOS", manifest.ios?.bundleIdentifier],
+            ["Package Android", manifest.android?.package],
+            ["Orientation", manifest.orientation], ["Theme", manifest.userInterfaceStyle],
+            ["Updates", manifest.updatesUrl],
+          ].filter(([, value]) => value)
+            .map(([label, value]) => `<tr><th style="position:static">${label}</th><td class="mono">${esc(value)}</td></tr>`)
+            .join("")}
+        </table>
+      </div>`;
+
+    $("designContent").innerHTML =
+      `<div class="design-grid">${iconCard}${adaptiveCard}${splashCard}${fontsCard}${soundsCard}${metaCard}</div>`;
+
+    // Load the real fonts for the specimens
+    (manifest.fonts ?? []).forEach((path, index) => {
+      const face = new FontFace(`df-${index}`, `url(${designAsset(path)})`);
+      face.load().then((loaded) => document.fonts.add(loaded)).catch(() => {});
+    });
+  });
+
+  // ================================================================
+  // MIRROR panel: adb / simctl captures on the hub side + Android touch
+  // ================================================================
+  const mirror = { sources: [], timer: null, busy: false, appStreaming: false, started: false };
+
+  const currentMirrorSource = () =>
+    mirror.sources.find((s) => s.id === $("mirrorSource").value) ?? null;
+
+  const detectMirrorSources = async () => {
+    try {
+      const response = await fetch(`/mirror/sources?token=${encodeURIComponent(hubToken)}`);
+      const data = await response.json();
+      mirror.sources = data.sources ?? [];
+    } catch {
+      mirror.sources = [];
+    }
+    // "App" source: real-time streaming via react-native-view-shot,
+    // works everywhere in Expo Go (including physical iPhone over Wi-Fi)
+    if (current().capabilities?.viewShotAvailable) {
+      mirror.sources.push({
+        id: "app:viewshot",
+        label: "Live app (view-shot)",
+        kind: "app",
+        controllable: false,
+      });
+    }
+    $("mirrorSource").innerHTML = mirror.sources.length
+      ? mirror.sources.map((s) => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join("")
+      : `<option value="">No source detected</option>`;
+    $("mirrorToggle").disabled = !mirror.sources.length;
+    return mirror.sources;
+  };
+
+  // Auto-detection priority: the app itself, then Android adb, then simulator
+  const pickBestSource = () =>
+    mirror.sources.find((s) => s.kind === "app") ??
+    mirror.sources.find((s) => s.kind === "android") ??
+    mirror.sources[0] ?? null;
+
+  const stopMirror = async () => {
+    if (mirror.timer) clearInterval(mirror.timer);
+    mirror.timer = null;
+    if (mirror.appStreaming) {
+      mirror.appStreaming = false;
+      await sendCommand("screen.stream.stop").catch(() => {});
+    }
+    $("mirrorToggle").textContent = "Resume";
+  };
+
+  const startMirror = async (source) => {
+    await stopMirror();
+    if (!source) return;
+    $("mirrorSource").value = source.id;
+    $("mirrorKeysCard").style.display = source.controllable ? "" : "none";
+    $("mirrorToggle").textContent = "Pause";
+    $("mirrorToggle").disabled = false;
+
+    if (source.kind === "app") {
+      const response = await sendCommand("screen.stream.start", { fps: 3 });
+      if (response?.error) {
+        $("mirrorStatus").textContent = response.error;
+        return;
+      }
+      mirror.appStreaming = true;
+      $("mirrorStatus").textContent = `Live app (${response.result?.fps ?? 3} fps)`;
+      return;
+    }
+    refreshMirrorFrame();
+    mirror.timer = setInterval(refreshMirrorFrame, 700);
+    $("mirrorStatus").textContent = `${source.label} (~1.4 fps)`;
+  };
+
+  // AUTOMATIC detection + start when the Mirror tab opens
+  const mirrorAuto = async () => {
+    if (mirror.timer || mirror.appStreaming) return; // already running
+    $("mirrorStatus").textContent = "Detecting...";
+    await detectMirrorSources();
+    const best = pickBestSource();
+    if (best) {
+      await startMirror(best);
+    } else {
+      $("mirrorStatus").textContent = "No source: connect the app or a device";
+      $("mirrorEmpty").textContent =
+        "No screen detected. Start the app in dev, or plug in an Android (adb), or boot an iOS simulator.";
+    }
+  };
+
+  $("mirrorRefresh").addEventListener("click", async () => {
+    await stopMirror();
+    mirrorAuto();
+  });
+
+  $("mirrorSource").addEventListener("change", () => {
+    const source = currentMirrorSource();
+    if (source) startMirror(source);
+  });
+
+  $("adbPairBtn").addEventListener("click", async () => {
+    const host = $("adbPairHost").value.trim();
+    const code = $("adbPairCode").value.trim();
+    if (!host || !code) return;
+    $("mirrorStatus").textContent = "Pairing...";
+    try {
+      const response = await fetch(`/mirror/adb-pair?token=${encodeURIComponent(hubToken)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host, code }),
+      });
+      const data = await response.json();
+      $("mirrorStatus").textContent = data.ok
+        ? "Paired. Continue to step 2: Connect."
+        : (data.output ?? data.error ?? "Pairing failed");
+    } catch (error) {
+      $("mirrorStatus").textContent = `Error: ${error.message}`;
+    }
+  });
+
+  $("adbWifiConnect").addEventListener("click", async () => {
+    const host = $("adbWifiHost").value.trim();
+    if (!host) return;
+    $("mirrorStatus").textContent = "adb connecting...";
+    try {
+      const response = await fetch(`/mirror/adb-connect?token=${encodeURIComponent(hubToken)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host }),
+      });
+      const data = await response.json();
+      $("mirrorStatus").textContent = data.output ?? data.error ?? "";
+      if (data.ok) { await stopMirror(); mirrorAuto(); }
+    } catch (error) {
+      $("mirrorStatus").textContent = `Error: ${error.message}`;
+    }
+  });
+
+  const refreshMirrorFrame = async () => {
+    const source = currentMirrorSource();
+    if (!source || mirror.busy) return;
+    mirror.busy = true;
+    try {
+      const response = await fetch(
+        `/mirror/frame?source=${encodeURIComponent(source.id)}&token=${encodeURIComponent(hubToken)}&t=${Date.now()}`
+      );
+      if (!response.ok) throw new Error((await response.json()).error ?? response.status);
+      const blob = await response.blob();
+      const image = $("mirrorImage");
+      const previous = image.src;
+      image.src = URL.createObjectURL(blob);
+      image.style.display = "";
+      $("mirrorEmpty").style.display = "none";
+      if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
+    } catch (error) {
+      $("mirrorStatus").textContent = `Capture: ${error.message}`;
+    } finally {
+      mirror.busy = false;
+    }
+  };
+
+  // Pause / Resume (the initial start is automatic)
+  $("mirrorToggle").addEventListener("click", async () => {
+    if (mirror.timer || mirror.appStreaming) {
+      await stopMirror();
+      $("mirrorStatus").textContent = "Paused";
+      return;
+    }
+    const source = currentMirrorSource() ?? pickBestSource();
+    if (source) startMirror(source);
+  });
+
+  // Mouse on the image: click = tap, drag = swipe (Android only).
+  // The gesture is measured in device screen coordinates, and its real
+  // duration is forwarded to preserve inertia (fling vs slow drag).
+  const SWIPE_THRESHOLD_PX = 12;
+  let dragStart = null;
+
+  const toDeviceCoords = (event, source) => {
+    const image = $("mirrorImage");
+    const rect = image.getBoundingClientRect();
+    return {
+      x: Math.round(((event.clientX - rect.left) / rect.width) * (source.width ?? image.naturalWidth)),
+      y: Math.round(((event.clientY - rect.top) / rect.height) * (source.height ?? image.naturalHeight)),
+    };
+  };
+
+  const sendInput = (body) =>
+    fetch(`/mirror/input?token=${encodeURIComponent(hubToken)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => {});
+
+  $("mirrorImage").addEventListener("pointerdown", (e) => {
+    const source = currentMirrorSource();
+    if (!source?.controllable) return;
+    e.preventDefault();
+    $("mirrorImage").setPointerCapture(e.pointerId);
+    dragStart = { ...toDeviceCoords(e, source), clientX: e.clientX, clientY: e.clientY, at: Date.now() };
+  });
+
+  $("mirrorImage").addEventListener("pointerup", async (e) => {
+    const source = currentMirrorSource();
+    if (!source?.controllable || !dragStart) return;
+    const start = dragStart;
+    dragStart = null;
+
+    const end = toDeviceCoords(e, source);
+    const movedPx = Math.hypot(e.clientX - start.clientX, e.clientY - start.clientY);
+
+    if (movedPx < SWIPE_THRESHOLD_PX) {
+      await sendInput({ source: source.id, type: "tap", x: end.x, y: end.y });
+    } else {
+      await sendInput({
+        source: source.id,
+        type: "swipe",
+        x1: start.x, y1: start.y, x2: end.x, y2: end.y,
+        durationMs: Date.now() - start.at,
+      });
+    }
+    setTimeout(refreshMirrorFrame, 350);
+  });
+
+  $("mirrorImage").addEventListener("pointercancel", () => { dragStart = null; });
+  // Prevent the native image drag from stealing the gesture
+  $("mirrorImage").addEventListener("dragstart", (e) => e.preventDefault());
+
+  // Wheel = vertical swipe (list scrolling)
+  let wheelAccumulator = 0;
+  let wheelTimer = null;
+  $("mirrorImage").addEventListener("wheel", (e) => {
+    const source = currentMirrorSource();
+    if (!source?.controllable) return;
+    e.preventDefault();
+    wheelAccumulator += e.deltaY;
+    if (wheelTimer) return;
+    wheelTimer = setTimeout(async () => {
+      const image = $("mirrorImage");
+      const height = source.height ?? image.naturalHeight;
+      const width = source.width ?? image.naturalWidth;
+      // One wheel notch down scrolls the content down
+      const distance = Math.max(-height * 0.6, Math.min(height * 0.6, -wheelAccumulator * 2));
+      wheelAccumulator = 0;
+      wheelTimer = null;
+      const centerY = Math.round(height / 2);
+      await sendInput({
+        source: source.id,
+        type: "swipe",
+        x1: Math.round(width / 2), y1: centerY,
+        x2: Math.round(width / 2), y2: Math.round(centerY + distance),
+        durationMs: 120,
+      });
+      setTimeout(refreshMirrorFrame, 300);
+    }, 90);
+  }, { passive: false });
+
+  // Keyboard input when the image has focus
+  $("mirrorImage").addEventListener("keydown", async (e) => {
+    const source = currentMirrorSource();
+    if (!source?.controllable) return;
+    const specialKeys = {
+      Enter: "enter", Backspace: "delete", Tab: "tab",
+      Escape: "escape", ArrowLeft: null, ArrowRight: null,
+    };
+    if (e.key in specialKeys) {
+      const key = specialKeys[e.key];
+      if (!key) return;
+      e.preventDefault();
+      await sendInput({ source: source.id, type: "key", key });
+    } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      await sendInput({ source: source.id, type: "text", text: e.key });
+    } else {
+      return;
+    }
+    setTimeout(refreshMirrorFrame, 250);
+  });
+
+  document.querySelectorAll("[data-mirror-key]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const source = currentMirrorSource();
+      if (!source?.controllable) {
+        $("mirrorStatus").textContent = "Keys available on Android (adb) only";
+        return;
+      }
+      await fetch(`/mirror/input?token=${encodeURIComponent(hubToken)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: source.id, type: "key", key: button.dataset.mirrorKey }),
+      }).catch(() => {});
+      setTimeout(refreshMirrorFrame, 350);
+    });
+  });
+
+  // ================================================================
+  // Capability badges: lightweight polling, light up as soon as a
+  // phone-interaction technology is available
+  // ================================================================
+  const renderCapabilityBadges = (data) => {
+    const badges = [];
+    const androidCount = (data.sources ?? []).filter((s) => s.kind === "android").length;
+    const simCount = (data.sources ?? []).filter((s) => s.kind === "ios-simulator").length;
+
+    // App connected with screen capture (view-shot)
+    const appLive = !!current().capabilities?.viewShotAvailable &&
+      state.devices.some((d) => d.id === state.selectedDevice && d.connected);
+    badges.push(`<span class="cap-badge ${appLive ? "on" : ""}"
+      title="${appLive ? "App mirror available (view-shot)" : "App not connected or view-shot missing"}">App mirror</span>`);
+
+    if (data.adbAvailable) {
+      badges.push(`<span class="cap-badge ${androidCount ? "on" : ""}"
+        title="${androidCount ? `${androidCount} controllable Android device(s): mirror, tap, keys` : "adb installed, no device attached (USB or Wi-Fi)"}">adb${androidCount ? ` · ${androidCount}` : ""}</span>`);
+    }
+    if (data.simctlAvailable) {
+      badges.push(`<span class="cap-badge ${simCount ? "on" : ""}"
+        title="${simCount ? `${simCount} booted iOS simulator(s)` : "xcrun available, no simulator booted"}">iOS sim${simCount ? ` · ${simCount}` : ""}</span>`);
+    }
+    $("capBadges").innerHTML = badges.join("");
+  };
+
+  const pollCapabilities = async () => {
+    try {
+      const response = await fetch(`/mirror/sources?quick=1&token=${encodeURIComponent(hubToken)}`);
+      renderCapabilityBadges(await response.json());
+    } catch {
+      // hub unreachable: badges stay as they are
+    }
+  };
+  pollCapabilities();
+  setInterval(pollCapabilities, 5000);
+
+  connect();
+})();
+</script>
+</body>
+</html>

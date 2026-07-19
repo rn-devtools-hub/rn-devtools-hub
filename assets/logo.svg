@@ -1,0 +1,14 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- rn-devtools-hub: a phone whose screen is mirrored to the hub -->
+  <rect width="512" height="512" rx="96" fill="#1a1a19"/>
+  <!-- phone -->
+  <rect x="120" y="96" width="152" height="288" rx="28" fill="none" stroke="#c3c2b7" stroke-width="18"/>
+  <rect x="168" y="118" width="56" height="10" rx="5" fill="#c3c2b7"/>
+  <!-- active screen -->
+  <rect x="146" y="150" width="100" height="180" rx="10" fill="#3987e5"/>
+  <!-- waves toward the hub -->
+  <path d="M300 200 q34 40 0 112" fill="none" stroke="#3987e5" stroke-width="18" stroke-linecap="round"/>
+  <path d="M340 176 q54 64 0 160" fill="none" stroke="#256abf" stroke-width="18" stroke-linecap="round"/>
+  <!-- hub dot -->
+  <circle cx="398" cy="256" r="26" fill="#0ca30c"/>
+</svg>

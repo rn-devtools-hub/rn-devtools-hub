@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rn-devtools-hub</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; background: #0d0d0d; color: #c3c2b7;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.65;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
+  h1 { color: #fff; font-size: 34px; margin: 16px 0 8px; }
+  h2 { color: #fff; font-size: 20px; margin-top: 40px; }
+  a { color: #3987e5; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .tagline { font-size: 17px; color: #c3c2b7; }
+  pre {
+    background: #1a1a19; border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px; padding: 14px 16px; overflow-x: auto;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+    color: #c3c2b7;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2c2c2a; }
+  th { color: #898781; font-weight: 500; }
+  .links { display: flex; gap: 14px; flex-wrap: wrap; margin: 22px 0; }
+  .links a {
+    background: #1a1a19; border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px; padding: 9px 15px; color: #fff;
+  }
+  img.logo { width: 88px; }
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="assets/logo.svg" alt="">
+  <h1>rn-devtools-hub</h1>
+  <p class="tagline">
+    Local inspector for React Native and Expo apps. Network, crashes, logs,
+    storage, SQLite, cache, screen mirror, remote actions and an MCP server,
+    streamed to a web dashboard. Zero native dependencies, inert in
+    production, your data stays on your machine.
+  </p>
+
+  <div class="links">
+    <a href="https://github.com/josephjoberno/rn-devtools-hub">GitHub</a>
+    <a href="integration.html">Integration guide</a>
+    <a href="protocol.html">Protocol (reference)</a>
+    <a href="llms.txt">llms.txt</a>
+  </div>
+
+  <h2>Getting started in 3 steps</h2>
+  <pre># 1. In your project (devDependency)
+npm install --save-dev rn-devtools-hub
+
+# 2. The hub, from the project root (Bun required)
+npx rn-devtools-hub
+
+# 3. In the app: 3 lines of glue, see the integration guide</pre>
+
+  <h2>Why not Flipper, Reactotron, or a SaaS</h2>
+  <table>
+    <tr><th></th><th>rn-devtools-hub</th><th>Flipper</th><th>Reactotron</th><th>SaaS (Vexo...)</th></tr>
+    <tr><td>Native dependencies</td><td>None</td><td>Mandatory (what killed it)</td><td>None</td><td>Native SDK</td></tr>
+    <tr><td>Interface</td><td>Browser, multi-device</td><td>Electron app</td><td>Desktop app</td><td>Cloud</td></tr>
+    <tr><td>Your data</td><td>Stays local</td><td>Local</td><td>Local</td><td>On their servers</td></tr>
+    <tr><td>Drivable by AI agents</td><td>Built-in MCP</td><td>No</td><td>No</td><td>No</td></tr>
+  </table>
+
+  <h2>For AI agents</h2>
+  <p>
+    The <a href="llms.txt">llms.txt</a> file sums it all up. The step-by-step
+    integration procedure, the pitfalls and the validation are in
+    <a href="https://github.com/josephjoberno/rn-devtools-hub/blob/main/AGENTS.md">AGENTS.md</a>.
+    The hub exposes a local MCP server to query the running app.
+  </p>
+</main>
+</body>
+</html>

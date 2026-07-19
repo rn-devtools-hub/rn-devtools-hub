@@ -354,4 +354,10 @@ class Devtools {
 
 export const devtools = new Devtools();
 export { DevtoolsTransport } from "./transport";
-export type { DevtoolsEvent, DevtoolsInitOptions } from "./types";
+export { truncateForWire, redactHeaders } from "./types";
+export type {
+  ActionDefinition,
+  CommandHandler,
+  DevtoolsEvent,
+  DevtoolsInitOptions,
+} from "./types";

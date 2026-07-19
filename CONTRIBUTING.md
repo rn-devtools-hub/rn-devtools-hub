@@ -54,14 +54,27 @@ To test with a real app: see docs/integration.md in an RN project.
 - CHANGELOG.md is generated automatically by release-it from the commits:
   never edit it by hand.
 
+## Branches
+
+- `main`: released code. Protected, only receives merges from `develop`
+  (or hotfix branches). Releases are cut from here.
+- `develop`: integration branch, where day-to-day work lands.
+- `feat/*`, `fix/*`: your working branches, opened from `develop`.
+
+Flow: `feat/my-idea` -> PR to `develop` -> when ready to ship, PR
+`develop` -> `main`, then run the Release workflow.
+
+Hotfix: branch from `main`, PR back to `main`, then merge `main` into
+`develop` so the fix is not lost.
+
 ## Proposing a change
 
 1. Open an issue to discuss (unless trivial)
-2. Fork + branch (`feat/my-idea`)
+2. Fork + branch from `develop` (`feat/my-idea`)
 3. Add tests (tests/ for the SDK; for the dashboard, verify at minimum
    `node --check` on the extracted script and a manual test documented
    in the PR)
-4. PR against `main` with a clear description: what, why, how to test
+4. PR against `develop` with a clear description: what, why, how to test
 
 ## Adding a panel to the dashboard
 
@@ -72,6 +85,14 @@ To test with a real app: see docs/integration.md in an RN project.
 4. Document the integration recipe in docs/integration.md
 
 ## Release (maintainers)
+
+Releases run in CI from `main` (needs the `NPM_TOKEN` secret):
+
+```bash
+gh workflow run release.yml --repo rn-devtools-hub/rn-devtools-hub
+```
+
+Locally (needs npm 2FA at the prompt):
 
 ```bash
 npm run release   # release-it: version bump driven by commits, CHANGELOG,

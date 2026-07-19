@@ -42,6 +42,8 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
 - Anything requiring native code or a system binary (adb, xcrun, view-shot)
   must be probed and degrade cleanly with an explanatory message.
 - Commits follow Conventional Commits (commitlint rejects them otherwise).
+- Branch from `develop` and open PRs against `develop`; `main` only receives
+  release merges and hotfixes.
 - Before finishing: `npm run typecheck && npm test && npm run build`, and
   for the dashboard: extract the script and run `node --check`.
 

@@ -76,6 +76,36 @@ reachable (check your firewall if the device never appears in the selector).
 | adb over Wi-Fi | adb (platform-tools) | Wireless debugging (Android 11+) or one-time `adb tcpip` | Android |
 | iOS Simulator mirror | macOS + Xcode CLT, booted simulator | n/a (simulator) | macOS only |
 
+## Automatic setup (recommended)
+
+```bash
+npm install --save-dev rn-devtools-hub
+npx rn-devtools-hub init
+npm run devtools
+```
+
+`init` is a codemod: it detects your project shape (Expo or bare React
+Native, TypeScript or JavaScript, entry point) and which libraries are
+installed, then:
+
+- generates `devtools.setup.ts` (or `.js`) wired to exactly those libraries
+- hooks it into your entry point behind a `__DEV__` guard (for Expo Router
+  it creates `index.js` and points `package.json` main at it, the documented
+  Expo custom-entry pattern)
+- adds a `devtools` script to your package.json so `npm run devtools`
+  starts the hub
+
+Flags: `--dry-run` (show what would change), `--force` (regenerate the glue).
+It is idempotent: running it twice changes nothing.
+
+Two integrations need one extra line from you because they depend on objects
+the codemod cannot reach: React Query (call `attachQueryClient(queryClient)`
+where you create your client) and navigation (call `useDevtoolsNavigation()`
+in your root layout). The generated file exports both with instructions.
+
+The recipes below explain the manual equivalent, useful if you prefer wiring
+things yourself or if your setup is unusual.
+
 ## Recipe 0: the glue file (required)
 
 Create `src/devtools.setup.ts` (the name does not matter):

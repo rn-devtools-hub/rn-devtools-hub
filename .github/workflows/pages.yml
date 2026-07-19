@@ -1,0 +1,50 @@
+name: Docs (GitHub Pages)
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "assets/**", "llms.txt", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the site
+        run: |
+          mkdir -p _site/assets
+          cp docs/index.html _site/
+          cp llms.txt _site/llms.txt
+          cp assets/logo.svg _site/assets/logo.svg
+          npm install --no-save marked
+          for page in integration protocol; do
+            {
+              echo '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+              echo '<meta name="viewport" content="width=device-width, initial-scale=1">'
+              echo "<title>rn-devtools-hub : ${page}</title>"
+              echo '<style>:root{color-scheme:dark}body{margin:0;background:#0d0d0d;color:#c3c2b7;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.65}main{max-width:760px;margin:0 auto;padding:40px 24px 80px}h1,h2,h3{color:#fff}a{color:#3987e5;text-decoration:none}a:hover{text-decoration:underline}pre{background:#1a1a19;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:13px}code{font-family:ui-monospace,"SF Mono",Menlo,monospace}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #2c2c2a;vertical-align:top}th{color:#898781;font-weight:500}</style>'
+              echo '</head><body><main><p><a href="index.html">rn-devtools-hub</a></p>'
+              npx marked --gfm "docs/${page}.md"
+              echo '</main></body></html>'
+            } > "_site/${page}.html"
+          done
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

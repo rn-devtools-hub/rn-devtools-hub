@@ -1,0 +1,33 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  hub-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Start the hub and verify the dashboard
+        run: |
+          RN_DEVTOOLS_TOKEN=ci bun server/server.mjs &
+          sleep 2
+          curl -sf "http://localhost:8973/?token=ci" | grep -q "rn-devtools-hub"
+          curl -sf -X POST http://127.0.0.1:8973/mcp \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -q "list_devices"

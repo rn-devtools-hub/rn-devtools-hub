@@ -17,12 +17,12 @@ Key points to integrate the package into an app:
 
 ## Documentation
 
-- [README](https://github.com/josephjoberno/rn-devtools-hub/blob/main/README.md): overview, quick start, feature table
-- [Integration guide](https://josephjoberno.github.io/rn-devtools-hub/integration.html): step-by-step recipes per feature (network, cache, storage, SQLite, actions, mirror)
-- [Protocol](https://josephjoberno.github.io/rn-devtools-hub/protocol.html): complete contract of events and commands between app, hub and dashboard
-- [AGENTS.md](https://github.com/josephjoberno/rn-devtools-hub/blob/main/AGENTS.md): integration procedure for AI agents, known pitfalls, validation
-- [CONTRIBUTING](https://github.com/josephjoberno/rn-devtools-hub/blob/main/CONTRIBUTING.md): architecture, invariants, conventional commits, release
+- [README](https://github.com/rn-devtools-hub/rn-devtools-hub/blob/main/README.md): overview, quick start, feature table
+- [Integration guide](https://rn-devtools-hub.github.io/rn-devtools-hub/integration.html): step-by-step recipes per feature (network, cache, storage, SQLite, actions, mirror)
+- [Protocol](https://rn-devtools-hub.github.io/rn-devtools-hub/protocol.html): complete contract of events and commands between app, hub and dashboard
+- [AGENTS.md](https://github.com/rn-devtools-hub/rn-devtools-hub/blob/main/AGENTS.md): integration procedure for AI agents, known pitfalls, validation
+- [CONTRIBUTING](https://github.com/rn-devtools-hub/rn-devtools-hub/blob/main/CONTRIBUTING.md): architecture, invariants, conventional commits, release
 
 ## Optional
 
-- [MCP server](https://josephjoberno.github.io/rn-devtools-hub/integration.html#mcp): tools list_devices, get_recent_network, get_crashes, query_sqlite, run_action at http://127.0.0.1:8973/mcp
+- [MCP server](https://rn-devtools-hub.github.io/rn-devtools-hub/integration.html#mcp): tools list_devices, get_recent_network, get_crashes, query_sqlite, run_action at http://127.0.0.1:8973/mcp

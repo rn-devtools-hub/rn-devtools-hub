@@ -6,10 +6,10 @@
   "author": "Joberno Joseph",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/josephjoberno/rn-devtools-hub.git"
+    "url": "git+https://github.com/rn-devtools-hub/rn-devtools-hub.git"
   },
-  "homepage": "https://josephjoberno.github.io/rn-devtools-hub/",
-  "bugs": "https://github.com/josephjoberno/rn-devtools-hub/issues",
+  "homepage": "https://rn-devtools-hub.github.io/rn-devtools-hub/",
+  "bugs": "https://github.com/rn-devtools-hub/rn-devtools-hub/issues",
   "keywords": [
     "react-native",
     "expo",

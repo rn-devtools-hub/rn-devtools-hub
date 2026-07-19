@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://josephjoberno.github.io/rn-devtools-hub/">Documentation</a> ·
+  <a href="https://rn-devtools-hub.github.io/rn-devtools-hub/">Documentation</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#integration-guide">Integration</a> ·
   <a href="#contributing">Contributing</a>
@@ -142,7 +142,7 @@ Contributions are welcome. The full guide is in
 [CONTRIBUTING.md](CONTRIBUTING.md). In short:
 
 ```bash
-git clone https://github.com/josephjoberno/rn-devtools-hub
+git clone https://github.com/rn-devtools-hub/rn-devtools-hub
 cd rn-devtools-hub
 npm install          # also installs the husky hooks
 npm test             # vitest

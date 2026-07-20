@@ -86,7 +86,12 @@ Hotfix: branch from `main`, PR back to `main`, then merge `main` into
 
 ## Release (maintainers)
 
-Releases run in CI from `main` (needs the `NPM_TOKEN` secret):
+Releases are automatic: every push to `main` runs the Release workflow,
+which publishes only when the commits since the last tag contain a `feat`,
+a `fix` or a `BREAKING CHANGE`. Merges that are purely docs, chore or CI
+publish nothing.
+
+To force a release (or pick the increment yourself):
 
 ```bash
 gh workflow run release.yml --repo rn-devtools-hub/rn-devtools-hub

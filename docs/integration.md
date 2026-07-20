@@ -60,6 +60,14 @@ or full Xcode, and a booted simulator. Physical iPhones are NOT supported by
 this path: use the in-app view-shot stream instead (Recipe 7), which works
 over Wi-Fi in Expo Go.
 
+### TypeScript resolution
+
+The package ships types for both worlds: the `exports` map for modern
+setups (`moduleResolution: bundler`, `node16`, `nodenext`) and
+`typesVersions` for projects still on `moduleResolution: node` (node10),
+which ignores `exports`. Importing `rn-devtools-hub/client` typechecks
+either way, no tsconfig change required on your side.
+
 ### Network requirements for the app SDK
 
 The device and the dev machine must be on the same LAN, with port 8973

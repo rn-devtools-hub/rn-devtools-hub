@@ -18,6 +18,23 @@
   <a href="#contributing">Contributing</a>
 </p>
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/overview.png" alt="Overview panel: KPI tiles, JS thread lag, HTTP statuses and request durations">
+  <em>Overview: request counts, error rate, JS thread lag, connection and device at a glance</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/network.png" alt="Network panel: request list with colored methods and a foldable JSON response">
+  <em>Network: colored methods, slow requests highlighted, foldable JSON, copy as cURL, secrets redacted before they leave the device</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/mirror.png" alt="Mirror panel: live Android screen with tap, swipe and key controls">
+  <em>Mirror: the live device screen over adb, click to tap, drag to swipe, wheel to scroll, plus Back/Home/Recents/Dev menu</em>
+</p>
+
 ## Why
 
 Flipper died from its mandatory native dependencies. Reactotron requires a

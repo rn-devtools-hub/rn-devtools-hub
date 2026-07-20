@@ -2,6 +2,16 @@
 
 Generated automatically from conventional commits.
 
+## [0.2.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.1.0...v0.2.0) (2026-07-20)
+
+### Features
+
+* **client:** export truncateForWire, redactHeaders and public types ([70ec514](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/70ec51456140ef2a139ccf6470bdf63c6bc55454))
+
+### Bug Fixes
+
+* **types:** resolve the client subpath under moduleResolution node ([8cacaf5](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/8cacaf5906bdc350ae8158928252d451744f9d06))
+
 ## 0.1.0 (2026-07-19)
 
 ### Features

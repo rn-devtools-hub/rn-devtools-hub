@@ -38,6 +38,16 @@
     },
     "./package.json": "./package.json"
   },
+  "typesVersions": {
+    "*": {
+      "client": [
+        "./dist/client/index.d.ts"
+      ],
+      "*": [
+        "./dist/*"
+      ]
+    }
+  },
   "files": [
     "dist",
     "server",

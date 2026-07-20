@@ -31,6 +31,7 @@ jobs:
           cp docs/index.html _site/
           cp llms.txt _site/llms.txt
           cp assets/logo.svg _site/assets/logo.svg
+          cp -r assets/screenshots _site/assets/screenshots
           npm install --no-save marked
           for page in integration protocol; do
             {

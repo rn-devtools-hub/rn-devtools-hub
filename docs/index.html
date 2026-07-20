@@ -32,6 +32,12 @@
     border-radius: 8px; padding: 9px 15px; color: #fff;
   }
   img.logo { width: 88px; }
+  figure { margin: 0 0 22px; }
+  figure img {
+    width: 100%; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.1); display: block;
+  }
+  figcaption { font-size: 13px; color: #898781; margin-top: 7px; }
 </style>
 </head>
 <body>
@@ -60,6 +66,20 @@ npm install --save-dev rn-devtools-hub
 npx rn-devtools-hub
 
 # 3. In the app: 3 lines of glue, see the integration guide</pre>
+
+  <h2>Screenshots</h2>
+  <figure>
+    <img src="assets/screenshots/overview.png" alt="Overview panel">
+    <figcaption>Overview: requests, error rate, JS thread lag, connection and device</figcaption>
+  </figure>
+  <figure>
+    <img src="assets/screenshots/network.png" alt="Network panel">
+    <figcaption>Network: colored methods, foldable JSON, copy as cURL, redacted secrets</figcaption>
+  </figure>
+  <figure>
+    <img src="assets/screenshots/mirror.png" alt="Mirror panel">
+    <figcaption>Mirror: live device screen over adb with tap, swipe and keys</figcaption>
+  </figure>
 
   <h2>Why not Flipper, Reactotron, or a SaaS</h2>
   <table>

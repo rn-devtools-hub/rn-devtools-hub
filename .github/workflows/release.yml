@@ -1,5 +1,10 @@
 name: Release
 on:
+  # Automatic on every push to main, but the release job only runs when the
+  # new commits actually warrant a version (feat, fix, BREAKING CHANGE).
+  # Documentation, chore and CI merges publish nothing.
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       increment:
@@ -13,8 +18,56 @@ permissions:
   contents: write
   id-token: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: check
+        name: Does anything warrant a release
+        run: |
+          # Manual runs always release
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Manual run: releasing."
+            exit 0
+          fi
+
+          # Never react to the release commit itself (avoids a loop)
+          SUBJECT=$(git log -1 --pretty=%s)
+          case "$SUBJECT" in
+            "chore(release):"*)
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "Release commit, skipping."
+              exit 0
+              ;;
+          esac
+
+          # Commits since the last tag (all of them if there is no tag yet)
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          RANGE="${LAST_TAG:+$LAST_TAG..}HEAD"
+          COMMITS=$(git log --pretty=%B "$RANGE")
+
+          if printf '%s' "$COMMITS" | grep -qE '^(feat|fix)(\(.+\))?!?:|^BREAKING CHANGE:'; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "feat/fix/breaking commits found since ${LAST_TAG:-the beginning}: releasing."
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Only docs/chore/ci commits since ${LAST_TAG:-the beginning}: nothing to publish."
+          fi
+
   release:
+    needs: decide
+    if: needs.decide.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

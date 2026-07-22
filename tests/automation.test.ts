@@ -1,0 +1,338 @@
+/**
+ * UI automation tests: fiber walking, selectors and actions on
+ * hand-built fiber trees (no React needed), plus the command wiring
+ * through a fake React DevTools hook.
+ */
+
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  FiberLike,
+  UiNode,
+  collectSubtreeText,
+  fiberMatches,
+  findHandler,
+  findTextInputFiber,
+  installUiAutomation,
+  performAct,
+  prettyHostType,
+  queryFibers,
+  serializeTree,
+} from "../src/client/automation";
+
+// ------------------------------------------------------------------
+// Fake fiber builder: nested specs to child/sibling/return links
+// ------------------------------------------------------------------
+
+interface Spec {
+  /** Host type string, or a function for a composite component */
+  type?: unknown;
+  props?: Record<string, unknown>;
+  /** Shorthand: adds a HostText child holding this string */
+  text?: string;
+  stateNode?: unknown;
+  children?: Spec[];
+}
+
+const Composite = function Composite(): null { return null; };
+
+const fiberFrom = (spec: Spec, parent: FiberLike | null = null): FiberLike => {
+  const fiber: FiberLike = {
+    type: spec.type ?? Composite,
+    memoizedProps: spec.props ?? {},
+    stateNode: spec.stateNode ?? null,
+    child: null,
+    sibling: null,
+    return: parent,
+  };
+  const children: FiberLike[] = [];
+  if (spec.text !== undefined) {
+    children.push({ tag: 6, memoizedProps: spec.text, child: null, sibling: null, return: fiber });
+  }
+  for (const childSpec of spec.children ?? []) {
+    children.push(fiberFrom(childSpec, fiber));
+  }
+  for (let index = 0; index < children.length; index += 1) {
+    if (index === 0) fiber.child = children[index];
+    else children[index - 1].sibling = children[index];
+  }
+  return fiber;
+};
+
+const rootOf = (spec: Spec): FiberLike => {
+  const root: FiberLike = { child: null, sibling: null, return: null };
+  root.child = fiberFrom(spec, root);
+  return root;
+};
+
+// ------------------------------------------------------------------
+// Serialization
+// ------------------------------------------------------------------
+
+describe("serializeTree", () => {
+  it("keeps host components, resolves aliases and aggregates text", () => {
+    const root = rootOf({
+      type: "RCTView",
+      props: { testID: "loginScreen" },
+      children: [
+        { type: Composite, children: [{ type: "RCTText", text: "Welcome back" }] },
+        {
+          type: "AndroidTextInput",
+          props: { testID: "loginEmail", placeholder: "Email", value: "a@b.c", editable: true },
+        },
+      ],
+    });
+    const { nodes, truncated } = serializeTree(root);
+    expect(truncated).toBe(false);
+    expect(nodes).toHaveLength(1);
+    const screen = nodes[0];
+    expect(screen.type).toBe("View");
+    expect(screen.testID).toBe("loginScreen");
+    const [text, input] = screen.children ?? [];
+    expect(text).toMatchObject({ type: "Text", text: "Welcome back" });
+    expect(input).toMatchObject({
+      type: "TextInput",
+      testID: "loginEmail",
+      placeholder: "Email",
+      value: "a@b.c",
+      editable: true,
+    });
+  });
+
+  it("collapses pyramids of purely structural views", () => {
+    const root = rootOf({
+      type: "RCTView",
+      children: [{
+        type: "RCTView",
+        children: [{ type: "RCTView", props: { testID: "content" } }],
+      }],
+    });
+    const { nodes } = serializeTree(root);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].testID).toBe("content");
+    expect(nodes[0].collapsed).toBe(2);
+  });
+
+  it("marks truncation when the node budget is exceeded", () => {
+    const root = rootOf({
+      type: "RCTView",
+      children: Array.from({ length: 30 }, () => ({ type: "RCTView", props: { testID: "x" } })),
+    });
+    const { nodes, truncated } = serializeTree(root, { maxNodes: 10 });
+    expect(truncated).toBe(true);
+    expect(nodes.length).toBeLessThanOrEqual(10);
+  });
+
+  it("exposes native views without accessibility, like a MapView", () => {
+    const root = rootOf({
+      type: "RCTView",
+      children: [{ type: "AIRMap", props: { testID: "homeMap" } }],
+    });
+    const { nodes } = serializeTree(root);
+    const map = nodes[0].children?.[0] ?? nodes[0];
+    expect(map).toMatchObject({ type: "AIRMap", testID: "homeMap" });
+  });
+});
+
+describe("collectSubtreeText", () => {
+  it("aggregates nested host text", () => {
+    const fiber = fiberFrom({
+      type: "RCTText",
+      children: [
+        { type: "RCTText", text: "1000 " },
+        { type: "RCTText", text: "HTG" },
+      ],
+    });
+    expect(collectSubtreeText(fiber)).toBe("1000 HTG");
+  });
+
+  it("reads react-dom style string children", () => {
+    const fiber = fiberFrom({ type: "span", children: [{ type: "b", props: { children: "web text" } }] });
+    expect(collectSubtreeText(fiber)).toBe("web text");
+  });
+});
+
+// ------------------------------------------------------------------
+// Selectors
+// ------------------------------------------------------------------
+
+describe("queryFibers", () => {
+  const tree = rootOf({
+    type: "RCTView",
+    children: [
+      { type: "AndroidTextInput", props: { testID: "loginEmail", accessibilityLabel: "Email address" } },
+      { type: "RCTText", text: "Se connecter" },
+      { type: "RCTText", text: "Mot de passe oublie" },
+    ],
+  });
+
+  it("finds by testID", () => {
+    const matches = queryFibers(tree, { by: "testID", value: "loginEmail" });
+    expect(matches).toHaveLength(1);
+    expect(prettyHostType(String(matches[0].type))).toBe("TextInput");
+  });
+
+  it("finds by label", () => {
+    expect(queryFibers(tree, { by: "label", value: "Email address" })).toHaveLength(1);
+  });
+
+  it("finds by text, substring by default and exact on demand", () => {
+    expect(queryFibers(tree, { by: "text", value: "connecter" })).toHaveLength(1);
+    expect(queryFibers(tree, { by: "text", value: "connecter", exact: true })).toHaveLength(0);
+    expect(queryFibers(tree, { by: "text", value: "Se connecter", exact: true })).toHaveLength(1);
+  });
+
+  it("finds by type through aliases", () => {
+    expect(queryFibers(tree, { by: "type", value: "TextInput" })).toHaveLength(1);
+    expect(queryFibers(tree, { by: "type", value: "AndroidTextInput" })).toHaveLength(1);
+  });
+
+  it("ignores composite fibers", () => {
+    const composite = fiberFrom({ type: Composite, props: { testID: "ghost" } });
+    expect(fiberMatches(composite, { by: "testID", value: "ghost" })).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------
+// Actions
+// ------------------------------------------------------------------
+
+describe("performAct", () => {
+  it("taps through a handler carried by a composite ancestor", () => {
+    const events: unknown[] = [];
+    const tree = rootOf({
+      type: Composite,
+      props: { onPress: (event: unknown) => events.push(event) },
+      children: [{ type: "RCTView", children: [{ type: "RCTText", text: "Se connecter" }] }],
+    });
+    const [target] = queryFibers(tree, { by: "text", value: "Se connecter" });
+    const outcome = performAct(target, { action: "tap" });
+    expect(outcome.detail).toBe("onPress invoked");
+    expect(events).toHaveLength(1);
+  });
+
+  it("types the exact text, clearing first when asked", () => {
+    const typed: string[] = [];
+    const tree = rootOf({
+      type: "RCTView",
+      children: [{
+        type: "AndroidTextInput",
+        props: { testID: "loginEmail", onChangeText: (text: string) => typed.push(text) },
+      }],
+    });
+    const [target] = queryFibers(tree, { by: "testID", value: "loginEmail" });
+    performAct(target, { action: "type", text: "Customer@test.com", clear: true });
+    expect(typed).toEqual(["", "Customer@test.com"]);
+  });
+
+  it("finds the input inside a matched wrapper", () => {
+    const typed: string[] = [];
+    const tree = rootOf({
+      type: "RCTView",
+      props: { testID: "searchBox" },
+      children: [{
+        type: "RCTSinglelineTextInputView",
+        props: { onChangeText: (text: string) => typed.push(text) },
+      }],
+    });
+    const [target] = queryFibers(tree, { by: "testID", value: "searchBox" });
+    performAct(target, { action: "type", text: "SPX-4821" });
+    expect(typed).toEqual(["SPX-4821"]);
+  });
+
+  it("submits through onSubmitEditing", () => {
+    const submitted: unknown[] = [];
+    const tree = rootOf({
+      type: "AndroidTextInput",
+      props: { value: "SPX-4821", onSubmitEditing: (event: unknown) => submitted.push(event) },
+    });
+    const [target] = queryFibers(tree, { by: "type", value: "TextInput" });
+    performAct(target, { action: "submit" });
+    expect(submitted).toHaveLength(1);
+  });
+
+  it("fails with a clear error when no handler exists", () => {
+    const tree = rootOf({ type: "RCTView", props: { testID: "static" } });
+    const [target] = queryFibers(tree, { by: "testID", value: "static" });
+    expect(() => performAct(target, { action: "tap" })).toThrow(/No onPress handler/);
+  });
+});
+
+describe("findHandler and findTextInputFiber", () => {
+  it("prefers the closest descendant handler", () => {
+    const calls: string[] = [];
+    const tree = fiberFrom({
+      type: "RCTView",
+      children: [{ type: Composite, props: { onPress: () => calls.push("inner") } }],
+    });
+    findHandler(tree, ["onPress"])?.({});
+    expect(calls).toEqual(["inner"]);
+  });
+
+  it("climbs to an ancestor input when matching a nested label", () => {
+    const tree = rootOf({
+      type: "AndroidTextInput",
+      props: { onChangeText: () => {} },
+      children: [{ type: "RCTText", text: "inside" }],
+    });
+    const [label] = queryFibers(tree, { by: "text", value: "inside" });
+    expect(findTextInputFiber(label)).not.toBeNull();
+  });
+});
+
+// ------------------------------------------------------------------
+// Command wiring through a fake React DevTools hook
+// ------------------------------------------------------------------
+
+describe("installUiAutomation", () => {
+  const globalAny = globalThis as Record<string, any>;
+
+  afterEach(() => {
+    delete globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  });
+
+  const install = () => {
+    const handlers = new Map<string, (payload: unknown) => Promise<unknown> | unknown>();
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    installUiAutomation({
+      onCommand: (command, handler) => handlers.set(command, handler),
+      emit: (type, payload) => emitted.push({ type, payload }),
+    });
+    return { handlers, emitted };
+  };
+
+  it("serves ui.tree from roots observed on commit", async () => {
+    globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {};
+    const { handlers } = install();
+    const hook = globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    const fiberRoot = { current: rootOf({ type: "RCTView", props: { testID: "home" } }) };
+    hook.onCommitFiberRoot(1, fiberRoot);
+
+    const result = await handlers.get("ui.tree")!({}) as { roots: UiNode[][]; generation: number };
+    expect(result.generation).toBe(1);
+    expect(result.roots[0][0].testID).toBe("home");
+  });
+
+  it("rejects ambiguous ui.act targets", async () => {
+    globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {};
+    const { handlers } = install();
+    const hook = globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    hook.onCommitFiberRoot(1, {
+      current: rootOf({
+        type: "RCTView",
+        children: [
+          { type: "RCTText", text: "Suivre" },
+          { type: "RCTText", text: "Suivre" },
+        ],
+      }),
+    });
+
+    await expect(
+      handlers.get("ui.act")!({ action: "tap", by: "text", value: "Suivre" })
+    ).rejects.toThrow(/2 elements match/);
+  });
+
+  it("fails with a typed error when the hook is missing", () => {
+    const { handlers } = install();
+    expect(() => handlers.get("ui.tree")!({})).toThrow(/hook unavailable/);
+  });
+});

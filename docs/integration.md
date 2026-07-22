@@ -133,11 +133,16 @@ devtools.init({
   stableId: "a-stable-id",  // prevents ghost sessions on every reload
 });
 
-// The three dependency-free hooks:
+// The dependency-free hooks:
 devtools.attachConsole();          // Logs panel
 devtools.attachCrashReporting();   // Crashes panel (ErrorUtils + Hermes)
 devtools.startPerformanceSampler(); // JS lag in the Overview
+devtools.attachUiAutomation();     // UI perception/actions for AI agents (MCP)
 ```
+
+For agents, also call `devtools.markScreenReady("ScreenName")` once a
+screen has loaded its data (no skeletons left): agents wait on that event
+through the `wait_for_event` MCP tool instead of sleeping.
 
 Load it in the entry point, ALWAYS behind a guard:
 

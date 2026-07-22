@@ -2,6 +2,17 @@
 
 Generated automatically from conventional commits.
 
+## [0.3.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.2.0...v0.3.0) (2026-07-22)
+
+### Features
+
+* **client:** runtime UI automation and screen-ready signal for agents ([ccadb61](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/ccadb61c7c8bc3869b777bf5763a04d0059d0823))
+* **server:** agent MCP tools with event cursor and wait_for_event ([82f51d5](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/82f51d53ed4d6b9e9bb09d5fb076313ce8883812))
+
+### Bug Fixes
+
+* **dashboard:** identify each device's app and flag Design mismatches ([f038c4e](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/f038c4ecbdad7182616db3b7b7c516c4fd9aee66))
+
 ## [0.2.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.1.0...v0.2.0) (2026-07-20)
 
 ### Features

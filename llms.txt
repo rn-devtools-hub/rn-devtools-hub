@@ -11,7 +11,7 @@ Key points to integrate the package into an app:
 - Install as a devDependency: `npm i -D rn-devtools-hub` (the hub requires Bun on the dev machine)
 - Start the hub from the host project root: `npx rn-devtools-hub`
 - In the app: `import { devtools } from "rn-devtools-hub/client"` in a glue file loaded via `if (__DEV__) require(...)`
-- API: init({serverUrl, appName, stableId}), emit, emitRaw, onCommand, attachAxios, wrapFetch, attachConsole, attachCrashReporting, startPerformanceSampler, registerAction
+- API: init({serverUrl, appName, stableId}), emit, emitRaw, onCommand, attachAxios, wrapFetch, attachConsole, attachCrashReporting, startPerformanceSampler, registerAction, attachUiAutomation, markScreenReady
 - The events/commands contract of each panel is in docs/protocol.md: implementing it is enough to feed the dashboard
 - Security: dashboard token, secret redaction, read-only SQLite, MCP on localhost only
 
@@ -25,4 +25,4 @@ Key points to integrate the package into an app:
 
 ## Optional
 
-- [MCP server](https://rn-devtools-hub.github.io/rn-devtools-hub/integration.html#mcp): tools list_devices, get_recent_network, get_crashes, query_sqlite, run_action at http://127.0.0.1:8973/mcp
+- [MCP server](https://rn-devtools-hub.github.io/rn-devtools-hub/integration.html#mcp): tools list_devices, get_recent_network, get_crashes, query_sqlite, run_action, get_ui_tree, query_ui, ui_act, get_events_since, wait_for_event at http://127.0.0.1:8973/mcp

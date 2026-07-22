@@ -68,6 +68,16 @@ for a GitHub issue), real-time capability badges, and a local MCP server to
 drive everything from Claude, Cursor or any MCP client (`list_devices`,
 `get_recent_network`, `get_crashes`, `query_sqlite`, `run_action`...).
 
+For AI agents, the hub also exposes runtime UI automation over MCP:
+`get_ui_tree` (semantic tree of the mounted components, read from the React
+runtime, including native views without accessibility like maps), `query_ui`
+(find elements by testID, text or label, with measured rects), `ui_act`
+(tap, type exact text, submit, scroll, all by element, never by pixels), and
+a correlated event flow (`wait_for_event`, `get_events_since`) that replaces
+sleeps with real signals like `screen.ready`. Works in Expo Go, development
+builds and bare React Native, and in CI without any simulator: enable it
+with `devtools.attachUiAutomation()`.
+
 ## Quick start
 
 Prerequisites: Node 20+, and [Bun](https://bun.sh) for the hub. Optional
@@ -108,6 +118,8 @@ libraries. All the recipes are in
 - `devtools.emit(type, payload)`: feed any panel
 - `devtools.onCommand(name, handler)`: respond to the dashboard (e.g. SQLite)
 - `devtools.registerAction({name, label, danger, requiresNative}, handler)`
+- `devtools.attachUiAutomation()`: UI perception and actions for AI agents
+- `devtools.markScreenReady("Login")`: "screen ready" signal agents wait on
 - The complete events and commands protocol:
   [docs/protocol.md](docs/protocol.md). It is the contract: any tool (or any
   LLM) can integrate a panel by implementing it.

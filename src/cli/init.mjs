@@ -130,6 +130,8 @@ const generateGlue = (project) => {
   lines.push("devtools.attachConsole();");
   lines.push("devtools.attachCrashReporting();");
   lines.push("devtools.startPerformanceSampler();");
+  lines.push("// UI perception and actions for AI agents (MCP: get_ui_tree, query_ui, ui_act)");
+  lines.push("devtools.attachUiAutomation();");
   lines.push("");
 
   if (f.axios) {

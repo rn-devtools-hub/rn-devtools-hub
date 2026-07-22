@@ -898,12 +898,17 @@
       .replace(/('(?:[^']|'')*')/g, `<span class="sql-str">$1</span>`)
       .replace(SQL_KEYWORDS, (m) => `<span class="sql-kw">${m}</span>`);
 
+  const selectedDeviceInfo = () =>
+    state.devices.find((d) => d.id === state.selectedDevice) ?? null;
+
   const renderDeviceSelect = () => {
     const select = $("deviceSelect");
     const previous = state.selectedDevice;
+    // The app name comes first: with several projects connected to the
+    // same hub, the device name alone does not identify the project
     select.innerHTML = state.devices.length
       ? state.devices.map((d) =>
-          `<option value="${d.id}">${esc(d.deviceName)} (${d.connected ? "connected" : "offline"})</option>`
+          `<option value="${d.id}">${esc(d.appName ?? "app")} · ${esc(d.deviceName)} (${d.connected ? "connected" : "offline"})</option>`
         ).join("")
       : `<option value="">No device</option>`;
     if (state.devices.some((d) => d.id === previous)) {
@@ -912,6 +917,8 @@
       state.selectedDevice = state.devices[0].id;
       select.value = state.selectedDevice;
     }
+    const info = selectedDeviceInfo();
+    document.title = info ? `${info.appName ?? "app"} · rn-devtools-hub` : "rn-devtools-hub";
     scheduleRender();
   };
 
@@ -1922,8 +1929,28 @@
         </table>
       </div>`;
 
+    // This panel reads the project where the hub was launched, which is
+    // not necessarily the project of the selected device
+    const device = selectedDeviceInfo();
+    const manifestNames = [manifest.name, manifest.slug, manifest.projectName]
+      .filter(Boolean).map((n) => String(n).toLowerCase());
+    const mismatch = device?.appName && manifestNames.length &&
+      !manifestNames.includes(String(device.appName).toLowerCase());
+    const sourceCard = `
+      <div class="design-card" style="grid-column:1 / -1">
+        <h3>Source</h3>
+        <div class="hint" style="color:var(--muted)">
+          Assets read from the hub launch folder: <span class="mono">${esc(manifest.projectDir ?? "?")}</span>
+        </div>
+        ${mismatch ? `<div class="hint" style="color:var(--warn, #e0a457); margin-top:6px">
+          Warning: the selected device is "${esc(device.appName)}" but this panel shows the
+          "${esc(manifest.name ?? manifest.projectName ?? "?")}" project. Launch one hub per
+          project (with a distinct port) to inspect the right assets.
+        </div>` : ""}
+      </div>`;
+
     $("designContent").innerHTML =
-      `<div class="design-grid">${iconCard}${adaptiveCard}${splashCard}${fontsCard}${soundsCard}${metaCard}</div>`;
+      `<div class="design-grid">${sourceCard}${iconCard}${adaptiveCard}${splashCard}${fontsCard}${soundsCard}${metaCard}</div>`;
 
     // Load the real fonts for the specimens
     (manifest.fonts ?? []).forEach((path, index) => {

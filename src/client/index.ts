@@ -14,8 +14,11 @@
  *   devtools.wrapFetch(fetchImpl, label)      // returns an instrumented fetch
  *   devtools.attachConsole()                  // forwards console.log/warn/error
  *   devtools.startPerformanceSampler()        // JS lag + uptime
+ *   devtools.attachUiAutomation()             // ui.tree/ui.query/ui.act for agents
+ *   devtools.markScreenReady("Login")         // "screen ready" signal for agents
  */
 
+import { installUiAutomation } from "./automation";
 import { DevtoolsTransport } from "./transport";
 import {
   ActionDefinition,
@@ -105,6 +108,29 @@ class Devtools {
     this.emit("actions.register", {
       actions: Array.from(this.actions.values()).map((a) => a.definition),
     });
+  }
+
+  // ------------------------------------------------------------------
+  // UI automation for agents (MCP): ui.tree / ui.query / ui.act
+  // ------------------------------------------------------------------
+  private automationAttached = false;
+
+  /** Enables runtime UI perception and actions for AI agents.
+   * Call it at startup (with the other attach* calls) so the React
+   * roots are observed from the first render. */
+  attachUiAutomation(): void {
+    if (!this.enabled || this.automationAttached) return;
+    this.automationAttached = true;
+    installUiAutomation({
+      onCommand: (command, handler) => this.transport?.onCommand(command, handler),
+      emit: (type, payload) => this.emit(type, payload),
+    });
+  }
+
+  /** Signals that the current screen finished loading its data
+   * (no skeletons left). Agents wait for this event instead of sleeping. */
+  markScreenReady(screen?: string): void {
+    this.emit("screen.ready", { screen: screen ?? null });
   }
 
   // ------------------------------------------------------------------
@@ -355,6 +381,7 @@ class Devtools {
 export const devtools = new Devtools();
 export { DevtoolsTransport } from "./transport";
 export { truncateForWire, redactHeaders } from "./types";
+export type { UiNode, UiSelector, FiberLike } from "./automation";
 export type {
   ActionDefinition,
   CommandHandler,

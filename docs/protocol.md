@@ -35,6 +35,8 @@ LLM to integrate any app.
 | `actions.register` | actions: [{name, label, danger?, requiresNative?}] | Actions |
 | `capabilities` | viewShotAvailable, ... | Feature gating |
 | `screen.frame` | format ("jpg"), base64 (WITHOUT truncation: use emitRaw) | Mirror |
+| `screen.ready` | screen or null (emit via `devtools.markScreenReady("Login")`) | Agents: replaces sleeps after a reload or navigation |
+| `ui.change` | generation (auto, throttled, requires `attachUiAutomation()`) | Agents: signals that the UI committed new content |
 
 ## Commands (dashboard to app)
 
@@ -48,6 +50,23 @@ LLM to integrate any app.
 | `screen.capture` | (none) | { format, base64 } |
 | `screen.stream.start` | { fps? 1..5 } | { ok, fps } |
 | `screen.stream.stop` | (none) | { ok } |
+| `ui.tree` | { maxDepth?, maxNodes? } | { generation, truncated, roots: UiNode[][] } (requires `attachUiAutomation()`) |
+| `ui.query` | { by: testID/text/label/type, value, exact?, limit? } | { generation, count, matches: [{type, testID, label, text, rect}] } |
+| `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd, by, value, text?, clear?, index?, x?, y? } | { ok, action, detail, target } |
+
+The `ui.*` commands are served by the SDK (`devtools.attachUiAutomation()`),
+which reads the mounted React tree through the React DevTools hook and acts
+through JS props (onPress, onChangeText). Typing places the exact string
+given: no autocapitalize interference. This is runtime-level automation
+(like React Native Testing Library), not native touch injection.
+
+## Event cursor (agents)
+
+The hub stamps every history event with a monotonic per-device `seq`.
+The MCP tools `get_events_since {cursor}` and `wait_for_event {type,
+payloadContains, timeoutMs}` use it to follow the stream without polling
+races: an agent taps, then waits for the matching `network.response` or
+`screen.ready` instead of sleeping.
 
 ## Hub HTTP endpoints
 

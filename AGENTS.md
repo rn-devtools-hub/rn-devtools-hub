@@ -27,7 +27,13 @@ Known pitfalls:
 - Never put large data in `emit` (truncated at 20 KB); for legitimate
   binary data (screen frames), use `emitRaw`.
 - The hub reads app.json and the assets from its cwd: launch it from the
-  host project root.
+  host project root. With SEVERAL projects at once, launch one hub per
+  project on distinct ports (`--port`), otherwise the Design panel shows
+  the assets of the project the hub was launched from (the dashboard
+  flags the mismatch).
+- For AI agents: add `devtools.attachUiAutomation()` to the glue file and
+  call `devtools.markScreenReady()` when a screen has its data. This
+  enables the get_ui_tree / query_ui / ui_act / wait_for_event MCP tools.
 - The hub requires Bun. The SDK itself needs nothing.
 - `stableId` in init() prevents ghost sessions on every reload:
   use a stable device identifier.
@@ -59,7 +65,22 @@ RN_DEVTOOLS_TOKEN=dev bun server/server.mjs &  # then curl the dashboard and /mc
 ## Driving a running app (MCP)
 
 The hub exposes an MCP server at http://127.0.0.1:8973/mcp (localhost
-only). Tools: list_devices, get_app_info, get_recent_network,
-get_crashes, get_endpoint_stats, query_sqlite (SELECT/PRAGMA), run_action.
+only). Tools:
+
+- Inspection: list_devices, get_app_info, get_recent_network, get_crashes,
+  get_endpoint_stats, query_sqlite (SELECT/PRAGMA), run_action.
+- Perception and action (the app must call `devtools.attachUiAutomation()`):
+  get_ui_tree (semantic tree of mounted components), query_ui (find by
+  testID/text/label/type, with measured rects), ui_act (tap, longPress,
+  type with exact text, clear, submit, scrollTo).
+- Event flow: get_events_since (cursor-based polling without missing
+  events), wait_for_event (blocks until a matching event, e.g.
+  `screen.ready` after `devtools.markScreenReady()` or a
+  `network.response`; replaces every sleep).
+
 Registration on the Claude Code side:
 `claude mcp add rn-devtools --transport http http://127.0.0.1:8973/mcp`
+
+Recommended agent loop: `ui_act` (tap by testID), then `wait_for_event`
+on the expected effect, then `query_ui`/`get_ui_tree` to verify the
+screen. No pixel coordinates, no idb, works in CI without a simulator.

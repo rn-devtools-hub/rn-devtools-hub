@@ -36,6 +36,23 @@ const devices = new Map();
 const dashboards = new Set();
 /** @type {Map<string, {resolve: (value: any) => void, timer: ReturnType<typeof setTimeout>}>} */
 const pendingMcpCommands = new Map();
+/** Long-poll waiters for wait_for_event (agents waiting on a device event)
+ * @type {Set<{deviceId: string, match: (event: any) => boolean, resolve: (event: any) => void, timer: ReturnType<typeof setTimeout>}>} */
+const eventWaiters = new Set();
+
+const notifyEventWaiters = (deviceId, events) => {
+  for (const waiter of eventWaiters) {
+    if (waiter.deviceId !== deviceId) continue;
+    const hit = events.find((event) => {
+      try { return waiter.match(event); } catch { return false; }
+    });
+    if (hit) {
+      clearTimeout(waiter.timer);
+      eventWaiters.delete(waiter);
+      waiter.resolve(hit);
+    }
+  }
+};
 
 let nextDeviceId = 1;
 
@@ -111,6 +128,11 @@ const designManifest = () => {
   const notifications = pluginConfig("expo-notifications");
 
   return {
+    // The manifest always comes from the hub's launch folder: the
+    // dashboard uses these fields to flag a mismatch with the selected
+    // device when several projects share the same hub
+    projectDir: PROJECT_ROOT,
+    projectName: PROJECT_ROOT.split(sep).pop() ?? null,
     name: expo.name ?? null,
     slug: expo.slug ?? null,
     version: expo.version ?? null,
@@ -307,6 +329,7 @@ const deviceSummary = ([id, device]) => ({
   connected: device.ws.readyState === 1,
   sessions: device.sessions ?? 1,
   eventCount: device.history.length,
+  cursor: device.lastSeq ?? 0,
 });
 
 const eventsOfType = (device, types, limit = 100) => device.history
@@ -370,6 +393,36 @@ const MCP_TOOLS = [
     description: "Runs an action declared by the app, for example reload or cache invalidation. Dangerous actions must be confirmed in the MCP client.",
     inputSchema: { type: "object", required: ["name"], properties: { deviceId: { type: "string" }, name: { type: "string" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "get_ui_tree",
+    description: "Returns the semantic tree of the components currently mounted (types, testID, text, inputs), read from the React runtime. The app must call devtools.attachUiAutomation().",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "query_ui",
+    description: "Finds on-screen elements by testID, text, accessibility label or type. Returns their text, props and measured rect (points).",
+    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, by: { type: "string", enum: ["testID", "text", "label", "type"] }, value: { type: "string" }, exact: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "ui_act",
+    description: "Acts on an element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd. Target by testID, text, label or type; pass index when several elements match.",
+    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd"] }, by: { type: "string", enum: ["testID", "text", "label", "type"] }, value: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "get_events_since",
+    description: "Returns device events after a cursor (monotonic seq). Poll with the returned cursor to follow network, console, crash, nav, screen.ready and ui.change without missing anything. Omit cursor for the most recent events.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, cursor: { type: "integer", minimum: 0 }, types: { type: "array", items: { type: "string" } }, limit: { type: "integer", minimum: 1, maximum: 1000 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "wait_for_event",
+    description: "Blocks until the device emits a matching event, or until timeoutMs. type is a substring of the event type (e.g. 'screen.ready', 'network.'), payloadContains a substring of the JSON payload. Replaces sleeps after a reload, a tap or a request.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, type: { type: "string" }, payloadContains: { type: "string" }, timeoutMs: { type: "integer", minimum: 500, maximum: 120000 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
   },
 ];
 
@@ -438,6 +491,52 @@ const handleMcpTool = async (name, args = {}) => {
     if (response.error) throw new Error(response.error);
     return response.result;
   }
+  if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
+    const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
+    const { deviceId: _ignored, ...payload } = args;
+    const response = await sendDeviceCommand(deviceId, command, payload);
+    if (response.error) throw new Error(response.error);
+    return response.result;
+  }
+  if (name === "get_events_since") {
+    const limit = Math.max(1, Math.min(Number(args.limit) || 200, 1000));
+    const types = Array.isArray(args.types) && args.types.length ? args.types : null;
+    let events = device.history;
+    if (Number.isFinite(Number(args.cursor))) {
+      const cursor = Number(args.cursor);
+      events = events.filter((event) => (event.seq ?? 0) > cursor);
+    }
+    if (types) events = events.filter((event) => types.some((t) => event.type.includes(t)));
+    events = events.slice(-limit);
+    return { cursor: device.lastSeq ?? 0, count: events.length, events };
+  }
+  if (name === "wait_for_event") {
+    const timeoutMs = Math.max(500, Math.min(Number(args.timeoutMs) || 30000, 120000));
+    const typePattern = args.type ? String(args.type) : null;
+    const payloadPattern = args.payloadContains ? String(args.payloadContains) : null;
+    if (!typePattern && !payloadPattern) throw new Error("Pass at least type or payloadContains");
+    const match = (event) => {
+      if (typePattern && !String(event.type).includes(typePattern)) return false;
+      if (payloadPattern) {
+        try {
+          if (!JSON.stringify(event.payload ?? "").includes(payloadPattern)) return false;
+        } catch { return false; }
+      }
+      return true;
+    };
+    return await new Promise((resolve) => {
+      const waiter = {
+        deviceId,
+        match,
+        resolve: (event) => resolve({ timedOut: false, cursor: device.lastSeq ?? 0, event }),
+        timer: setTimeout(() => {
+          eventWaiters.delete(waiter);
+          resolve({ timedOut: true, cursor: device.lastSeq ?? 0, event: null });
+        }, timeoutMs),
+      };
+      eventWaiters.add(waiter);
+    });
+  }
   throw new Error(`Unknown MCP tool: ${name}`);
 };
 
@@ -500,7 +599,7 @@ const deviceListPayload = () =>
     eventCount: device.history.length,
   }));
 
-const server = Bun.serve({
+const startServer = () => Bun.serve({
   port: PORT,
   async fetch(request, bunServer) {
     const url = new URL(request.url);
@@ -608,6 +707,7 @@ const server = Bun.serve({
               connectedAt: Date.now(),
               sessions: 1,
               history: [],
+              lastSeq: 0,
             });
             console.log(`[hub] device connected: ${message.deviceName} (${deviceId})`);
           }
@@ -639,7 +739,12 @@ const server = Bun.serve({
         // they are broadcast live, only the most recent one is kept
         const frames = message.events.filter((e) => e.type === "screen.frame");
         const others = message.events.filter((e) => e.type !== "screen.frame");
+        // Monotonic per-device cursor: lets agents poll with
+        // get_events_since without missing or re-reading events
+        device.lastSeq = device.lastSeq ?? 0;
+        for (const event of others) event.seq = ++device.lastSeq;
         device.history.push(...others);
+        notifyEventWaiters(ws.data.deviceId, others);
         if (frames.length) device.lastFrame = frames[frames.length - 1];
         if (device.history.length > HISTORY_LIMIT_PER_DEVICE) {
           device.history.splice(0, device.history.length - HISTORY_LIMIT_PER_DEVICE);
@@ -721,6 +826,24 @@ const server = Bun.serve({
     },
   },
 });
+
+let server;
+try {
+  server = startServer();
+} catch (error) {
+  if (/in use|EADDRINUSE/i.test(String(error))) {
+    console.error("");
+    console.error(`  Port ${PORT} is already taken: another hub is probably running`);
+    console.error("  (for example for another project).");
+    console.error("");
+    console.error("  Launch this project's hub on its own port:");
+    console.error(`    bun server/server.mjs --port ${PORT + 1}`);
+    console.error("  and point the app's serverUrl at that port.");
+    console.error("");
+    process.exit(1);
+  }
+  throw error;
+}
 
 console.log("");
 console.log("  rn-devtools-hub");

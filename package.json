@@ -1,6 +1,6 @@
 {
   "name": "rn-devtools-hub",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Local inspector for React Native and Expo apps: network, crashes, storage, SQLite, screen mirror, device actions and MCP server, streamed to a web dashboard over WebSocket. Zero native dependencies.",
   "license": "MIT",
   "author": "Joberno Joseph",

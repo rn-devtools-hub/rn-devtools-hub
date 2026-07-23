@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.3.2](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.3.1...v0.3.2) (2026-07-23)
+
+### Bug Fixes
+
+* **client:** ui automation no longer sees screens the user left ([2f66f9c](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/2f66f9ca87335b429498c04aa4b935859d2008bf))
+
 ## [0.3.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.3.0...v0.3.1) (2026-07-23)
 
 ### Bug Fixes

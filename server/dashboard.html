@@ -925,6 +925,9 @@
   $("deviceSelect").addEventListener("change", (e) => {
     state.selectedDevice = e.target.value;
     state.selectedRequestId = null;
+    // The cache detail is only rendered on click: without this reset it
+    // would keep showing the previous app's data after a device switch
+    $("cacheDetail").innerHTML = "";
     scheduleRender();
   });
 
@@ -1818,7 +1821,18 @@
   const renderActions = (store) => {
     const actions = store.actions || [];
     $("actionsEmpty").style.display = actions.length ? "none" : "";
-    $("actionsGrid").innerHTML = actions.map((action) => {
+    const grid = $("actionsGrid");
+    // Rebuild only when the actions actually change: a rewrite on every
+    // event batch would wipe the Running/Done button feedback and
+    // re-enable a button while its action is still running
+    const sig = JSON.stringify([
+      state.selectedDevice,
+      store.appInfo?.nativeCapable ?? null,
+      actions.map((a) => [a.name, a.label, a.danger, a.requiresNative]),
+    ]);
+    if (grid.dataset.sig === sig) return;
+    grid.dataset.sig = sig;
+    grid.innerHTML = actions.map((action) => {
       const unavailable = action.requiresNative && store.appInfo && !store.appInfo.nativeCapable;
       return `<div class="action-card">
         <strong>${esc(action.label)}</strong>

@@ -396,20 +396,20 @@ const MCP_TOOLS = [
   },
   {
     name: "get_ui_tree",
-    description: "Returns the semantic tree of the components currently mounted (types, testID, text, inputs), read from the React runtime. The app must call devtools.attachUiAutomation().",
-    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 } }, additionalProperties: false },
+    description: "Returns the semantic tree of the VISIBLE components (types, testID, text, inputs), read from the React runtime. Screens kept mounted but hidden by the navigator (previous stack cards, inactive tabs) are excluded unless includeHidden. The app must call devtools.attachUiAutomation().",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: "query_ui",
-    description: "Finds on-screen elements by testID, text, accessibility label or type. Returns their text, props and measured rect (points).",
-    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, by: { type: "string", enum: ["testID", "text", "label", "type"] }, value: { type: "string" }, exact: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 } }, additionalProperties: false },
+    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label or type. Returns their text, props and measured rect (points). Hidden navigator screens are skipped unless includeHidden.",
+    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, by: { type: "string", enum: ["testID", "text", "label", "type"] }, value: { type: "string" }, exact: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: "ui_act",
-    description: "Acts on an element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd. Target by testID, text, label or type; pass index when several elements match.",
-    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd"] }, by: { type: "string", enum: ["testID", "text", "label", "type"] }, value: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" } }, additionalProperties: false },
+    description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd. Target by testID, text, label or type; pass index when several elements match. Hidden navigator screens are skipped unless includeHidden.",
+    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd"] }, by: { type: "string", enum: ["testID", "text", "label", "type"] }, value: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {

@@ -54,6 +54,8 @@ export interface UiSelector {
 export interface SerializeOptions {
   maxDepth?: number;
   maxNodes?: number;
+  /** Also include screens the navigator keeps mounted but hidden */
+  includeHidden?: boolean;
 }
 
 const HOST_TYPE_ALIASES: Record<string, string> = {
@@ -128,6 +130,43 @@ export const collectSubtreeText = (fiber: FiberLike, maxDepth = 30): string => {
 const isInputType = (type: string): boolean => /TextInput|TextField|input/i.test(type);
 const isTextType = (type: string): boolean => /^Text$/.test(type);
 
+const styleDisplay = (style: unknown): string | undefined => {
+  if (Array.isArray(style)) {
+    // Last entry wins, like StyleSheet.flatten
+    for (let index = style.length - 1; index >= 0; index -= 1) {
+      const found = styleDisplay(style[index]);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (style && typeof style === "object") {
+    const display = (style as Record<string, unknown>).display;
+    return typeof display === "string" ? display : undefined;
+  }
+  return undefined;
+};
+
+/**
+ * True for subtrees the user cannot see or touch. Navigators keep the
+ * previous screens MOUNTED (stack cards for the back animation, tab
+ * scenes for their state): without this filter the tree and the
+ * selectors keep matching the screen the user just left. The detection
+ * relies on the signals the navigators themselves set on inactive
+ * scenes.
+ */
+export const isHiddenSubtree = (fiber: FiberLike): boolean => {
+  const props = propsOf(fiber);
+  if (!props) return false;
+  if (props.accessibilityElementsHidden === true) return true;
+  if (props.importantForAccessibility === "no-hide-descendants") return true;
+  if (props["aria-hidden"] === true) return true;
+  // react-native-screens: 0 = detached scene, 2 = active
+  if (/RNSScreen/.test(String(fiber.type ?? ""))) {
+    if (props.activityState === 0 || props.active === 0) return true;
+  }
+  return styleDisplay(props.style) === "none";
+};
+
 const buildNode = (
   fiber: FiberLike,
   children: UiNode[],
@@ -168,7 +207,7 @@ const isCollapsible = (node: UiNode): boolean =>
   node.editable === undefined && !node.role &&
   (node.children?.length ?? 0) === 1;
 
-interface NodeBudget { nodes: number; truncated: boolean; }
+interface NodeBudget { nodes: number; truncated: boolean; includeHidden: boolean; hiddenSubtrees: number; }
 
 const serializeChildren = (
   fiber: FiberLike,
@@ -179,6 +218,10 @@ const serializeChildren = (
   for (let child = fiber.child ?? null; child; child = child.sibling ?? null) {
     if (budget.nodes <= 0) { budget.truncated = true; break; }
     if (isTextFiber(child)) continue; // aggregated by the parent host node
+    if (!budget.includeHidden && isHiddenSubtree(child)) {
+      budget.hiddenSubtrees += 1;
+      continue;
+    }
     if (isHostFiber(child)) {
       if (depthLeft <= 0) { budget.truncated = true; continue; }
       budget.nodes -= 1;
@@ -202,14 +245,16 @@ const serializeChildren = (
 export const serializeTree = (
   rootFiber: FiberLike,
   options: SerializeOptions = {},
-): { nodes: UiNode[]; truncated: boolean } => {
+): { nodes: UiNode[]; truncated: boolean; hiddenSubtrees: number } => {
   const budget: NodeBudget = {
     nodes: Math.max(1, Math.min(options.maxNodes ?? 2500, 10000)),
     truncated: false,
+    includeHidden: options.includeHidden === true,
+    hiddenSubtrees: 0,
   };
   const maxDepth = Math.max(1, Math.min(options.maxDepth ?? 60, 200));
   const nodes = serializeChildren(rootFiber, maxDepth, budget);
-  return { nodes, truncated: budget.truncated };
+  return { nodes, truncated: budget.truncated, hiddenSubtrees: budget.hiddenSubtrees };
 };
 
 /** True when the fiber matches the selector. Host fibers only. */
@@ -242,15 +287,19 @@ export const fiberMatches = (fiber: FiberLike, selector: UiSelector): boolean =>
   }
 };
 
-/** Finds matching host fibers (depth-first, no descent into a match) */
+/** Finds matching host fibers (depth-first, no descent into a match).
+ * Hidden subtrees (inactive navigator screens) are skipped by default:
+ * selectors must target what the user actually sees. */
 export const queryFibers = (
   rootFiber: FiberLike,
   selector: UiSelector,
   limit = 10,
+  includeHidden = false,
 ): FiberLike[] => {
   const found: FiberLike[] = [];
   const visit = (node: FiberLike | null | undefined): void => {
     for (let current = node; current && found.length < limit; current = current.sibling ?? null) {
+      if (!includeHidden && isHiddenSubtree(current)) continue;
       if (fiberMatches(current, selector)) {
         found.push(current);
         continue; // nested duplicates (composite + host) are not useful
@@ -577,10 +626,12 @@ export const installUiAutomation = (host: AutomationHost): void => {
     const roots = fibers.map((fiber) => serializeTree(fiber, {
       maxDepth: Number(payload.maxDepth) || undefined,
       maxNodes: Number(payload.maxNodes) || undefined,
+      includeHidden: payload.includeHidden === true,
     }));
     return {
       generation: tracker.generation,
       truncated: roots.some((root) => root.truncated),
+      hiddenSubtrees: roots.reduce((sum, root) => sum + root.hiddenSubtrees, 0),
       roots: roots.map((root) => root.nodes),
     };
   });
@@ -589,10 +640,11 @@ export const installUiAutomation = (host: AutomationHost): void => {
     const payload = (rawPayload ?? {}) as Record<string, unknown>;
     const selector = parseSelector(payload);
     const limit = Math.max(1, Math.min(Number(payload.limit) || 10, 50));
+    const includeHidden = payload.includeHidden === true;
     const fibers = requireRoots(tracker);
     const matches: FiberLike[] = [];
     for (const fiber of fibers) {
-      matches.push(...queryFibers(fiber, selector, limit - matches.length));
+      matches.push(...queryFibers(fiber, selector, limit - matches.length, includeHidden));
       if (matches.length >= limit) break;
     }
     return {
@@ -606,10 +658,11 @@ export const installUiAutomation = (host: AutomationHost): void => {
     const payload = (rawPayload ?? {}) as Record<string, unknown>;
     const selector = parseSelector(payload);
     const action = String(payload.action ?? "") as ActRequest["action"];
+    const includeHidden = payload.includeHidden === true;
     const fibers = requireRoots(tracker);
     const matches: FiberLike[] = [];
     for (const fiber of fibers) {
-      matches.push(...queryFibers(fiber, selector, 5 - matches.length));
+      matches.push(...queryFibers(fiber, selector, 5 - matches.length, includeHidden));
       if (matches.length >= 5) break;
     }
     if (!matches.length) {

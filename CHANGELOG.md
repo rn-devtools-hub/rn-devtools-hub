@@ -2,6 +2,13 @@
 
 Generated automatically from conventional commits.
 
+## [0.3.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.3.0...v0.3.1) (2026-07-23)
+
+### Bug Fixes
+
+* **dashboard:** keep expanded JSON nodes open in the network detail ([a9b3cd4](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/a9b3cd4eb93bd2716137c827d270bc4ced058140))
+* **dashboard:** stop event-batch renders from resetting panel state ([5ad72d0](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/5ad72d00b84605f1f1e0f0b473ee7b9d90b1a9fe))
+
 ## [0.3.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.2.0...v0.3.0) (2026-07-22)
 
 ### Features

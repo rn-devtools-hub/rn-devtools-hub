@@ -13,6 +13,7 @@ import {
   findHandler,
   findTextInputFiber,
   installUiAutomation,
+  isHiddenSubtree,
   performAct,
   prettyHostType,
   queryFibers,
@@ -148,6 +149,59 @@ describe("collectSubtreeText", () => {
   it("reads react-dom style string children", () => {
     const fiber = fiberFrom({ type: "span", children: [{ type: "b", props: { children: "web text" } }] });
     expect(collectSubtreeText(fiber)).toBe("web text");
+  });
+});
+
+// ------------------------------------------------------------------
+// Hidden screens: navigators keep previous screens mounted
+// ------------------------------------------------------------------
+
+describe("hidden navigator screens", () => {
+  // A stack after Login -> Home: the Login card stays mounted but is
+  // marked hidden by react-navigation / react-native-screens
+  const stack = rootOf({
+    type: "RCTView",
+    children: [
+      {
+        type: "RNSScreen",
+        props: { activityState: 0 },
+        children: [{ type: "RCTText", text: "Se connecter" }],
+      },
+      {
+        type: "RNSScreen",
+        props: { activityState: 2 },
+        children: [{ type: "RCTText", text: "Accueil" }],
+      },
+    ],
+  });
+
+  it("detects the signals set on inactive scenes", () => {
+    expect(isHiddenSubtree(fiberFrom({ type: "RNSScreen", props: { activityState: 0 } }))).toBe(true);
+    expect(isHiddenSubtree(fiberFrom({ type: "RNSScreen", props: { activityState: 2 } }))).toBe(false);
+    expect(isHiddenSubtree(fiberFrom({ type: "RCTView", props: { importantForAccessibility: "no-hide-descendants" } }))).toBe(true);
+    expect(isHiddenSubtree(fiberFrom({ type: "RCTView", props: { accessibilityElementsHidden: true } }))).toBe(true);
+    expect(isHiddenSubtree(fiberFrom({ type: "RCTView", props: { style: [{ flex: 1 }, { display: "none" }] } }))).toBe(true);
+    expect(isHiddenSubtree(fiberFrom({ type: "RCTView", props: { style: { display: "flex" } } }))).toBe(false);
+  });
+
+  it("serializes only the active screen after a navigation", () => {
+    const { nodes, hiddenSubtrees } = serializeTree(stack);
+    const text = JSON.stringify(nodes);
+    expect(text).toContain("Accueil");
+    expect(text).not.toContain("Se connecter");
+    expect(hiddenSubtrees).toBe(1);
+  });
+
+  it("selectors ignore the previous screen unless includeHidden", () => {
+    expect(queryFibers(stack, { by: "text", value: "Se connecter" })).toHaveLength(0);
+    expect(queryFibers(stack, { by: "text", value: "Accueil" })).toHaveLength(1);
+    expect(queryFibers(stack, { by: "text", value: "Se connecter" }, 10, true)).toHaveLength(1);
+  });
+
+  it("keeps hidden screens when includeHidden is set on the tree", () => {
+    const { nodes, hiddenSubtrees } = serializeTree(stack, { includeHidden: true });
+    expect(JSON.stringify(nodes)).toContain("Se connecter");
+    expect(hiddenSubtrees).toBe(0);
   });
 });
 

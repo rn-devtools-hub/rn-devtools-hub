@@ -50,9 +50,17 @@ LLM to integrate any app.
 | `screen.capture` | (none) | { format, base64 } |
 | `screen.stream.start` | { fps? 1..5 } | { ok, fps } |
 | `screen.stream.stop` | (none) | { ok } |
-| `ui.tree` | { maxDepth?, maxNodes? } | { generation, truncated, roots: UiNode[][] } (requires `attachUiAutomation()`) |
-| `ui.query` | { by: testID/text/label/type, value, exact?, limit? } | { generation, count, matches: [{type, testID, label, text, rect}] } |
-| `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd, by, value, text?, clear?, index?, x?, y? } | { ok, action, detail, target } |
+| `ui.tree` | { maxDepth?, maxNodes?, includeHidden? } | { generation, truncated, hiddenSubtrees, roots: UiNode[][] } (requires `attachUiAutomation()`) |
+| `ui.query` | { by: testID/text/label/type, value, exact?, limit?, includeHidden? } | { generation, count, matches: [{type, testID, label, text, rect}] } |
+| `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd, by, value, text?, clear?, index?, x?, y?, includeHidden? } | { ok, action, detail, target } |
+
+Navigators keep previous screens MOUNTED (stack cards, inactive tabs).
+The `ui.*` commands therefore skip hidden subtrees by default, detected
+through the signals the navigators set on inactive scenes
+(`importantForAccessibility="no-hide-descendants"`,
+`accessibilityElementsHidden`, RNSScreen `activityState: 0`,
+`display: none`). Pass `includeHidden: true` to inspect them anyway;
+`hiddenSubtrees` tells how many were skipped.
 
 The `ui.*` commands are served by the SDK (`devtools.attachUiAutomation()`),
 which reads the mounted React tree through the React DevTools hook and acts

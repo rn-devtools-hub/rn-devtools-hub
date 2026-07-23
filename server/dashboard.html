@@ -925,6 +925,9 @@
   $("deviceSelect").addEventListener("change", (e) => {
     state.selectedDevice = e.target.value;
     state.selectedRequestId = null;
+    // The cache detail is only rendered on click: without this reset it
+    // would keep showing the previous app's data after a device switch
+    $("cacheDetail").innerHTML = "";
     scheduleRender();
   });
 
@@ -1446,7 +1449,17 @@
   const renderNetworkDetail = (store) => {
     const host = $("netDetail");
     const entry = store.network.get(state.selectedRequestId);
-    if (!entry) { host.innerHTML = `<div class="empty">Select a request</div>`; return; }
+    if (!entry) {
+      host.dataset.sig = "";
+      host.innerHTML = `<div class="empty">Select a request</div>`;
+      return;
+    }
+    // Rebuild only when the content actually changed: renderAll runs on
+    // every event batch and a blind innerHTML rewrite would reset the
+    // JSON tree nodes the user just expanded
+    const sig = `${state.selectedDevice}:${state.selectedRequestId}:${entry.response ? 1 : 0}:${entry.error ? 1 : 0}`;
+    if (host.dataset.sig === sig) return;
+    host.dataset.sig = sig;
     host.innerHTML = `
       <div class="mono" style="color:var(--ink); word-break:break-all">
         ${methodBadge(entry.request.method)} ${esc(entry.request.url)}
@@ -1808,7 +1821,18 @@
   const renderActions = (store) => {
     const actions = store.actions || [];
     $("actionsEmpty").style.display = actions.length ? "none" : "";
-    $("actionsGrid").innerHTML = actions.map((action) => {
+    const grid = $("actionsGrid");
+    // Rebuild only when the actions actually change: a rewrite on every
+    // event batch would wipe the Running/Done button feedback and
+    // re-enable a button while its action is still running
+    const sig = JSON.stringify([
+      state.selectedDevice,
+      store.appInfo?.nativeCapable ?? null,
+      actions.map((a) => [a.name, a.label, a.danger, a.requiresNative]),
+    ]);
+    if (grid.dataset.sig === sig) return;
+    grid.dataset.sig = sig;
+    grid.innerHTML = actions.map((action) => {
       const unavailable = action.requiresNative && store.appInfo && !store.appInfo.nativeCapable;
       return `<div class="action-card">
         <strong>${esc(action.label)}</strong>

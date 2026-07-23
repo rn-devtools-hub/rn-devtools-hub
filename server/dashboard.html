@@ -1446,7 +1446,17 @@
   const renderNetworkDetail = (store) => {
     const host = $("netDetail");
     const entry = store.network.get(state.selectedRequestId);
-    if (!entry) { host.innerHTML = `<div class="empty">Select a request</div>`; return; }
+    if (!entry) {
+      host.dataset.sig = "";
+      host.innerHTML = `<div class="empty">Select a request</div>`;
+      return;
+    }
+    // Rebuild only when the content actually changed: renderAll runs on
+    // every event batch and a blind innerHTML rewrite would reset the
+    // JSON tree nodes the user just expanded
+    const sig = `${state.selectedDevice}:${state.selectedRequestId}:${entry.response ? 1 : 0}:${entry.error ? 1 : 0}`;
+    if (host.dataset.sig === sig) return;
+    host.dataset.sig = sig;
     host.innerHTML = `
       <div class="mono" style="color:var(--ink); word-break:break-all">
         ${methodBadge(entry.request.method)} ${esc(entry.request.url)}

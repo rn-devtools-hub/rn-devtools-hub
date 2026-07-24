@@ -15,6 +15,7 @@
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NATIVE_TOOLS, handleNativeTool, runCommand } from "./native.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -42,7 +43,9 @@ const eventWaiters = new Set();
 
 const notifyEventWaiters = (deviceId, events) => {
   for (const waiter of eventWaiters) {
-    if (waiter.deviceId !== deviceId) continue;
+    // deviceId null = any device (used by session_start, which waits
+    // for the app it just launched to connect)
+    if (waiter.deviceId !== null && waiter.deviceId !== deviceId) continue;
     const hit = events.find((event) => {
       try { return waiter.match(event); } catch { return false; }
     });
@@ -182,22 +185,6 @@ const KEYEVENTS = {
   back: "4", home: "3", menu: "82", power: "26",
   volume_up: "24", volume_down: "25",
   recents: "187", enter: "66", delete: "67", tab: "61", escape: "111",
-};
-
-const runCommand = async (argv, timeoutMs = 6000) => {
-  try {
-    const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
-    const timer = setTimeout(() => proc.kill(), timeoutMs);
-    const [bytes, errText, exitCode] = await Promise.all([
-      new Response(proc.stdout).arrayBuffer(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    clearTimeout(timer);
-    return { ok: exitCode === 0, bytes: new Uint8Array(bytes), error: errText.trim() };
-  } catch (error) {
-    return { ok: false, bytes: new Uint8Array(), error: String(error) };
-  }
 };
 
 const listMirrorSources = async (quick = false) => {
@@ -390,9 +377,15 @@ const MCP_TOOLS = [
   },
   {
     name: "run_action",
-    description: "Runs an action declared by the app, for example reload or cache invalidation. Dangerous actions must be confirmed in the MCP client.",
-    inputSchema: { type: "object", required: ["name"], properties: { deviceId: { type: "string" }, name: { type: "string" } }, additionalProperties: false },
+    description: "Runs an action declared by the app with optional typed args (e.g. nav:packageDetail {id}). Discover actions and their schemas with list_actions. Dangerous actions must be confirmed in the MCP client.",
+    inputSchema: { type: "object", required: ["name"], properties: { deviceId: { type: "string" }, name: { type: "string" }, args: { type: "object" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "list_actions",
+    description: "Lists the dev actions the app registered (name, label, description, argsSchema, danger). Conventions: nav:* navigate directly to a screen, auth:* instant sessions, seed:* fixtures, reset:* deterministic state.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
   },
   {
     name: "get_ui_tree",
@@ -402,14 +395,14 @@ const MCP_TOOLS = [
   },
   {
     name: "query_ui",
-    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label or type. Returns their text, props and measured rect (points). Hidden navigator screens are skipped unless includeHidden.",
-    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, by: { type: "string", enum: ["testID", "text", "label", "type"] }, value: { type: "string" }, exact: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, props and measured rect (points). Hidden navigator screens are skipped unless includeHidden.",
+    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: "ui_act",
-    description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd. Target by testID, text, label or type; pass index when several elements match. Hidden navigator screens are skipped unless includeHidden.",
-    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd"] }, by: { type: "string", enum: ["testID", "text", "label", "type"] }, value: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd. Target by testID, text, label, type or role plus name; scope with within. When several elements match, the result lists the candidates with rects so you can pass index. Hidden navigator screens are skipped unless includeHidden.",
+    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd"] }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
@@ -426,8 +419,27 @@ const MCP_TOOLS = [
   },
 ];
 
+// Waits for an event from ANY device: session_start launches the app
+// and needs its first hello/app.info without knowing its deviceId yet
+const waitForAnyDeviceEvent = ({ type, timeoutMs }) => new Promise((resolve) => {
+  const waiter = {
+    deviceId: null,
+    match: (event) => String(event.type).includes(String(type)),
+    resolve: (event) => resolve({ timedOut: false, event }),
+    timer: setTimeout(() => {
+      eventWaiters.delete(waiter);
+      resolve({ timedOut: true, event: null });
+    }, timeoutMs),
+  };
+  eventWaiters.add(waiter);
+});
+
 const handleMcpTool = async (name, args = {}) => {
   if (name === "list_devices") return Array.from(devices.entries()).map(deviceSummary);
+  // Host-side native tools (simctl/adb): no connected JS device needed
+  if (NATIVE_TOOLS.some((tool) => tool.name === name)) {
+    return handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
+  }
   const entry = args.deviceId
     ? [String(args.deviceId), devices.get(String(args.deviceId))]
     : Array.from(devices.entries()).find(([, device]) => device.ws.readyState === 1) ?? Array.from(devices.entries())[0];
@@ -487,9 +499,14 @@ const handleMcpTool = async (name, args = {}) => {
     return response.result;
   }
   if (name === "run_action") {
-    const response = await sendDeviceCommand(deviceId, "action.run", { name: args.name });
+    const response = await sendDeviceCommand(deviceId, "action.run", { name: args.name, args: args.args });
     if (response.error) throw new Error(response.error);
     return response.result;
+  }
+  if (name === "list_actions") {
+    const registrations = eventsOfType(device, ["actions.register"], 1000);
+    const latest = registrations[registrations.length - 1];
+    return { actions: latest?.payload?.actions ?? [] };
   }
   if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
     const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
@@ -565,10 +582,19 @@ const handleMcpRequest = async (request, bunServer) => {
   }
   if (method === "notifications/initialized") return new Response(null, { status: 202 });
   if (method === "ping") return jsonResponse(mcpResult(id, {}));
-  if (method === "tools/list") return jsonResponse(mcpResult(id, { tools: MCP_TOOLS }));
+  if (method === "tools/list") return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...NATIVE_TOOLS] }));
   if (method === "tools/call") {
     try {
       const result = await handleMcpTool(params?.name, params?.arguments ?? {});
+      if (result && typeof result === "object" && result.__mcpImage) {
+        const { __mcpImage, ...rest } = result;
+        return jsonResponse(mcpResult(id, {
+          content: [
+            { type: "image", data: __mcpImage.data, mimeType: __mcpImage.mimeType },
+            { type: "text", text: JSON.stringify(rest) },
+          ],
+        }));
+      }
       return jsonResponse(mcpResult(id, mcpText(result)));
     } catch (error) {
       return jsonResponse(mcpResult(id, mcpText(error instanceof Error ? error.message : String(error), true)));

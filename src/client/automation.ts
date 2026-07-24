@@ -45,10 +45,12 @@ export interface UiNode {
 }
 
 export interface UiSelector {
-  by: "testID" | "text" | "label" | "type";
+  by: "testID" | "text" | "label" | "type" | "role";
   value: string;
-  /** For by:"text": exact match instead of substring */
+  /** For by:"text" and name matching: exact match instead of substring */
   exact?: boolean;
+  /** For by:"role": accessible name filter (label, aria-label or text) */
+  name?: string;
 }
 
 export interface SerializeOptions {
@@ -257,6 +259,27 @@ export const serializeTree = (
   return { nodes, truncated: budget.truncated, hiddenSubtrees: budget.hiddenSubtrees };
 };
 
+/** Accessible name, mirroring Testing Library order: aria-label /
+ * accessibilityLabel, then alt, then placeholder, then rendered text */
+export const accessibleName = (fiber: FiberLike): string => {
+  const props = propsOf(fiber);
+  return (
+    stringProp(props, "aria-label", "accessibilityLabel", "alt", "placeholder") ??
+    collectSubtreeText(fiber, 30)
+  );
+};
+
+// RN 0.71+ ARIA role names vs legacy accessibilityRole names
+// (mapping table from RN's AccessibilityMapping)
+const ROLE_ALIASES: Record<string, string> = {
+  heading: "header",
+  img: "image",
+  searchbox: "search",
+  slider: "adjustable",
+  presentation: "none",
+};
+const normalizeRole = (role: string): string => ROLE_ALIASES[role] ?? role;
+
 /** True when the fiber matches the selector. Host fibers only. */
 export const fiberMatches = (fiber: FiberLike, selector: UiSelector): boolean => {
   if (!isHostFiber(fiber)) return false;
@@ -267,6 +290,19 @@ export const fiberMatches = (fiber: FiberLike, selector: UiSelector): boolean =>
       return stringProp(props, "testID", "data-testid") === value;
     case "label":
       return stringProp(props, "accessibilityLabel", "aria-label") === value;
+    case "role": {
+      // RN 0.71+ ARIA-style role wins over accessibilityRole; both
+      // naming families match through the alias table, and Text hosts
+      // carry an implicit "text" role like in Testing Library
+      const explicit = stringProp(props, "role", "accessibilityRole");
+      const role = explicit ?? (isTextType(prettyHostType(String(fiber.type))) ? "text" : undefined);
+      if (role === undefined || normalizeRole(role) !== normalizeRole(value)) return false;
+      if (selector.name === undefined) return true;
+      const name = accessibleName(fiber);
+      return selector.exact
+        ? name === selector.name
+        : name.includes(selector.name);
+    }
     case "type": {
       const raw = String(fiber.type);
       return raw === value || prettyHostType(raw) === value;
@@ -407,11 +443,46 @@ const callNative = (
   }
 };
 
+/**
+ * First native instance able to measure itself: the fiber's own host
+ * subtree first, then its ancestors. Text and virtual nodes often have
+ * no measurable instance of their own (rect used to come back null):
+ * the closest measurable ancestor is the honest approximation.
+ */
+export const findMeasurableInstance = (
+  fiber: FiberLike,
+): Record<string, unknown> | null => {
+  const measurable = (candidate: unknown): Record<string, unknown> | null =>
+    candidate && typeof candidate === "object" &&
+    typeof (candidate as Record<string, unknown>).measureInWindow === "function"
+      ? (candidate as Record<string, unknown>)
+      : null;
+
+  const queue: Array<{ node: FiberLike; depth: number }> = [{ node: fiber, depth: 0 }];
+  while (queue.length) {
+    const { node, depth } = queue.shift()!;
+    const found = isHostFiber(node) ? measurable(node.stateNode) : null;
+    if (found) return found;
+    if (depth < 10) {
+      for (let child = node.child ?? null; child; child = child.sibling ?? null) {
+        queue.push({ node: child, depth: depth + 1 });
+      }
+    }
+  }
+  let ancestor = fiber.return ?? null;
+  for (let steps = 0; ancestor && steps < 12; steps += 1) {
+    const found = measurable(ancestor.stateNode);
+    if (found) return found;
+    ancestor = ancestor.return ?? null;
+  }
+  return null;
+};
+
 const measureFiber = (fiber: FiberLike): Promise<
   { x: number; y: number; width: number; height: number } | null
 > =>
   new Promise((resolve) => {
-    const instance = findStateNode(fiber);
+    const instance = findMeasurableInstance(fiber);
     const measure = instance?.measureInWindow;
     if (typeof measure !== "function") { resolve(null); return; }
     const timer = setTimeout(() => resolve(null), 400);
@@ -606,14 +677,40 @@ const requireRoots = (tracker: RootTracker): FiberLike[] => {
 
 const parseSelector = (payload: Record<string, unknown>): UiSelector => {
   const by = String(payload.by ?? "testID") as UiSelector["by"];
-  if (!["testID", "text", "label", "type"].includes(by)) {
-    throw new Error(`Unknown selector: ${by} (use testID, text, label or type)`);
+  if (!["testID", "text", "label", "type", "role"].includes(by)) {
+    throw new Error(`Unknown selector: ${by} (use testID, text, label, type or role)`);
   }
   const value = payload.value;
   if (typeof value !== "string" || !value.length) {
     throw new Error("Selector needs a non-empty string value");
   }
-  return { by, value, exact: payload.exact === true };
+  return {
+    by,
+    value,
+    exact: payload.exact === true,
+    name: typeof payload.name === "string" ? payload.name : undefined,
+  };
+};
+
+/** Resolves the search scope: the whole roots, or a `within` container */
+const resolveScopes = (
+  fibers: FiberLike[],
+  payload: Record<string, unknown>,
+  includeHidden: boolean,
+): FiberLike[] => {
+  const within = payload.within;
+  if (!within || typeof within !== "object") return fibers;
+  const container = parseSelector(within as Record<string, unknown>);
+  const scopes: FiberLike[] = [];
+  for (const fiber of fibers) {
+    scopes.push(...queryFibers(fiber, container, 5, includeHidden));
+  }
+  if (!scopes.length) {
+    throw new Error(
+      `within: no container matches ${container.by}="${container.value}"`
+    );
+  }
+  return scopes;
 };
 
 /** Registers the ui.tree / ui.query / ui.act command handlers */
@@ -641,9 +738,9 @@ export const installUiAutomation = (host: AutomationHost): void => {
     const selector = parseSelector(payload);
     const limit = Math.max(1, Math.min(Number(payload.limit) || 10, 50));
     const includeHidden = payload.includeHidden === true;
-    const fibers = requireRoots(tracker);
+    const scopes = resolveScopes(requireRoots(tracker), payload, includeHidden);
     const matches: FiberLike[] = [];
-    for (const fiber of fibers) {
+    for (const fiber of scopes) {
       matches.push(...queryFibers(fiber, selector, limit - matches.length, includeHidden));
       if (matches.length >= limit) break;
     }
@@ -659,9 +756,9 @@ export const installUiAutomation = (host: AutomationHost): void => {
     const selector = parseSelector(payload);
     const action = String(payload.action ?? "") as ActRequest["action"];
     const includeHidden = payload.includeHidden === true;
-    const fibers = requireRoots(tracker);
+    const scopes = resolveScopes(requireRoots(tracker), payload, includeHidden);
     const matches: FiberLike[] = [];
-    for (const fiber of fibers) {
+    for (const fiber of scopes) {
       matches.push(...queryFibers(fiber, selector, 5 - matches.length, includeHidden));
       if (matches.length >= 5) break;
     }
@@ -670,9 +767,15 @@ export const installUiAutomation = (host: AutomationHost): void => {
     }
     const index = Math.max(0, Number(payload.index) || 0);
     if (matches.length > 1 && payload.index === undefined) {
-      throw new Error(
-        `${matches.length} elements match ${selector.by}="${selector.value}": pass an index or use a more specific selector`
-      );
+      // Give the agent what it needs to choose: the candidates with
+      // their rects, instead of a bare "pass an index" error
+      return {
+        ok: false,
+        reason: "ambiguous",
+        count: matches.length,
+        candidates: await Promise.all(matches.map(describeMatch)),
+        hint: "Pass index, narrow the selector, or scope it with within",
+      };
     }
     const target = matches[Math.min(index, matches.length - 1)];
     const result = performAct(target, {

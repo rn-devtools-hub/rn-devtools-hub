@@ -68,19 +68,37 @@ The hub exposes an MCP server at http://127.0.0.1:8973/mcp (localhost
 only). Tools:
 
 - Inspection: list_devices, get_app_info, get_recent_network, get_crashes,
-  get_endpoint_stats, query_sqlite (SELECT/PRAGMA), run_action.
+  get_endpoint_stats, query_sqlite (SELECT/PRAGMA).
+- Dev actions: list_actions (discover what the app registered, with
+  argsSchema), run_action with typed args. Conventions: `nav:*` jump to a
+  screen, `auth:*` instant session, `seed:*` fixtures, `reset:*`
+  deterministic state. This is the fastest way to skip fragile UI paths.
 - Perception and action (the app must call `devtools.attachUiAutomation()`):
-  get_ui_tree (semantic tree of mounted components), query_ui (find by
-  testID/text/label/type, with measured rects), ui_act (tap, longPress,
-  type with exact text, clear, submit, scrollTo).
+  get_ui_tree (semantic tree of the VISIBLE components), query_ui (find by
+  role+name, testID, text, label or type, scoped with `within`, measured
+  rects), ui_act (tap, longPress, type with exact text, clear, submit,
+  scrollTo; ambiguous matches return the candidates with rects).
+  Selector preference: role+accessible name, then testID, then run_action.
 - Event flow: get_events_since (cursor-based polling without missing
   events), wait_for_event (blocks until a matching event, e.g.
   `screen.ready` after `devtools.markScreenReady()` or a
   `network.response`; replaces every sleep).
+- Native adapter (host-side simctl/adb; targets come from list_targets and
+  are `sim:<udid>` / `adb:<serial>`, distinct from the JS deviceId):
+  set_permission (pre-grant so popups never appear; iOS cannot pre-grant
+  notifications or camera), launch_app (zero-dialog dev-client launch:
+  `--initialUrl` on iOS, explicit component on Android), terminate_app,
+  open_url, screenshot_native (pixels, complements the tree),
+  tap_native (last resort: adb / AXe / idb), boot_device, shutdown_device,
+  set_location (simulated GPS), set_animations (Android determinism),
+  send_push (iOS simulated push), set_appearance (dark mode).
+- session_start: one-call bootstrap = resolve target, pre-grant
+  permissions, cold-launch on the Metro server with onboarding skipped,
+  wait until the app connects to the hub.
 
 Registration on the Claude Code side:
 `claude mcp add rn-devtools --transport http http://127.0.0.1:8973/mcp`
 
-Recommended agent loop: `ui_act` (tap by testID), then `wait_for_event`
-on the expected effect, then `query_ui`/`get_ui_tree` to verify the
-screen. No pixel coordinates, no idb, works in CI without a simulator.
+Recommended agent loop: `session_start`, then `ui_act` (by role/testID),
+then `wait_for_event` on the expected effect, then `query_ui` to verify.
+No pixel coordinates, no sleeps, no manual simctl/idb.

@@ -412,6 +412,9 @@
   .log-line.error .lvl { color: var(--critical); }
   .log-line.log .lvl, .log-line.info .lvl { color: var(--ink-2); }
   .log-line .msg { color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+  .repeat-badge { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 8px;
+    background: var(--surface); color: var(--muted); font-size: 10px; font-weight: 600; }
+  #nativeLogOutput .lvl { width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   #sqlOutput { margin-top: 10px; }
   textarea#sqlInput {
@@ -572,8 +575,12 @@
           <option value="warn">warn</option>
           <option value="error">error</option>
         </select>
+        <select id="nativeLogTarget" style="display:none"></select>
+        <button class="mini-btn" id="nativeLogRefresh" style="display:none">Refresh</button>
+        <button class="mini-btn" id="nativeLogBtn">Device logs</button>
       </div>
       <div id="logList"></div>
+      <div id="nativeLogOutput" style="display:none; overflow:auto; max-height:75vh"></div>
       <div class="empty" id="logEmpty">No logs captured</div>
     </section>
 
@@ -1628,7 +1635,7 @@
       return JSON.stringify(l.args).toLowerCase().includes(filter);
     }).slice(-400);
 
-    $("logEmpty").style.display = logs.length ? "none" : "";
+    $("logEmpty").style.display = nativeLogState.active || logs.length ? "none" : "";
     $("logList").innerHTML = logs.map((l) => {
       // Object arguments are colorized as JSON
       const message = (l.args ?? []).map((a) =>
@@ -1641,6 +1648,80 @@
       </div>`;
     }).join("");
   };
+
+  // ---------- Device (native) logs: adb logcat / simulator log ----------
+  const nativeLogState = { active: false };
+
+  // Parses a native line (logcat threadtime or iOS compact style) into
+  // {ts, tag, level, msg, count} for a display consistent with app logs
+  const parseNativeLine = (raw) => {
+    let count = 1;
+    let line = raw.replace(/\s+\(repeated x(\d+)\)$/, (_, n) => { count = Number(n); return ""; });
+    const LEVELS = { V: "log", D: "log", I: "info", W: "warn", E: "error", F: "error" };
+    const android = line.match(/^(\d{2}-\d{2}\s[\d:.]+)\s+\d+\s+\d+\s+([VDIWEF])\s+(\S+?)\s*:\s?(.*)$/);
+    if (android) {
+      return { ts: android[1].slice(6, 14), tag: android[3].slice(0, 14), level: LEVELS[android[2]], msg: android[4], count };
+    }
+    const ios = line.match(/^[\d-]+\s([\d:.]+)[+-]\d+\s+(\w{1,2})\s+(.*)$/);
+    if (ios) {
+      const level = ios[2] === "E" ? "error" : ios[2] === "Fl" ? "error" : ios[2] === "I" ? "info" : "log";
+      const rest = ios[3];
+      const proc = rest.match(/^([\w .-]+?)\[\d+/);
+      return { ts: ios[1].slice(0, 8), tag: (proc?.[1] ?? "").slice(0, 14), level, msg: rest, count };
+    }
+    const level = /error|exception|fatal|crash/i.test(line) ? "error" : /warn/i.test(line) ? "warn" : "log";
+    return { ts: "", tag: "", level, msg: line, count };
+  };
+
+  const refreshNativeLogs = async () => {
+    const target = $("nativeLogTarget").value;
+    const output = $("nativeLogOutput");
+    if (!target) { output.innerHTML = `<div class="empty">No booted simulator or adb device detected.</div>`; return; }
+    output.innerHTML = `<div class="empty">Loading...</div>`;
+    const params = new URLSearchParams({ token: hubToken, target });
+    const filter = $("logFilter").value.trim();
+    if (filter) params.set("filter", filter);
+    try {
+      const data = await (await fetch(`/native/logs?${params}`)).json();
+      if (data.error) throw new Error(data.error);
+      const rows = (data.lines ?? []).map(parseNativeLine).map((entry) => `
+        <div class="log-line ${entry.level}">
+          <span class="ts">${esc(entry.ts)}</span>
+          <span class="lvl" title="${esc(entry.tag)}">${esc(entry.tag || entry.level)}</span>
+          <span class="msg">${esc(entry.msg)}${entry.count > 1 ? `<span class="repeat-badge">x${entry.count}</span>` : ""}</span>
+        </div>`).join("");
+      output.innerHTML = (data.note ? `<div class="empty">${esc(data.note)}</div>` : "") +
+        (rows || `<div class="empty">No log lines (try without filter).</div>`);
+      output.scrollTop = output.scrollHeight;
+    } catch (error) {
+      output.innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`;
+    }
+  };
+
+  $("nativeLogBtn").addEventListener("click", async () => {
+    nativeLogState.active = !nativeLogState.active;
+    const active = nativeLogState.active;
+    $("nativeLogBtn").textContent = active ? "App logs" : "Device logs";
+    $("logList").style.display = active ? "none" : "";
+    $("logLevel").style.display = active ? "none" : "";
+    $("nativeLogOutput").style.display = active ? "" : "none";
+    $("nativeLogTarget").style.display = active ? "" : "none";
+    $("nativeLogRefresh").style.display = active ? "" : "none";
+    scheduleRender();
+    if (!active) return;
+    if (!$("nativeLogTarget").options.length) {
+      let data = { targets: [] };
+      try {
+        data = await (await fetch(`/native/targets?token=${encodeURIComponent(hubToken)}`)).json();
+      } catch { /* hub unreachable */ }
+      const ready = (data.targets ?? []).filter((t) => t.state === "ready");
+      $("nativeLogTarget").innerHTML = ready.length
+        ? ready.map((t) => `<option value="${esc(t.target)}">${esc(t.name ?? t.target)}</option>`).join("")
+        : `<option value="">No booted target</option>`;
+    }
+    refreshNativeLogs();
+  });
+  $("nativeLogRefresh").addEventListener("click", refreshNativeLogs);
 
   // ---------- Storage (AsyncStorage) ----------
   $("storageRefresh").addEventListener("click", async () => {

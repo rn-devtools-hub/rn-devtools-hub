@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.5.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.4.0...v0.5.0) (2026-07-24)
+
+### Features
+
+* **server:** native device logs with dedup, in MCP and the dashboard ([b8c54d4](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/b8c54d4a9563572043c0c95d6ae250c21c4db8d5))
+
 ## [0.4.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.3.2...v0.4.0) (2026-07-24)
 
 ### Features

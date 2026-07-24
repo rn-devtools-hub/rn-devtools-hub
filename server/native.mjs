@@ -496,6 +496,88 @@ export const setAppearance = async ({ target, appearance }) => {
   return { ok: true, target: `${kind}:${id}`, appearance: mode };
 };
 
+/** Collapses log lines repeated in a loop: identical messages (once
+ * timestamps and pids are stripped) within a short window are folded
+ * into one line with a repeat count. */
+const dedupeLogLines = (lines) => {
+  const keyOf = (line) => line
+    .replace(/^\d{2}-\d{2}\s[\d:.]+\s+\d+\s+\d+\s+/, "")   // logcat: date time pid tid
+    .replace(/^[\d-]+\s[\d:.+]+\s+/, "")                    // iOS compact: date time
+    .replace(/\[\d+:\d+\]/, "[pid]");
+  const out = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const key = keyOf(line);
+    // Window of 4: also catches A,B,A,B alternating loops
+    const recent = out.slice(-4).find((entry) => entry.key === key);
+    if (recent) { recent.count += 1; continue; }
+    out.push({ line, key, count: 1 });
+  }
+  return out.map((entry) => entry.count > 1
+    ? `${entry.line}   (repeated x${entry.count})`
+    : entry.line);
+};
+
+/**
+ * Native device logs: everything the JS console cannot see (crashes
+ * before the bundle loads, Expo Go / dev-client startup, OS messages).
+ * Android: bounded logcat dump (fast). iOS: unified log dump via
+ * log show; reading the archive is slow (roughly 10-30 s per minute of
+ * window), so the default window is 1 minute. Looping duplicates are
+ * collapsed with a repeat count.
+ */
+export const getNativeLogs = async ({ target, lines, filter, process: processName, sinceMinutes }) => {
+  const { kind, id } = await resolveTarget(target);
+  requireTool(kind);
+  const limit = Math.max(10, Math.min(Number(lines) || 200, 2000));
+  const needle = filter ? String(filter) : null;
+
+  if (kind === "adb") {
+    const argv = ["adb", "-s", id, "logcat", "-d", "-t", String(limit)];
+    if (processName) {
+      const app = requireAppId(processName);
+      const pid = await runCommand(["adb", "-s", id, "shell", "pidof", "-s", app]);
+      const pidText = textOf(pid);
+      if (pid.ok && /^\d+$/.test(pidText)) {
+        argv.push("--pid", pidText);
+      } else {
+        return { target: `adb:${id}`, count: 0, lines: [], note: `Process ${app} is not running` };
+      }
+    }
+    const raw = await runCommand(argv, 15000);
+    if (!raw.ok) fail(raw, "adb logcat");
+    let all = textOf(raw).split("\n");
+    if (needle) all = all.filter((line) => line.toLowerCase().includes(needle.toLowerCase()));
+    const out = dedupeLogLines(all).slice(-limit)
+      .map((line) => line.length > 500 ? `${line.slice(0, 500)}…` : line);
+    return { target: `adb:${id}`, count: out.length, lines: out };
+  }
+
+  // iOS simulator: unified log via the sim runtime's log binary
+  const predicates = [];
+  if (processName) {
+    if (!/^[A-Za-z0-9 ._-]+$/.test(String(processName))) throw new Error("Invalid process name");
+    predicates.push(`process == "${processName}"`);
+  }
+  if (needle) {
+    if (!/^[^"\\]+$/.test(needle)) throw new Error("Invalid filter (no quotes or backslashes)");
+    predicates.push(`eventMessage CONTAINS[c] "${needle}"`);
+  }
+  const isNoise = (line) =>
+    !line.trim() || /^Filtering the log data|^Timestamp\s+Ty/.test(line);
+
+  // log show reads the whole archive: expect ~10-30 s per minute of
+  // window, hence the small default and the sized timeout
+  const minutes = Math.max(1, Math.min(Number(sinceMinutes) || 1, 10));
+  const argv = ["xcrun", "simctl", "spawn", id, "log", "show", "--last", `${minutes}m`, "--style", "compact"];
+  if (predicates.length) argv.push("--predicate", predicates.join(" AND "));
+  const raw = await runCommand(argv, 60000 + minutes * 30000);
+  if (!raw.ok) fail(raw, "simctl log show");
+  const out = dedupeLogLines(textOf(raw).split("\n").filter((l) => !isNoise(l))).slice(-limit)
+    .map((line) => line.length > 500 ? `${line.slice(0, 500)}…` : line);
+  return { target: `sim:${id}`, sinceMinutes: minutes, count: out.length, lines: out };
+};
+
 // ====================================================================
 // session_start orchestration
 // ====================================================================
@@ -629,6 +711,12 @@ export const NATIVE_TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
+    name: "get_native_logs",
+    description: "Native device logs the JS console cannot see, with looping duplicates collapsed. Android: bounded logcat dump, fast (filter by app package via process). iOS: unified log dump of the last sinceMinutes (default 1); SLOW, roughly 10-30 s per minute of window, so keep the window small and filter by process. Catches crashes before the bundle loads and dev-client startup issues.",
+    inputSchema: { type: "object", properties: { ...targetProp, lines: { type: "integer", minimum: 10, maximum: 2000 }, filter: { type: "string", description: "Substring filter on the log lines" }, process: { type: "string", description: "Android: app package (pid filter). iOS: process name" }, sinceMinutes: { type: "integer", minimum: 1, maximum: 10 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "send_push",
     description: "Simulates a remote push notification on an iOS simulator (simctl push). payload is the APNs JSON with a top-level aps key. Rendering still depends on the app having notification permission.",
     inputSchema: { type: "object", required: ["appId", "payload"], properties: { ...targetProp, appId: { type: "string" }, payload: { type: "object" } }, additionalProperties: false },
@@ -661,6 +749,7 @@ export const handleNativeTool = async (name, args, helpers) => {
     case "shutdown_device": return shutdownDevice(args);
     case "set_location": return setLocation(args);
     case "set_animations": return setAnimations(args);
+    case "get_native_logs": return getNativeLogs(args);
     case "send_push": return sendPush(args);
     case "set_appearance": return setAppearance(args);
     case "session_start": return sessionStart(args, helpers);

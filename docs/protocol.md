@@ -51,8 +51,16 @@ LLM to integrate any app.
 | `screen.stream.start` | { fps? 1..5 } | { ok, fps } |
 | `screen.stream.stop` | (none) | { ok } |
 | `ui.tree` | { maxDepth?, maxNodes?, includeHidden? } | { generation, truncated, hiddenSubtrees, roots: UiNode[][] } (requires `attachUiAutomation()`) |
-| `ui.query` | { by: testID/text/label/type, value, exact?, limit?, includeHidden? } | { generation, count, matches: [{type, testID, label, text, rect}] } |
-| `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd, by, value, text?, clear?, index?, x?, y?, includeHidden? } | { ok, action, detail, target } |
+| `ui.query` | { by: testID/text/label/type/role, value, name?, exact?, within?, limit?, includeHidden? } | { generation, count, matches: [{type, testID, label, text, rect}] } |
+| `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd, by, value, name?, within?, text?, clear?, index?, x?, y?, includeHidden? } | { ok, action, detail, target } or { ok: false, reason: "ambiguous", candidates } |
+
+Selector notes: `by:"role"` matches `role` (precedence) or
+`accessibilityRole`, bridging both naming families (img/image,
+heading/header, searchbox/search, slider/adjustable); `name` filters on
+the accessible name (aria-label / accessibilityLabel / alt /
+placeholder, then rendered text); Text hosts carry an implicit `text`
+role; `within` is a nested selector restricting the search to a
+container's subtree.
 
 Navigators keep previous screens MOUNTED (stack cards, inactive tabs).
 The `ui.*` commands therefore skip hidden subtrees by default, detected
@@ -67,6 +75,29 @@ which reads the mounted React tree through the React DevTools hook and acts
 through JS props (onPress, onChangeText). Typing places the exact string
 given: no autocapitalize interference. This is runtime-level automation
 (like React Native Testing Library), not native touch injection.
+
+## Native adapter (host-side MCP tools)
+
+The hub also exposes OS-level tools that shell out to `xcrun simctl`
+and `adb` on the host machine (validated argv arrays, no shell). They
+take a `target` (`sim:<udid>` or `adb:<serial>`, from `list_targets`),
+which is deliberately distinct from the JS `deviceId`: the runtime
+cannot know which simulator it runs on.
+
+| Tool | Role |
+| --- | --- |
+| `list_targets` | booted simulators and adb devices with their state |
+| `set_permission` | pre-grant/revoke permissions so popups never appear (iOS cannot pre-grant notifications or camera) |
+| `launch_app` | zero-dialog launch: `simctl launch --initialUrl` (iOS), explicit-component `am start` (Android), dev-menu onboarding skipped |
+| `terminate_app` / `open_url` | lifecycle and deep links |
+| `screenshot_native` | pixel PNG returned as MCP image content |
+| `tap_native` | last-resort tap: adb input tap, or AXe/idb on iOS |
+| `boot_device` / `shutdown_device` | simulator lifecycle |
+| `set_location` | simulated GPS (`simctl location`, `adb emu geo fix`, longitude first internally) |
+| `set_animations` | Android animation scales on/off for deterministic captures |
+| `send_push` | simulated APNs push on iOS simulators |
+| `set_appearance` | light/dark mode switch |
+| `session_start` | bootstrap: permissions + cold launch on the Metro server + wait for the app to connect |
 
 ## Event cursor (agents)
 

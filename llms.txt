@@ -25,4 +25,4 @@ Key points to integrate the package into an app:
 
 ## Optional
 
-- [MCP server](https://rn-devtools-hub.github.io/rn-devtools-hub/integration.html#mcp): tools list_devices, get_recent_network, get_crashes, query_sqlite, run_action, get_ui_tree, query_ui, ui_act, get_events_since, wait_for_event at http://127.0.0.1:8973/mcp
+- [MCP server](https://rn-devtools-hub.github.io/rn-devtools-hub/integration.html#mcp): tools list_devices, get_recent_network, get_crashes, query_sqlite, run_action, list_actions, get_ui_tree, query_ui, ui_act, get_events_since, wait_for_event, plus the native adapter (list_targets, set_permission, launch_app, screenshot_native, tap_native, set_location, send_push, session_start...) at http://127.0.0.1:8973/mcp

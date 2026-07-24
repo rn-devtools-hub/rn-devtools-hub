@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NATIVE_TOOLS, handleNativeTool, runCommand } from "./native.mjs";
+import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs } from "./native.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -627,14 +627,31 @@ const deviceListPayload = () =>
 
 const startServer = () => Bun.serve({
   port: PORT,
+  // Bun kills idle requests after 10 s by default: wait_for_event
+  // long-polls (up to 120 s) and native log dumps need much more
+  idleTimeout: 240,
   async fetch(request, bunServer) {
     const url = new URL(request.url);
     if (url.pathname === "/mcp") return handleMcpRequest(request, bunServer);
 
-    // Design and Mirror endpoints: protected by the hub token
-    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/")) {
+    // Design, Mirror and Native endpoints: protected by the hub token
+    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/")) {
       if (!hasValidToken(url)) return jsonResponse({ error: "Invalid token" }, 401);
 
+      if (url.pathname === "/native/targets") return jsonResponse(await listTargets());
+      if (url.pathname === "/native/logs") {
+        try {
+          return jsonResponse(await getNativeLogs({
+            target: url.searchParams.get("target") || undefined,
+            lines: url.searchParams.get("lines") || undefined,
+            filter: url.searchParams.get("filter") || undefined,
+            process: url.searchParams.get("process") || undefined,
+            sinceMinutes: url.searchParams.get("sinceMinutes") || undefined,
+          }));
+        } catch (error) {
+          return jsonResponse({ error: String(error?.message ?? error) }, 502);
+        }
+      }
       if (url.pathname === "/design/manifest") return jsonResponse(designManifest());
       if (url.pathname === "/design/asset") return serveProjectAsset(url.searchParams.get("path"));
       if (url.pathname === "/mirror/sources") {

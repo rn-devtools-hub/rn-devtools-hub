@@ -100,10 +100,13 @@ class Devtools {
 
     // (Re)install the dispatcher and publish the up-to-date list
     this.transport?.onCommand("action.run", async (payload) => {
-      const name = String((payload as { name?: string })?.name ?? "");
+      const incoming = payload as { name?: string; args?: unknown };
+      const name = String(incoming?.name ?? "");
       const action = this.actions.get(name);
       if (!action) throw new Error(`Unknown action: ${name}`);
-      return action.handler(payload);
+      // Typed args (nav:packageDetail {id}...) when provided, otherwise
+      // the whole payload for backward compatibility
+      return action.handler(incoming?.args ?? payload);
     });
     this.emit("actions.register", {
       actions: Array.from(this.actions.values()).map((a) => a.definition),

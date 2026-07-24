@@ -91,6 +91,7 @@ cannot know which simulator it runs on.
 | `launch_app` | zero-dialog launch: `simctl launch --initialUrl` (iOS), explicit-component `am start` (Android), dev-menu onboarding skipped |
 | `terminate_app` / `open_url` | lifecycle and deep links |
 | `screenshot_native` | pixel PNG returned as MCP image content |
+| `get_native_logs` | native device logs with looping duplicates collapsed: adb logcat dump (fast), iOS unified log dump (slow, ~10-30 s per minute of window); also in the dashboard Logs panel via "Device logs" |
 | `tap_native` | last-resort tap: adb input tap, or AXe/idb on iOS |
 | `boot_device` / `shutdown_device` | simulator lifecycle |
 | `set_location` | simulated GPS (`simctl location`, `adb emu geo fix`, longitude first internally) |

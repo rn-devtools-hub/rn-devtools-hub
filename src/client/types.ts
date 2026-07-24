@@ -49,6 +49,10 @@ export interface ActionDefinition {
   danger?: boolean;
   /** Requires a development build (disabled in Expo Go) */
   requiresNative?: boolean;
+  /** What the action does, shown to agents by list_actions */
+  description?: string;
+  /** Free-form JSON schema of the args the handler accepts */
+  argsSchema?: Record<string, unknown>;
 }
 
 /** Recursively truncates a value for serialization (network payloads, cache...).

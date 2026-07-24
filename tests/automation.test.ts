@@ -8,9 +8,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   FiberLike,
   UiNode,
+  accessibleName,
   collectSubtreeText,
   fiberMatches,
   findHandler,
+  findMeasurableInstance,
   findTextInputFiber,
   installUiAutomation,
   isHiddenSubtree,
@@ -246,6 +248,109 @@ describe("queryFibers", () => {
   });
 });
 
+describe("role selector and within scoping", () => {
+  const screen = rootOf({
+    type: "RCTView",
+    children: [
+      {
+        type: "RCTView",
+        props: { testID: "tabBar" },
+        children: [{
+          type: "RCTView",
+          props: { accessibilityRole: "button", accessibilityLabel: "Colis" },
+          children: [{ type: "RCTText", text: "Colis" }],
+        }],
+      },
+      {
+        type: "RCTView",
+        props: { testID: "packageList" },
+        children: [
+          { type: "RCTText", text: "Colis SPX-1" },
+          { type: "RCTView", props: { role: "button" }, children: [{ type: "RCTText", text: "Suivre" }] },
+        ],
+      },
+    ],
+  });
+
+  it("finds by role and accessible name", () => {
+    const matches = queryFibers(screen, { by: "role", value: "button", name: "Colis" });
+    expect(matches).toHaveLength(1);
+    expect(accessibleName(matches[0])).toBe("Colis");
+  });
+
+  it("uses rendered text as the accessible name when there is no label", () => {
+    const matches = queryFibers(screen, { by: "role", value: "button", name: "Suivre" });
+    expect(matches).toHaveLength(1);
+  });
+
+  it("matches the ARIA-style role prop too", () => {
+    expect(queryFibers(screen, { by: "role", value: "button" })).toHaveLength(2);
+  });
+
+  it("bridges ARIA and legacy role names through aliases", () => {
+    const tree = rootOf({
+      type: "RCTView",
+      children: [
+        { type: "RCTImageView", props: { accessibilityRole: "image" } },
+        { type: "RCTText", props: { role: "heading" }, text: "Mes colis" },
+      ],
+    });
+    expect(queryFibers(tree, { by: "role", value: "img" })).toHaveLength(1);
+    expect(queryFibers(tree, { by: "role", value: "image" })).toHaveLength(1);
+    expect(queryFibers(tree, { by: "role", value: "header" })).toHaveLength(1);
+  });
+
+  it("gives Text hosts an implicit text role, like Testing Library", () => {
+    const tree = rootOf({ type: "RCTText", text: "Statut" });
+    expect(queryFibers(tree, { by: "role", value: "text", name: "Statut" })).toHaveLength(1);
+  });
+
+  it("within restricts the scope to a container", async () => {
+    const globalAny = globalThis as Record<string, any>;
+    globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {};
+    const handlers = new Map<string, (payload: unknown) => Promise<unknown> | unknown>();
+    installUiAutomation({
+      onCommand: (command, handler) => handlers.set(command, handler),
+      emit: () => {},
+    });
+    globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__.onCommitFiberRoot(1, { current: screen });
+
+    const everywhere = await handlers.get("ui.query")!({ by: "text", value: "Colis" }) as { count: number };
+    const scoped = await handlers.get("ui.query")!({
+      by: "text", value: "Colis", within: { by: "testID", value: "packageList" },
+    }) as { count: number; matches: Array<{ text: string | null }> };
+    expect(everywhere.count).toBeGreaterThan(scoped.count);
+    expect(scoped.count).toBe(1);
+    expect(scoped.matches[0].text).toBe("Colis SPX-1");
+    delete globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  });
+});
+
+describe("findMeasurableInstance", () => {
+  const measurer = { measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(1, 2, 3, 4) };
+
+  it("falls back to a measurable ancestor for virtual text nodes", () => {
+    const tree = rootOf({
+      type: "RCTView",
+      stateNode: measurer,
+      children: [{ type: "RCTText", text: "LIVRE" }],
+    });
+    const [text] = queryFibers(tree, { by: "text", value: "LIVRE" });
+    expect(findMeasurableInstance(text)).toBe(measurer);
+  });
+
+  it("prefers the element's own subtree instance", () => {
+    const own = { measureInWindow: () => {} };
+    const tree = rootOf({
+      type: "RCTView",
+      stateNode: measurer,
+      children: [{ type: "RCTText", text: "LIVRE", stateNode: own }],
+    });
+    const [text] = queryFibers(tree, { by: "text", value: "LIVRE" });
+    expect(findMeasurableInstance(text)).toBe(own);
+  });
+});
+
 // ------------------------------------------------------------------
 // Actions
 // ------------------------------------------------------------------
@@ -366,7 +471,7 @@ describe("installUiAutomation", () => {
     expect(result.roots[0][0].testID).toBe("home");
   });
 
-  it("rejects ambiguous ui.act targets", async () => {
+  it("returns the candidates with details on ambiguous ui.act targets", async () => {
     globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {};
     const { handlers } = install();
     const hook = globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__;
@@ -380,9 +485,13 @@ describe("installUiAutomation", () => {
       }),
     });
 
-    await expect(
-      handlers.get("ui.act")!({ action: "tap", by: "text", value: "Suivre" })
-    ).rejects.toThrow(/2 elements match/);
+    const result = await handlers.get("ui.act")!({
+      action: "tap", by: "text", value: "Suivre",
+    }) as { ok: boolean; reason: string; count: number; candidates: unknown[] };
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("ambiguous");
+    expect(result.count).toBe(2);
+    expect(result.candidates).toHaveLength(2);
   });
 
   it("fails with a typed error when the hook is missing", () => {

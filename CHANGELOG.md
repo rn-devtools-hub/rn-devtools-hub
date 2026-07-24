@@ -2,6 +2,13 @@
 
 Generated automatically from conventional commits.
 
+## [0.4.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.3.2...v0.4.0) (2026-07-24)
+
+### Features
+
+* **client:** role selectors, container scoping and typed action args ([d14b670](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/d14b670287de9c91505069db25471095612c9228))
+* **server:** native adapter, superset of idb scripting for agents ([875c1ca](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/875c1ca31db5c72ab23e6a13b256c07e5908073f))
+
 ## [0.3.2](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.3.1...v0.3.2) (2026-07-23)
 
 ### Bug Fixes

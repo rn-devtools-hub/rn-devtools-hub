@@ -17,6 +17,7 @@ import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs } from "./native.mjs";
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
+import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -446,6 +447,7 @@ const MCP_TOOLS = [
     annotations: { readOnlyHint: true },
   },
   PROJECT_TOOL,
+  ASSERT_TOOL,
 ];
 
 // Waits for an event from ANY device: session_start launches the app
@@ -556,6 +558,16 @@ const handleMcpTool = async (name, args = {}) => {
     const response = await sendDeviceCommand(deviceId, command, payload);
     if (response.error) throw new Error(response.error);
     return response.result;
+  }
+  if (name === "assert") {
+    return runAssert(args, {
+      history: () => device.history,
+      queryUi: async (selector) => {
+        const response = await sendDeviceCommand(deviceId, "ui.query", selector);
+        if (response.error) throw new Error(response.error);
+        return response.result;
+      },
+    });
   }
   if (name === "get_events_since") {
     const limit = Math.max(1, Math.min(Number(args.limit) || 200, 1000));

@@ -736,8 +736,16 @@ const resolveScopes = (
   return scopes;
 };
 
+/** What installUiAutomation hands back so other modules (previews) can
+ * reuse the fiber walking without re-implementing root tracking */
+export interface AutomationApi {
+  generation: () => number;
+  query: (selector: UiSelector, limit?: number) => Promise<Array<Record<string, unknown>>>;
+  subtree: (selector: UiSelector, options?: SerializeOptions) => UiNode[] | null;
+}
+
 /** Registers the ui.tree / ui.query / ui.act command handlers */
-export const installUiAutomation = (host: AutomationHost): void => {
+export const installUiAutomation = (host: AutomationHost): AutomationApi => {
   const tracker = trackRoots(host.emit);
 
   host.onCommand("ui.tree", (rawPayload) => {
@@ -817,4 +825,28 @@ export const installUiAutomation = (host: AutomationHost): void => {
       target: await describeMatch(target),
     };
   });
+
+  const firstMatch = (selector: UiSelector): FiberLike | null => {
+    for (const fiber of requireRoots(tracker)) {
+      const found = queryFibers(fiber, selector, 1, false);
+      if (found.length) return found[0];
+    }
+    return null;
+  };
+
+  return {
+    generation: () => tracker.generation,
+    query: async (selector, limit = 10) => {
+      const matches: FiberLike[] = [];
+      for (const fiber of requireRoots(tracker)) {
+        matches.push(...queryFibers(fiber, selector, limit - matches.length, false));
+        if (matches.length >= limit) break;
+      }
+      return Promise.all(matches.map(describeMatch));
+    },
+    subtree: (selector, options) => {
+      const fiber = firstMatch(selector);
+      return fiber ? serializeTree(fiber, options).nodes : null;
+    },
+  };
 };

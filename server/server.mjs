@@ -29,6 +29,24 @@ const PORT = (() => {
 const HISTORY_LIMIT_PER_DEVICE = 3000;
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const MCP_COMMAND_TIMEOUT_MS = 8000;
+// Some device commands are structurally slower than reading a prop:
+// mounting a preview under the app's providers, measuring a whole
+// subtree, restoring a store. A single ceiling for every command caps
+// the feature instead of protecting the hub, so the slow ones declare
+// their own budget.
+const COMMAND_TIMEOUT_MS = {
+  "ui.tree": 20000,
+  "ui.query": 15000,
+  "ui.act": 15000,
+  "preview.render": 30000,
+  "preview.unmount": 10000,
+  "state.get": 15000,
+  "state.set": 15000,
+  "context.runtime": 10000,
+  "time.control": 10000,
+  "network.mock": 10000,
+};
+const MAX_COMMAND_TIMEOUT_MS = 120000;
 const HUB_TOKEN = process.env.RN_DEVTOOLS_TOKEN || crypto.randomUUID().replaceAll("-", "");
 
 /** @type {Map<string, {ws: any, appName: string, deviceName: string, connectedAt: number, history: any[]}>} */
@@ -323,17 +341,26 @@ const eventsOfType = (device, types, limit = 100) => device.history
   .filter((event) => types.includes(event.type))
   .slice(-Math.max(1, Math.min(Number(limit) || 100, 1000)));
 
-const sendDeviceCommand = (deviceId, command, payload) => new Promise((resolve) => {
+const commandTimeout = (command, override) => {
+  const requested = Number(override);
+  if (Number.isFinite(requested) && requested > 0) {
+    return Math.min(requested, MAX_COMMAND_TIMEOUT_MS);
+  }
+  return COMMAND_TIMEOUT_MS[command] ?? MCP_COMMAND_TIMEOUT_MS;
+};
+
+const sendDeviceCommand = (deviceId, command, payload, timeoutOverride) => new Promise((resolve) => {
   const device = devices.get(deviceId);
   if (!device || device.ws.readyState !== 1) {
     resolve({ error: "Device not connected" });
     return;
   }
   const requestId = `mcp-${crypto.randomUUID()}`;
+  const budget = commandTimeout(command, timeoutOverride);
   const timer = setTimeout(() => {
     pendingMcpCommands.delete(requestId);
-    resolve({ error: "Timed out" });
-  }, MCP_COMMAND_TIMEOUT_MS);
+    resolve({ error: `Timed out after ${budget} ms` });
+  }, budget);
   pendingMcpCommands.set(requestId, { resolve, timer });
   device.ws.send(JSON.stringify({ type: "command", command, requestId, payload }));
 });

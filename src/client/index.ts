@@ -15,11 +15,13 @@
  *   devtools.attachConsole()                  // forwards console.log/warn/error
  *   devtools.startPerformanceSampler()        // JS lag + uptime
  *   devtools.attachUiAutomation()             // ui.tree/ui.query/ui.act for agents
+ *   devtools.attachOriginTracking()           // call-site frames on network events
  *   devtools.markScreenReady("Login")         // "screen ready" signal for agents
  */
 
 import { installUiAutomation } from "./automation";
 import { installRuntimeContext } from "./context";
+import { captureOrigin } from "./source";
 import { DevtoolsTransport } from "./transport";
 import {
   ActionDefinition,
@@ -47,6 +49,22 @@ class Devtools {
   private perfTimer: ReturnType<typeof setInterval> | null = null;
   private consoleAttached = false;
   private startedAt = Date.now();
+  private trackOrigin = false;
+
+  /**
+   * Puts a call site on the event bus, not only on the UI tree: each
+   * request carries the frames of the code that fired it. Capturing a
+   * stack has a cost on every request, so it stays opt-in.
+   */
+  attachOriginTracking(): void {
+    if (!this.enabled) return;
+    this.trackOrigin = true;
+  }
+
+  /** Exposed on the instance so wrapFetch's inner function can reach it */
+  private origin(): string[] | undefined {
+    return this.trackOrigin ? (captureOrigin() ?? undefined) : undefined;
+  }
 
   get enabled(): boolean {
     return this.transport !== null;
@@ -160,6 +178,7 @@ class Devtools {
         url: `${config.baseURL ?? ""}${config.url ?? ""}`,
         headers: redactHeaders(this.flattenAxiosHeaders(config.headers)),
         body: config.data,
+        origin: this.origin(),
       });
       return config;
     });
@@ -238,6 +257,7 @@ class Devtools {
             : init?.body
               ? "[binary]"
               : undefined,
+        origin: self.origin(),
       });
 
       try {
@@ -391,6 +411,8 @@ export const devtools = new Devtools();
 export { DevtoolsTransport } from "./transport";
 export { truncateForWire, redactHeaders } from "./types";
 export { collectRuntimeContext } from "./context";
+export { resolveSource, componentNameOf } from "./source";
+export type { SourceLocation, SourceVia } from "./source";
 export type { RuntimeContext, RendererInfo } from "./context";
 export type { UiNode, UiSelector, FiberLike } from "./automation";
 export type {

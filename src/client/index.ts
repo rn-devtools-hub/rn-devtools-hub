@@ -19,6 +19,7 @@
  */
 
 import { installUiAutomation } from "./automation";
+import { installRuntimeContext } from "./context";
 import { DevtoolsTransport } from "./transport";
 import {
   ActionDefinition,
@@ -59,6 +60,11 @@ class Devtools {
     this.transport = new DevtoolsTransport(options);
     this.transport.start();
     this.startedAt = Date.now();
+    // Always on: reading globals costs nothing and the answer is what
+    // every other tool needs first (is this binary even current?)
+    installRuntimeContext({
+      onCommand: (command, handler) => this.transport?.onCommand(command, handler),
+    });
     this.emit("app.info", {
       appName: options.appName,
       deviceName: options.deviceName,
@@ -384,6 +390,8 @@ class Devtools {
 export const devtools = new Devtools();
 export { DevtoolsTransport } from "./transport";
 export { truncateForWire, redactHeaders } from "./types";
+export { collectRuntimeContext } from "./context";
+export type { RuntimeContext, RendererInfo } from "./context";
 export type { UiNode, UiSelector, FiberLike } from "./automation";
 export type {
   ActionDefinition,

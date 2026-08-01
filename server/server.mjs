@@ -457,6 +457,36 @@ const MCP_TOOLS = [
   ASSERT_TOOL,
   ...SESSION_TOOLS,
   ...FLOW_TOOLS,
+  {
+    name: "list_previews",
+    description: "Lists the components the app registered with devtools.registerPreview, and whether the preview outlet is mounted.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "render_component",
+    description: "Mounts a registered component INSIDE the running app, under its real providers, session and cache: nothing to mock, unlike an isolated preview. Returns the measured rect and the rendered subtree. Verifying a component no longer means navigating to the screen that contains it.",
+    inputSchema: { type: "object", required: ["name"], properties: { deviceId: { type: "string" }, name: { type: "string" }, props: { type: "object" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "unmount_component",
+    description: "Clears the preview outlet and gives the screen back to the app.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "get_state",
+    description: "Reads a store the app registered with devtools.registerStore (Zustand, Redux, React Query or a custom adapter). Omit store to list what is available. path drills in with dots; for React Query it is the JSON query key.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, store: { type: "string" }, path: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "set_state",
+    description: "Writes a store, putting the app into an exact state without walking through ten screens. Only possible from inside the runtime, and what makes a recorded flow hermetic: start from an injected session instead of replaying a login. Redux is written by dispatching an action, React Query by query key.",
+    inputSchema: { type: "object", required: ["store"], properties: { deviceId: { type: "string" }, store: { type: "string" }, path: { type: "string" }, value: {} }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
 ];
 
 // Waits for an event from ANY device: session_start launches the app
@@ -581,6 +611,19 @@ const handleMcpTool = async (name, args = {}) => {
         cursor: cursorBefore,
       });
     }
+    return response.result;
+  }
+  const DEVICE_COMMANDS = {
+    list_previews: "preview.list",
+    render_component: "preview.render",
+    unmount_component: "preview.unmount",
+    get_state: "state.get",
+    set_state: "state.set",
+  };
+  if (DEVICE_COMMANDS[name]) {
+    const { deviceId: _unused, ...payload } = args;
+    const response = await sendDeviceCommand(deviceId, DEVICE_COMMANDS[name], payload);
+    if (response.error) throw new Error(response.error);
     return response.result;
   }
   if (name === "start_recording") {

@@ -17,6 +17,8 @@
  * autocapitalize interference), which is the point for agents.
  */
 
+import { resolveSource, type SourceLocation } from "./source";
+
 // Minimal structural view of a React fiber. Only the fields we read.
 export interface FiberLike {
   tag?: number;
@@ -41,6 +43,8 @@ export interface UiNode {
   pressable?: boolean;
   /** Number of purely structural views merged into this node */
   collapsed?: number;
+  /** Where this element was written, when React still knows */
+  source?: SourceLocation;
   children?: UiNode[];
 }
 
@@ -58,6 +62,8 @@ export interface SerializeOptions {
   maxNodes?: number;
   /** Also include screens the navigator keeps mounted but hidden */
   includeHidden?: boolean;
+  /** Attach the source location to every node (default true) */
+  includeSource?: boolean;
 }
 
 const HOST_TYPE_ALIASES: Record<string, string> = {
@@ -172,6 +178,7 @@ export const isHiddenSubtree = (fiber: FiberLike): boolean => {
 const buildNode = (
   fiber: FiberLike,
   children: UiNode[],
+  includeSource = true,
 ): UiNode => {
   const props = propsOf(fiber);
   const type = prettyHostType(String(fiber.type));
@@ -199,6 +206,11 @@ const buildNode = (
   const text = collectSubtreeText(fiber, isTextType(type) ? 30 : 0);
   if (text) node.text = text;
 
+  if (includeSource) {
+    const source = resolveSource(fiber);
+    if (source) node.source = source;
+  }
+
   if (children.length) node.children = children;
   return node;
 };
@@ -209,7 +221,13 @@ const isCollapsible = (node: UiNode): boolean =>
   node.editable === undefined && !node.role &&
   (node.children?.length ?? 0) === 1;
 
-interface NodeBudget { nodes: number; truncated: boolean; includeHidden: boolean; hiddenSubtrees: number; }
+interface NodeBudget {
+  nodes: number;
+  truncated: boolean;
+  includeHidden: boolean;
+  includeSource: boolean;
+  hiddenSubtrees: number;
+}
 
 const serializeChildren = (
   fiber: FiberLike,
@@ -228,8 +246,10 @@ const serializeChildren = (
       if (depthLeft <= 0) { budget.truncated = true; continue; }
       budget.nodes -= 1;
       const grandChildren = serializeChildren(child, depthLeft - 1, budget);
-      let node = buildNode(child, grandChildren);
-      // Collapse pyramids of purely structural Views
+      let node = buildNode(child, grandChildren, budget.includeSource);
+      // Collapse pyramids of purely structural Views. The collapsed
+      // wrapper's own source is dropped with it: the surviving node keeps
+      // its own, which is the one the agent wants to edit
       if (isCollapsible(node)) {
         const only = node.children![0];
         node = { ...only, collapsed: (only.collapsed ?? 0) + 1 };
@@ -252,6 +272,7 @@ export const serializeTree = (
     nodes: Math.max(1, Math.min(options.maxNodes ?? 2500, 10000)),
     truncated: false,
     includeHidden: options.includeHidden === true,
+    includeSource: options.includeSource !== false,
     hiddenSubtrees: 0,
   };
   const maxDepth = Math.max(1, Math.min(options.maxDepth ?? 60, 200));
@@ -595,6 +616,8 @@ const describeMatch = async (fiber: FiberLike): Promise<Record<string, unknown>>
     label: stringProp(props, "accessibilityLabel", "aria-label") ?? null,
     text: collectSubtreeText(fiber, 30) || null,
     rect: await measureFiber(fiber),
+    // A match without a source turns editing into a repo-wide grep
+    source: resolveSource(fiber),
   };
 };
 
@@ -724,6 +747,7 @@ export const installUiAutomation = (host: AutomationHost): void => {
       maxDepth: Number(payload.maxDepth) || undefined,
       maxNodes: Number(payload.maxNodes) || undefined,
       includeHidden: payload.includeHidden === true,
+      includeSource: payload.includeSource !== false,
     }));
     return {
       generation: tracker.generation,

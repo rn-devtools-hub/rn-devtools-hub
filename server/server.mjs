@@ -16,6 +16,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs } from "./native.mjs";
+import { PROJECT_TOOL, projectContext } from "./project.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -444,6 +445,7 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { deviceId: { type: "string" }, type: { type: "string" }, payloadContains: { type: "string" }, timeoutMs: { type: "integer", minimum: 500, maximum: 120000 } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
+  PROJECT_TOOL,
 ];
 
 // Waits for an event from ANY device: session_start launches the app
@@ -461,16 +463,29 @@ const waitForAnyDeviceEvent = ({ type, timeoutMs }) => new Promise((resolve) => 
   eventWaiters.add(waiter);
 });
 
+const pickDevice = (deviceId) => (deviceId
+  ? [String(deviceId), devices.get(String(deviceId))]
+  : Array.from(devices.entries()).find(([, device]) => device.ws.readyState === 1)
+    ?? Array.from(devices.entries())[0]) ?? [];
+
 const handleMcpTool = async (name, args = {}) => {
   if (name === "list_devices") return Array.from(devices.entries()).map(deviceSummary);
   // Host-side native tools (simctl/adb): no connected JS device needed
   if (NATIVE_TOOLS.some((tool) => tool.name === name)) {
     return handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
   }
-  const entry = args.deviceId
-    ? [String(args.deviceId), devices.get(String(args.deviceId))]
-    : Array.from(devices.entries()).find(([, device]) => device.ws.readyState === 1) ?? Array.from(devices.entries())[0];
-  const [deviceId, device] = entry ?? [];
+  if (name === "get_project_context") {
+    // The declared half is always available; the runtime half needs a
+    // device, and its absence is reported instead of failing the call
+    const [contextDeviceId, contextDevice] = pickDevice(args.deviceId);
+    let runtime = null;
+    if (contextDevice && contextDevice.ws.readyState === 1) {
+      const response = await sendDeviceCommand(contextDeviceId, "context.runtime", {});
+      if (!response.error) runtime = response.result ?? null;
+    }
+    return projectContext(PROJECT_ROOT, runtime);
+  }
+  const [deviceId, device] = pickDevice(args.deviceId);
   if (!device) throw new Error("No device available");
   if (name === "get_app_info") {
     const info = eventsOfType(device, ["app.info", "net.info"], 100);

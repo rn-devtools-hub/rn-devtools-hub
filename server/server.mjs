@@ -19,6 +19,7 @@ import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs 
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
+import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -79,6 +80,11 @@ const notifyEventWaiters = (deviceId, events) => {
 };
 
 let nextDeviceId = 1;
+
+// One recorder per hub: an agent records one flow at a time, and a
+// second concurrent recording would interleave two intents into one
+// unusable script
+const recorder = createRecorder();
 
 // Re-read on every request: UI changes are visible with a simple
 // browser refresh, without restarting the hub
@@ -450,6 +456,7 @@ const MCP_TOOLS = [
   PROJECT_TOOL,
   ASSERT_TOOL,
   ...SESSION_TOOLS,
+  ...FLOW_TOOLS,
 ];
 
 // Waits for an event from ANY device: session_start launches the app
@@ -560,9 +567,34 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
     const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
     const { deviceId: _ignored, ...payload } = args;
+    // The cursor is read BEFORE the action: everything after it is a
+    // consequence of the action, which is the whole pairing rule
+    const cursorBefore = device.lastSeq ?? 0;
     const response = await sendDeviceCommand(deviceId, command, payload);
     if (response.error) throw new Error(response.error);
+    if (name === "ui_act" && response.result?.ok) {
+      recordAct(recorder, {
+        action: payload.action,
+        selector: { by: payload.by, value: payload.value, name: payload.name, within: payload.within },
+        text: payload.text,
+        target: response.result.target,
+        cursor: cursorBefore,
+      });
+    }
     return response.result;
+  }
+  if (name === "start_recording") {
+    return startRecording(recorder, { name: args.name, cursor: device.lastSeq ?? 0 });
+  }
+  if (name === "stop_recording") return stopRecording(recorder);
+  if (name === "export_flow") {
+    if (!recorder.acts.length) {
+      throw new Error("Nothing recorded: call start_recording, drive the app with ui_act, then export");
+    }
+    const flow = buildFlow(recorder, device.history);
+    if (args.format === "text") return renderFlowText(flow);
+    if (args.format === "mcp") return { name: flow.name, clean: flow.clean, calls: renderFlowMcp(flow) };
+    return flow;
   }
   if (name === "assert") {
     return runAssert(args, {

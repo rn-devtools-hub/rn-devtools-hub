@@ -1,0 +1,268 @@
+import { describe, expect, it } from "vitest";
+// @ts-expect-error untyped hub module
+import * as assertModule from "../server/assert.mjs";
+
+interface Verdict {
+  ok: boolean;
+  kind: string;
+  checked: Record<string, unknown>;
+  evidence: Array<Record<string, unknown>>;
+  elapsedMs: number;
+  hint: string | null;
+}
+
+const { selectWindow, evaluateEventAssertion, evaluateElementAssertion, runAssert } =
+  assertModule as {
+    selectWindow: (history: unknown[], options?: Record<string, unknown>) => Array<Record<string, any>>;
+    evaluateEventAssertion: (
+      kind: string,
+      events: unknown[],
+      options?: Record<string, unknown>
+    ) => { ok: boolean; evidence: Array<Record<string, unknown>>; checked: Record<string, unknown> };
+    evaluateElementAssertion: (
+      kind: string,
+      result: unknown,
+      options?: Record<string, unknown>
+    ) => { ok: boolean; matches: Array<Record<string, unknown>> };
+    runAssert: (args: Record<string, unknown>, deps: Record<string, unknown>) => Promise<Verdict>;
+  };
+
+const event = (type: string, payload: unknown, seq: number, ts = 1000) => ({ type, payload, seq, ts });
+
+describe("selectWindow", () => {
+  const history = [
+    event("console", { level: "log" }, 1, 1000),
+    event("network.response", { status: 200 }, 2, 2000),
+    event("crash", { message: "boom" }, 3, 3000),
+  ];
+
+  it("takes everything after a cursor when one is given", () => {
+    expect(selectWindow(history, { since: 1 }).map((entry) => entry.seq)).toEqual([2, 3]);
+  });
+
+  it("treats cursor 0 as a cursor, not as absent", () => {
+    expect(selectWindow(history, { since: 0 })).toHaveLength(3);
+  });
+
+  it("falls back to a trailing time window without a cursor", () => {
+    expect(selectWindow(history, { windowMs: 1500, now: 3000 }).map((entry) => entry.seq)).toEqual([2, 3]);
+  });
+
+  it("tolerates a missing history", () => {
+    expect(selectWindow(undefined as unknown as unknown[], { since: 0 })).toEqual([]);
+  });
+});
+
+describe("evaluateEventAssertion", () => {
+  it("passes network_ok when every response is under 400", () => {
+    const verdict = evaluateEventAssertion("network_ok", [
+      event("network.response", { status: 200, url: "https://api/x" }, 1),
+      event("network.response", { status: 304, url: "https://api/y" }, 2),
+    ]);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.evidence).toEqual([]);
+  });
+
+  it("fails network_ok on a 500 and carries the request as evidence", () => {
+    const verdict = evaluateEventAssertion("network_ok", [
+      event("network.response", { status: 500, url: "https://api/orders" }, 7),
+    ]);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.evidence[0]).toMatchObject({ seq: 7 });
+  });
+
+  it("fails network_ok on a transport error with no status at all", () => {
+    const verdict = evaluateEventAssertion("network_ok", [
+      event("network.error", { url: "https://api/orders", message: "offline" }, 3),
+    ]);
+    expect(verdict.ok).toBe(false);
+  });
+
+  it("scopes network_ok to matching URLs", () => {
+    const events = [
+      event("network.response", { status: 500, url: "https://analytics/beacon" }, 1),
+      event("network.response", { status: 200, url: "https://api/orders" }, 2),
+    ];
+    expect(evaluateEventAssertion("network_ok", events, { urlContains: "api/orders" }).ok).toBe(true);
+    expect(evaluateEventAssertion("network_ok", events).ok).toBe(false);
+  });
+
+  it("counts only console events for no_console_error", () => {
+    const verdict = evaluateEventAssertion("no_console_error", [
+      event("console", { level: "warn", args: ["careful"] }, 1),
+      event("crash", { message: "unrelated" }, 2),
+    ]);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.checked.events).toBe(1);
+  });
+
+  it("fails no_console_error on an error level", () => {
+    const verdict = evaluateEventAssertion("no_console_error", [
+      event("console", { level: "error", args: ["render failed"] }, 4),
+    ]);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.evidence).toHaveLength(1);
+  });
+
+  it("tolerates known noise through ignore", () => {
+    const events = [event("console", { level: "error", args: ["VirtualizedList: warned"] }, 1)];
+    expect(evaluateEventAssertion("no_console_error", events, { ignore: ["VirtualizedList"] }).ok).toBe(true);
+  });
+
+  it("fails no_crash on an unhandled rejection", () => {
+    const verdict = evaluateEventAssertion("no_crash", [
+      event("crash", { kind: "unhandledRejection", message: "nope" }, 9),
+    ]);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.evidence[0]).toMatchObject({ seq: 9 });
+  });
+
+  it("caps the evidence instead of returning the whole history", () => {
+    const many = Array.from({ length: 40 }, (_, index) =>
+      event("crash", { message: `boom ${index}` }, index)
+    );
+    expect(evaluateEventAssertion("no_crash", many).evidence).toHaveLength(10);
+  });
+
+  it("rejects an unknown kind", () => {
+    expect(() => evaluateEventAssertion("no_such_kind", [])).toThrow(/Unknown event assertion/);
+  });
+});
+
+describe("evaluateElementAssertion", () => {
+  const result = { matches: [{ text: "Commande confirmée", testID: "confirm" }] };
+
+  it("passes visible on a match and fails absent on the same match", () => {
+    expect(evaluateElementAssertion("visible", result).ok).toBe(true);
+    expect(evaluateElementAssertion("absent", result).ok).toBe(false);
+  });
+
+  it("passes absent on an empty result", () => {
+    expect(evaluateElementAssertion("absent", { matches: [] }).ok).toBe(true);
+  });
+
+  it("matches text on a substring by default and exactly on demand", () => {
+    expect(evaluateElementAssertion("text", result, { value: "confirmée" }).ok).toBe(true);
+    expect(evaluateElementAssertion("text", result, { value: "confirmée", exact: true }).ok).toBe(false);
+    expect(
+      evaluateElementAssertion("text", result, { value: "Commande confirmée", exact: true }).ok
+    ).toBe(true);
+  });
+
+  it("returns the candidates as evidence when the text does not match", () => {
+    const verdict = evaluateElementAssertion("text", result, { value: "absent" });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.matches).toHaveLength(1);
+  });
+});
+
+describe("runAssert", () => {
+  const clock = (start = 0) => {
+    let value = start;
+    return {
+      now: () => value,
+      sleep: async (ms: number) => {
+        value += ms;
+      },
+      advance: (ms: number) => {
+        value += ms;
+      },
+    };
+  };
+
+  it("retries an element assertion until it succeeds", async () => {
+    const time = clock();
+    let calls = 0;
+    const verdict = await runAssert(
+      { kind: "visible", by: "testID", value: "confirm" },
+      {
+        now: time.now,
+        sleep: time.sleep,
+        history: () => [],
+        queryUi: async () => {
+          calls += 1;
+          return { matches: calls >= 3 ? [{ testID: "confirm" }] : [] };
+        },
+      }
+    );
+    expect(verdict.ok).toBe(true);
+    expect(verdict.checked.attempts).toBe(3);
+  });
+
+  it("gives up at the deadline and attaches a hint", async () => {
+    const time = clock();
+    const verdict = await runAssert(
+      { kind: "visible", by: "testID", value: "never", timeoutMs: 600 },
+      { now: time.now, sleep: time.sleep, history: () => [], queryUi: async () => ({ matches: [] }) }
+    );
+    expect(verdict.ok).toBe(false);
+    expect(verdict.hint).toMatch(/query_ui/);
+    expect(verdict.elapsedMs).toBeGreaterThanOrEqual(600);
+  });
+
+  it("tries an element assertion at least once even with a zero deadline", async () => {
+    const time = clock();
+    const verdict = await runAssert(
+      { kind: "visible", by: "testID", value: "confirm", timeoutMs: 0 },
+      {
+        now: time.now,
+        sleep: time.sleep,
+        history: () => [],
+        queryUi: async () => ({ matches: [{ testID: "confirm" }] }),
+      }
+    );
+    expect(verdict.ok).toBe(true);
+    expect(verdict.checked.attempts).toBe(1);
+  });
+
+  it("does not retry an event assertion", async () => {
+    const time = clock();
+    let reads = 0;
+    const verdict = await runAssert(
+      { kind: "no_crash", since: 0 },
+      {
+        now: time.now,
+        sleep: time.sleep,
+        history: () => {
+          reads += 1;
+          return [event("crash", { message: "boom" }, 1)];
+        },
+        queryUi: async () => ({ matches: [] }),
+      }
+    );
+    expect(reads).toBe(1);
+    expect(verdict.ok).toBe(false);
+  });
+
+  it("waits settleMs before judging an event assertion", async () => {
+    const time = clock();
+    const verdict = await runAssert(
+      { kind: "network_ok", since: 0, settleMs: 1200 },
+      { now: time.now, sleep: time.sleep, history: () => [], queryUi: async () => ({ matches: [] }) }
+    );
+    expect(verdict.ok).toBe(true);
+    expect(verdict.elapsedMs).toBe(1200);
+  });
+
+  it("requires a selector for element kinds", async () => {
+    await expect(
+      runAssert({ kind: "visible" }, { history: () => [], queryUi: async () => ({ matches: [] }) })
+    ).rejects.toThrow(/needs a selector/);
+  });
+
+  it("rejects an unknown kind with the list of valid ones", async () => {
+    await expect(
+      runAssert({ kind: "teleports" }, { history: () => [], queryUi: async () => ({ matches: [] }) })
+    ).rejects.toThrow(/no_crash/);
+  });
+
+  it("returns no evidence when the assertion passes", async () => {
+    const verdict = await runAssert(
+      { kind: "no_console_error", since: 0 },
+      { history: () => [event("console", { level: "log" }, 1)], queryUi: async () => ({ matches: [] }) }
+    );
+    expect(verdict.ok).toBe(true);
+    expect(verdict.evidence).toEqual([]);
+    expect(verdict.hint).toBeNull();
+  });
+});

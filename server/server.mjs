@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs } from "./native.mjs";
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
+import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -448,6 +449,7 @@ const MCP_TOOLS = [
   },
   PROJECT_TOOL,
   ASSERT_TOOL,
+  ...SESSION_TOOLS,
 ];
 
 // Waits for an event from ANY device: session_start launches the app
@@ -475,6 +477,9 @@ const handleMcpTool = async (name, args = {}) => {
   // Host-side native tools (simctl/adb): no connected JS device needed
   if (NATIVE_TOOLS.some((tool) => tool.name === name)) {
     return handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
+  }
+  if (SESSION_TOOLS.some((tool) => tool.name === name)) {
+    return handleSessionTool(name, args, PROJECT_ROOT);
   }
   if (name === "get_project_context") {
     // The declared half is always available; the runtime half needs a
@@ -795,8 +800,24 @@ const startServer = () => Bun.serve({
             existing.deviceName = message.deviceName ?? existing.deviceName;
             existing.connectedAt = Date.now();
             existing.sessions = (existing.sessions ?? 1) + 1;
+            // A reload is a new run: give it its own session file so an
+            // investigation reads one run rather than a merged blur
+            const reopened = openSession(PROJECT_ROOT, deviceId, {
+              appName: existing.appName,
+              deviceName: existing.deviceName,
+              startedAt: Date.now(),
+              run: existing.sessions,
+            });
+            existing.sessionFile = reopened?.file ?? existing.sessionFile ?? null;
+            existing.sessionId = reopened?.id ?? existing.sessionId ?? null;
+            pruneSessions(PROJECT_ROOT);
             console.log(`[hub] device reconnected: ${existing.deviceName} (session ${existing.sessions})`);
           } else {
+            const opened = openSession(PROJECT_ROOT, deviceId, {
+              appName: message.appName ?? "app",
+              deviceName: message.deviceName ?? "device",
+              startedAt: Date.now(),
+            });
             devices.set(deviceId, {
               ws,
               appName: message.appName ?? "app",
@@ -805,7 +826,10 @@ const startServer = () => Bun.serve({
               sessions: 1,
               history: [],
               lastSeq: 0,
+              sessionFile: opened?.file ?? null,
+              sessionId: opened?.id ?? null,
             });
+            pruneSessions(PROJECT_ROOT);
             console.log(`[hub] device connected: ${message.deviceName} (${deviceId})`);
           }
           broadcastToDashboards({ kind: "devices", devices: deviceListPayload() });
@@ -841,6 +865,9 @@ const startServer = () => Bun.serve({
         device.lastSeq = device.lastSeq ?? 0;
         for (const event of others) event.seq = ++device.lastSeq;
         device.history.push(...others);
+        // The in-memory history stays capped for the dashboard; the file
+        // is what makes an investigation possible hours later
+        appendEvents(device.sessionFile, others);
         notifyEventWaiters(ws.data.deviceId, others);
         if (frames.length) device.lastFrame = frames[frames.length - 1];
         if (device.history.length > HISTORY_LIMIT_PER_DEVICE) {

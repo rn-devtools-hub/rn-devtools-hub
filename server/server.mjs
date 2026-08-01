@@ -418,13 +418,13 @@ const MCP_TOOLS = [
   },
   {
     name: "get_ui_tree",
-    description: "Returns the semantic tree of the VISIBLE components (types, testID, text, inputs), read from the React runtime. Screens kept mounted but hidden by the navigator (previous stack cards, inactive tabs) are excluded unless includeHidden. The app must call devtools.attachUiAutomation().",
-    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    description: "Returns the semantic tree of the VISIBLE components (types, testID, text, inputs), read from the React runtime. Every node carries source {file, line, column, componentName, via} when React still knows where it was written, so editing does not start with a repo-wide grep; via states how the location was resolved and via:\"stack\" means bundle coordinates, not source ones. Screens kept mounted but hidden by the navigator (previous stack cards, inactive tabs) are excluded unless includeHidden. The app must call devtools.attachUiAutomation().",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 }, includeHidden: { type: "boolean" }, includeSource: { type: "boolean", description: "Attach the source location to every node (default true); set false to shrink the payload" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: "query_ui",
-    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, props and measured rect (points). Hidden navigator screens are skipped unless includeHidden.",
+    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Hidden navigator screens are skipped unless includeHidden.",
     inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },

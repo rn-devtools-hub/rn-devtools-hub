@@ -826,6 +826,63 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
     };
   });
 
+  /**
+   * Which elements own a point on screen, outermost first.
+   *
+   * Descends measuring as it goes and prunes any subtree whose box does
+   * not contain the point, so a hit test costs a handful of measurements
+   * instead of one per node. The approximation is stated on purpose:
+   * a child rendered outside its parent's bounds is missed, which is
+   * rare in a layout engine built on flexbox.
+   */
+  const hitTest = async (
+    x: number,
+    y: number,
+    limit = 200,
+  ): Promise<Array<Record<string, unknown>>> => {
+    const path: Array<Record<string, unknown>> = [];
+    let measurements = 0;
+
+    const visit = async (fiber: FiberLike): Promise<void> => {
+      for (let child = fiber.child ?? null; child; child = child.sibling ?? null) {
+        if (isHiddenSubtree(child) || isTextFiber(child)) continue;
+        if (!isHostFiber(child)) {
+          await visit(child);
+          continue;
+        }
+        if (measurements >= limit) return;
+        measurements += 1;
+        const rect = await measureFiber(child);
+        if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+        const inside =
+          x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+        if (!inside) continue;
+        path.push({ ...(await describeMatch(child)), rect });
+        await visit(child);
+      }
+    };
+
+    for (const root of requireRoots(tracker)) await visit(root);
+    return path;
+  };
+
+  host.onCommand("ui.at", async (rawPayload) => {
+    const payload = (rawPayload ?? {}) as Record<string, unknown>;
+    const x = Number(payload.x);
+    const y = Number(payload.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error("ui.at needs numeric x and y in points");
+    }
+    const path = await hitTest(x, y, Math.max(20, Math.min(Number(payload.limit) || 200, 1000)));
+    return {
+      generation: tracker.generation,
+      point: { x, y },
+      // The deepest element is the one that actually drew there
+      deepest: path[path.length - 1] ?? null,
+      path,
+    };
+  });
+
   const firstMatch = (selector: UiSelector): FiberLike | null => {
     for (const fiber of requireRoots(tracker)) {
       const found = queryFibers(fiber, selector, 1, false);

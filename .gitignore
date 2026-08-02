@@ -5,3 +5,7 @@ dist/
 
 # Persisted agent sessions (local artifacts, never committed)
 .rn-devtools/
+
+# Internal product strategy: kept local, never published
+ROADMAP.md
+HANDOFF.md

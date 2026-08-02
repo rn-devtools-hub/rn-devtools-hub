@@ -142,6 +142,10 @@ export const decodeFrames = (buffer) => {
       cursor += 8;
     }
 
+    if (length > MAX_FRAME_BYTES) {
+      return { frames, rest: buffer.subarray(offset), oversized: length };
+    }
+
     let mask = null;
     if (masked) {
       if (buffer.length - cursor < 4) break;
@@ -161,6 +165,12 @@ export const decodeFrames = (buffer) => {
   }
   return { frames, rest: buffer.subarray(offset) };
 };
+
+// A client declares its payload length; nothing obliges it to send the
+// payload. Without a ceiling the buffer grows until the process dies, and
+// the WebSocket needs no credentials to get that far.
+const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+const MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 const OPCODES = { continuation: 0x0, text: 0x1, binary: 0x2, close: 0x8, ping: 0x9, pong: 0xa };
 
@@ -199,7 +209,7 @@ const createConnection = (socket, data) => {
  * handles them on the http server's own 'upgrade' event instead, with the
  * same initial `data`.
  */
-export const serve = ({ port, idleTimeout, fetch: handleRequest, websocket }) => {
+export const serve = ({ port, idleTimeout, fetch: handleRequest, websocket, allowUpgrade }) => {
   if (isBun) {
     return globalThis.Bun.serve({ port, idleTimeout, fetch: handleRequest, websocket });
   }
@@ -252,6 +262,12 @@ export const serve = ({ port, idleTimeout, fetch: handleRequest, websocket }) =>
       socket.destroy();
       return;
     }
+    // The caller owns the policy so both runtimes enforce the same one
+    if (allowUpgrade && !allowUpgrade(incoming.headers.origin ?? null)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     socket.write(
       "HTTP/1.1 101 Switching Protocols\r\n" +
         "Upgrade: websocket\r\n" +
@@ -267,8 +283,18 @@ export const serve = ({ port, idleTimeout, fetch: handleRequest, websocket }) =>
     let fragments = [];
     socket.on("data", (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
-      const { frames, rest } = decodeFrames(buffer);
+      const { frames, rest, oversized } = decodeFrames(buffer);
+      if (oversized) {
+        connection.close(1009, "message too big");
+        socket.destroy();
+        return;
+      }
       buffer = rest;
+      if (buffer.length > MAX_BUFFER_BYTES) {
+        connection.close(1009, "message too big");
+        socket.destroy();
+        return;
+      }
       for (const frame of frames) {
         if (frame.opcode === OPCODES.close) {
           // The close handshake is an exchange: a peer that ends the socket

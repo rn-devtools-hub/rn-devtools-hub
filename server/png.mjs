@@ -16,6 +16,12 @@ import { deflateSync, inflateSync } from "node:zlib";
 
 const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
+// A header can claim any dimensions, and inflate can expand a tiny chunk
+// into gigabytes. Baselines live in the host project, so the bytes are not
+// always ours.
+const MAX_PIXELS = 50_000_000;
+const MAX_INFLATED_BYTES = 512 * 1024 * 1024;
+
 const CHANNELS_BY_COLOR_TYPE = { 0: 1, 2: 3, 4: 2, 6: 4 };
 const COLOR_TYPE_NAMES = {
   0: "greyscale",
@@ -153,9 +159,14 @@ export const decodePng = (buffer) => {
     );
   }
   if (!dataChunks.length) throw new Error("PNG without image data");
+  if (!header.width || !header.height || header.width * header.height > MAX_PIXELS) {
+    throw new Error(
+      `Refusing a ${header.width}x${header.height} PNG: over the ${MAX_PIXELS} pixel ceiling`
+    );
+  }
 
   const compressed = Buffer.concat(dataChunks.map((chunk) => Buffer.from(chunk)));
-  const raw = new Uint8Array(inflateSync(compressed));
+  const raw = new Uint8Array(inflateSync(compressed, { maxOutputLength: MAX_INFLATED_BYTES }));
   const pixels = unfilter(raw, header.width, header.height, channels);
   return {
     width: header.width,

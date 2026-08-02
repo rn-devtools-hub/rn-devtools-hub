@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.7.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.7.0...v0.7.1) (2026-08-02)
+
+### Bug Fixes
+
+* **registry:** keep server.json within the registry's field limits ([30e6877](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/30e687755e916a688047a7f4d17cb4047678ae9e))
+
 ## [0.7.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.6.0...v0.7.0) (2026-08-02)
 
 ### Features

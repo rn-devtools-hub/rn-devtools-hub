@@ -7,7 +7,7 @@ agnostic: it knows no library, you wire up your own.
 ## Prerequisites
 
 - `npm install --save-dev rn-devtools-hub` in the host project (devDependency)
-- [Bun](https://bun.sh) installed on the dev machine (for the hub only)
+- Nothing else: the hub runs on Node 20+, or on [Bun](https://bun.sh) if you have it
 - Start the hub FROM THE ROOT of the host project: `npx rn-devtools-hub`
 
 ## Prerequisites by capability
@@ -15,10 +15,13 @@ agnostic: it knows no library, you wire up your own.
 The core panels (logs, crashes, network, performance) need nothing beyond the
 SDK and the hub. The optional capabilities below each have their own setup.
 
-### Bun (required, for the hub only)
+### Runtime for the hub (Node 20+, or Bun)
 
-The hub runs on Bun's native WebSocket server. The SDK in the app needs
-nothing. Install on macOS, Linux or Windows (WSL):
+The hub runs on Node 20 or newer, which you already have if you develop with
+React Native. Nothing to install, and the SDK in the app needs nothing either.
+
+`npx rn-devtools-hub` uses Bun when it finds it, because it starts faster, and
+Node otherwise. If you want Bun:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
@@ -77,7 +80,7 @@ reachable (check your firewall if the device never appears in the selector).
 
 | Capability | Dev machine requirement | Phone requirement | Platforms |
 | --- | --- | --- | --- |
-| Hub + dashboard | Bun | none | all |
+| Hub + dashboard | Bun or Node 20+ | none | all |
 | Core panels (logs, crashes, network, perf) | none | same LAN, port 8973 open | iOS, Android |
 | App mirror (view-shot) | none | `react-native-view-shot` in the app | iOS, Android (incl. Expo Go) |
 | Full Android mirror (tap, swipe, wheel, keyboard) | adb (platform-tools) | USB debugging enabled | Android |

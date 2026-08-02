@@ -9,12 +9,14 @@
  * - The hub keeps a per-device history for dashboards that join late
  * - Dashboard commands (e.g. SQLite query) are relayed to the device
  *
- * Zero dependencies: uses Bun's native WebSocket server.
+ * Zero dependencies. Runs on Bun or on Node: server/runtime.mjs papers
+ * over the difference, including the WebSocket server Node does not have.
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { serve, spawn, which } from "./runtime.mjs";
 import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs, screenshotNative } from "./native.mjs";
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
 import { A11Y_TOOLS, parseAndroidA11y, parseIosA11y, crossCheck } from "./a11y.mjs";
@@ -220,8 +222,8 @@ const KEYEVENTS = {
 
 const listMirrorSources = async (quick = false) => {
   const sources = [];
-  const adbPath = Bun.which("adb");
-  const simctlAvailable = process.platform === "darwin" && !!Bun.which("xcrun");
+  const adbPath = which("adb");
+  const simctlAvailable = process.platform === "darwin" && !!which("xcrun");
 
   if (adbPath) {
     const result = await runCommand(["adb", "devices"]);
@@ -556,7 +558,7 @@ const captureAccessibilityTree = async (target) => {
     }
     return { platform: "android", via: "uiautomator", nodes: parseAndroidA11y(xml) };
   }
-  if (!Bun.which("axe")) {
+  if (!which("axe")) {
     throw new Error(
       "Reading the iOS accessibility tree needs AXe (brew install cameroncooke/axe/axe). On Android it works out of the box through uiautomator."
     );
@@ -588,7 +590,7 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "build_app") {
     const [buildDeviceId, buildDevice] = pickDevice(args.deviceId);
     return runBuild(args, {
-      spawn: (argv) => Bun.spawn(argv, { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }),
+      spawn: (argv) => spawn(argv, { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }),
       // Build events join the device's own stream: that shared clock is
       // the entire reason for delegating the build from here
       emit: (type, payload) => {
@@ -909,7 +911,7 @@ const deviceListPayload = () =>
     eventCount: device.history.length,
   }));
 
-const startServer = () => Bun.serve({
+const startServer = () => serve({
   port: PORT,
   // Bun kills idle requests after 10 s by default: wait_for_event
   // long-polls (up to 120 s) and native log dumps need much more

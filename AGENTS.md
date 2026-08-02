@@ -49,7 +49,8 @@ Known pitfalls:
     return <View testID="devtools-preview">{element}</View>;
   }
   ```
-- The hub requires Bun. The SDK itself needs nothing.
+- The hub runs on Bun or on Node 20+, whichever is present. The SDK
+  itself needs nothing.
 - `stableId` in init() prevents ghost sessions on every reload:
   use a stable device identifier.
 
@@ -62,7 +63,10 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
 - server/dashboard.html: a single file, no build step, no CDN.
 - Anything requiring native code or a system binary (adb, xcrun, view-shot,
   axe) must be probed and degrade cleanly with an explanatory message.
-- ZERO runtime dependencies, hub included. PNG decoding goes through
+- ZERO runtime dependencies, hub included. That is why server/runtime.mjs
+  implements the WebSocket handshake and framing by hand: Node has a
+  WebSocket client but no server, and adding `ws` would contradict the
+  argument the product is sold on. PNG decoding goes through
   node:zlib rather than pngjs; adding a package to compare two images
   would contradict the argument printed on the box.
 - Sessions and baselines are written under `.rn-devtools/` in the host
@@ -89,6 +93,7 @@ npm run typecheck && npm test && npm run build
 perl -ne 'print if /<script>/../<\/script>/' server/dashboard.html \
   | grep -v "^<script>$" | grep -v "^</script>$" > /tmp/dash.js && node --check /tmp/dash.js
 RN_DEVTOOLS_TOKEN=dev bun server/server.mjs &  # then curl the dashboard and /mcp
+RN_DEVTOOLS_TOKEN=dev node server/server.mjs & # the hub must pass on BOTH runtimes
 ```
 
 ## Driving a running app (MCP)
@@ -168,8 +173,17 @@ on demand in the current directory.
 
 Registration on the Claude Code side, either:
 `claude mcp add rn-devtools --transport http http://127.0.0.1:8973/mcp`
-or install the plugin, which registers it and adds the skill:
-`/plugin marketplace add rn-devtools-hub/rn-devtools-hub`
+or install the plugin, which registers it and adds the skill.
+Claude Code: `/plugin marketplace add rn-devtools-hub/rn-devtools-hub`
+Codex: `codex plugin marketplace add rn-devtools-hub/rn-devtools-hub`, or
+`[mcp_servers.rn-devtools] url = "http://127.0.0.1:8973/mcp"` in
+`~/.codex/config.toml`.
+
+The skill lives in TWO places because the two agents look in different
+ones: `plugins/rn-devtools-hub/skills/` for Claude Code and
+`.agents/skills/` for Codex. The format is identical and a packaging test
+asserts the files are byte-for-byte equal, because a skill that drifts
+between the two silently teaches two different things.
 
 The dashboard's Overview panel leads with the same project context the
 `get_project_context` tool returns, and with whatever the project and the

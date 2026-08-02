@@ -583,7 +583,16 @@ const measureFiber = (fiber: FiberLike): Promise<
   });
 
 export interface ActRequest {
-  action: "tap" | "longPress" | "type" | "clear" | "submit" | "scrollTo" | "scrollToEnd";
+  action:
+    | "tap"
+    | "longPress"
+    | "type"
+    | "clear"
+    | "submit"
+    | "scrollTo"
+    | "scrollToEnd"
+    | "focus"
+    | "blur";
   text?: string;
   clear?: boolean;
   x?: number;
@@ -600,6 +609,21 @@ export const performAct = (fiber: FiberLike, request: ActRequest): { detail: str
     }
     handler({ nativeEvent: {}, persist: () => {} });
     return { detail: `${names[0]} invoked` };
+  }
+
+  /**
+   * Opening the keyboard was impossible from the hub, which made anything
+   * that depends on it, KeyboardAvoidingView above all, impossible to
+   * verify without touching the device by hand. The call already existed
+   * inside `type`; it simply was not reachable on its own.
+   */
+  if (request.action === "focus" || request.action === "blur") {
+    const input = findTextInputFiber(fiber);
+    if (!input) throw new Error("No text input found on the element or nearby");
+    const instance = findStateNode(input);
+    if (!instance) throw new Error("No native instance found to focus");
+    callNative(instance, request.action);
+    return { detail: `${request.action} invoked` };
   }
 
   if (request.action === "type" || request.action === "clear") {

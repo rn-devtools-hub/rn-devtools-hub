@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInit } from "../src/cli/init.mjs";
+import { runStdioBridge } from "../src/cli/stdio.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const [command, ...rest] = process.argv.slice(2);
@@ -22,6 +23,7 @@ if (command === "--help" || command === "-h" || command === "help") {
   rn-devtools-hub
 
     npx rn-devtools-hub            Start the hub, prints the dashboard URL
+    npx rn-devtools-hub mcp        Speak MCP over stdio (bridges to the hub)
     npx rn-devtools-hub init       Wire the SDK into this project
       --dry-run                    Show what would change, write nothing
       --force                      Regenerate the glue file if it exists
@@ -39,6 +41,18 @@ if (command === "--help" || command === "-h" || command === "help") {
 
 if (command === "init") {
   process.exit(runInit(rest));
+}
+
+if (command === "mcp") {
+  // stdio transport for clients that do not speak HTTP. Nothing may be
+  // written to stdout except JSON-RPC, so failures go to stderr.
+  try {
+    await runStdioBridge(rest);
+    process.exit(0);
+  } catch (error) {
+    console.error(`rn-devtools-hub mcp: ${error?.message ?? error}`);
+    process.exit(1);
+  }
 }
 
 // Default: start the hub

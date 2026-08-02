@@ -174,6 +174,40 @@ describe("resolveSource cascade", () => {
     expect(found?.stack?.[0]).toContain("ServiceCard");
   });
 
+  // Verified against a real Expo 56 app: a <View> rendered inside
+  // react-native-safe-area-context carries a stack pointing, correctly,
+  // into that library. Taking the nearest stack alone yielded node_modules
+  // for every node on screen; the application frame lives further out.
+  it("concatenates the owner chain's stacks so the app frame is reachable", () => {
+    const stackOf = (text: string): Error => {
+      const error = new Error("owner");
+      error.stack = `Error: owner\n    at ${text}`;
+      return error;
+    };
+    const app = { type: "Screen", memoizedProps: {}, _debugStack: stackOf("Login (bundle:44:5)") };
+    const library = {
+      type: "Provider",
+      memoizedProps: {},
+      _debugStack: stackOf("SafeAreaProvider (bundle:92:1)"),
+      _debugOwner: app,
+    };
+    const found = resolveSource(fiber({ _debugStack: stackOf("View (bundle:120:7)"), _debugOwner: library }));
+    expect(found?.via).toBe("stack");
+    expect(found?.stack).toEqual([
+      "at View (bundle:120:7)",
+      "at SafeAreaProvider (bundle:92:1)",
+      "at Login (bundle:44:5)",
+    ]);
+  });
+
+  it("keeps one copy of a frame the renderer repeats on every owner", () => {
+    const shared = new Error("owner");
+    shared.stack = "Error: owner\n    at beginWork (bundle:9341:1)";
+    const owner = { type: "Parent", memoizedProps: {}, _debugStack: shared };
+    const found = resolveSource(fiber({ _debugStack: shared, _debugOwner: owner }));
+    expect(found?.stack).toEqual(["at beginWork (bundle:9341:1)"]);
+  });
+
   it("falls back to the component name alone rather than to null", () => {
     function OrderButton(): null {
       return null;

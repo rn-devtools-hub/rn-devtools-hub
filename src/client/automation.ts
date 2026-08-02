@@ -473,11 +473,24 @@ const callNative = (
 export const findMeasurableInstance = (
   fiber: FiberLike,
 ): Record<string, unknown> | null => {
-  const measurable = (candidate: unknown): Record<string, unknown> | null =>
-    candidate && typeof candidate === "object" &&
-    typeof (candidate as Record<string, unknown>).measureInWindow === "function"
-      ? (candidate as Record<string, unknown>)
-      : null;
+  /**
+   * On the old architecture the host fiber's stateNode IS the component
+   * instance and carries measureInWindow. On Fabric it is not: it holds
+   * `{ node, canonical }`, and the instance with measureInWindow lives at
+   * canonical.publicInstance, created LAZILY. Looking only at stateNode
+   * therefore returns null for every element on any New Architecture app,
+   * which is most of them now.
+   */
+  const measurable = (candidate: unknown): Record<string, unknown> | null => {
+    if (!candidate || typeof candidate !== "object") return null;
+    const node = candidate as Record<string, any>;
+    if (typeof node.measureInWindow === "function") return node;
+    const publicInstance = node.canonical?.publicInstance;
+    if (publicInstance && typeof publicInstance.measureInWindow === "function") {
+      return publicInstance as Record<string, unknown>;
+    }
+    return null;
+  };
 
   const queue: Array<{ node: FiberLike; depth: number }> = [{ node: fiber, depth: 0 }];
   while (queue.length) {
@@ -499,23 +512,71 @@ export const findMeasurableInstance = (
   return null;
 };
 
+/**
+ * The shadow node a Fabric fiber wraps, measurable through the Fabric
+ * UIManager without waiting for a public instance to be created. This is
+ * the path that works when the element has never been measured or
+ * ref'd before, which is the common case for an agent inspecting a
+ * screen it did not build.
+ */
+export const findShadowNode = (fiber: FiberLike): unknown => {
+  const queue: Array<{ node: FiberLike; depth: number }> = [{ node: fiber, depth: 0 }];
+  while (queue.length) {
+    const { node, depth } = queue.shift()!;
+    const state = node.stateNode as Record<string, any> | null | undefined;
+    if (isHostFiber(node) && state?.node) return state.node;
+    if (depth < 10) {
+      for (let child = node.child ?? null; child; child = child.sibling ?? null) {
+        queue.push({ node: child, depth: depth + 1 });
+      }
+    }
+  }
+  let ancestor = fiber.return ?? null;
+  for (let steps = 0; ancestor && steps < 12; steps += 1) {
+    const state = ancestor.stateNode as Record<string, any> | null | undefined;
+    if (state?.node) return state.node;
+    ancestor = ancestor.return ?? null;
+  }
+  return null;
+};
+
 const measureFiber = (fiber: FiberLike): Promise<
   { x: number; y: number; width: number; height: number } | null
 > =>
   new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 400);
+    const done = (rect: { x: number; y: number; width: number; height: number } | null): void => {
+      clearTimeout(timer);
+      resolve(rect);
+    };
+
     const instance = findMeasurableInstance(fiber);
     const measure = instance?.measureInWindow;
-    if (typeof measure !== "function") { resolve(null); return; }
-    const timer = setTimeout(() => resolve(null), 400);
-    try {
-      measure.call(instance, (x: number, y: number, width: number, height: number) => {
-        clearTimeout(timer);
-        resolve({ x, y, width, height });
-      });
-    } catch {
-      clearTimeout(timer);
-      resolve(null);
+    if (typeof measure === "function") {
+      try {
+        measure.call(instance, (x: number, y: number, width: number, height: number) =>
+          done({ x, y, width, height })
+        );
+        return;
+      } catch {
+        // fall through to the Fabric path
+      }
     }
+
+    // Fabric with no public instance yet: measure the shadow node directly
+    const fabric = (globalThis as Record<string, any>).nativeFabricUIManager;
+    const shadowNode = fabric ? findShadowNode(fiber) : null;
+    if (shadowNode && typeof fabric.measureInWindow === "function") {
+      try {
+        fabric.measureInWindow(shadowNode, (x: number, y: number, width: number, height: number) =>
+          done({ x, y, width, height })
+        );
+        return;
+      } catch {
+        // measurement is best effort; a null rect is honest
+      }
+    }
+    done(null);
   });
 
 export interface ActRequest {
@@ -835,6 +896,11 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
    * a child rendered outside its parent's bounds is missed, which is
    * rare in a layout engine built on flexbox.
    */
+  // React Native mounts its own full-screen dev overlays above the app.
+  // They are not part of the UI under test and, being full-screen, they
+  // swallow every hit test: without this the answer is always the overlay.
+  const DEV_OVERLAYS = /DebuggingOverlay|LogBox|YellowBox|Inspector|DevLoadingView/;
+
   const hitTest = async (
     x: number,
     y: number,
@@ -846,6 +912,7 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
     const visit = async (fiber: FiberLike): Promise<void> => {
       for (let child = fiber.child ?? null; child; child = child.sibling ?? null) {
         if (isHiddenSubtree(child) || isTextFiber(child)) continue;
+        if (DEV_OVERLAYS.test(String(resolveSource(child)?.componentName ?? ""))) continue;
         if (!isHostFiber(child)) {
           await visit(child);
           continue;
@@ -865,6 +932,25 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
     for (const root of requireRoots(tracker)) await visit(root);
     return path;
   };
+
+  /**
+   * The root's box in POINTS. A screenshot is in device pixels and every
+   * measurement here is in points; without the ratio between them a hit
+   * test computed from an image lands nowhere near the element. Deriving
+   * it from the root rather than from an app-emitted screen width means
+   * the app has to declare nothing.
+   */
+  host.onCommand("ui.viewport", async () => {
+    for (const root of requireRoots(tracker)) {
+      for (let child = root.child ?? null; child; child = child.sibling ?? null) {
+        const rect = await measureFiber(child);
+        if (rect && rect.width > 0 && rect.height > 0) {
+          return { width: rect.width, height: rect.height };
+        }
+      }
+    }
+    return { width: null, height: null };
+  });
 
   host.onCommand("ui.at", async (rawPayload) => {
     const payload = (rawPayload ?? {}) as Record<string, unknown>;

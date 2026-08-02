@@ -58,6 +58,9 @@ const globalAny = (): Record<string, any> => globalThis as Record<string, any>;
 
 const MAX_OWNER_CLIMB = 12;
 const MAX_STACK_FRAMES = 8;
+// Enough owners to walk out of a wrapper library and reach app code,
+// without turning one tree into a megabyte of frames
+const MAX_TOTAL_STACK_FRAMES = 40;
 
 /** forwardRef exposes `render`, memo exposes `type`: unwrap both */
 export const componentNameOf = (type: unknown, depth = 0): string | null => {
@@ -150,6 +153,37 @@ export const stackFramesOf = (error: unknown): string[] | null => {
   return frames.length ? frames : null;
 };
 
+/**
+ * Owner stacks, from the fiber outwards.
+ *
+ * One stack is not enough, and this is only visible on a real app. A <View>
+ * rendered inside react-native-safe-area-context carries a _debugStack that
+ * points, correctly, into that library: the library really did create the
+ * element. The APPLICATION frame lives further out, on the owner that
+ * rendered the library's component.
+ *
+ * Verified against an Expo 56 app: taking the nearest stack alone yields
+ * node_modules for every node on screen. Concatenating outwards lets the
+ * host side pick the first frame that belongs to the app.
+ */
+const ownerStacks = (node: DebugFiber): string[] => {
+  const frames: string[] = [];
+  let current: DebugFiber | null = node;
+  for (let steps = 0; current && steps <= MAX_OWNER_CLIMB; steps += 1) {
+    if (frames.length >= MAX_TOTAL_STACK_FRAMES) break;
+    const own = stackFramesOf(current._debugStack);
+    if (own) {
+      for (const frame of own) {
+        // The renderer's own frames repeat on every owner and would fill
+        // the budget before the application frame is reached
+        if (!frames.includes(frame)) frames.push(frame);
+      }
+    }
+    current = current._debugOwner ?? null;
+  }
+  return frames.slice(0, MAX_TOTAL_STACK_FRAMES);
+};
+
 /** Direct location on a fiber: its own dev record, then its props */
 const directSource = (
   fiber: DebugFiber
@@ -193,8 +227,8 @@ export const resolveSource = (fiber: FiberLike | null | undefined): SourceLocati
   }
 
   // React 19 owner stacks: real frames, but pointing into the bundle
-  const frames = stackFramesOf(node._debugStack) ?? stackFramesOf(node._debugOwner?._debugStack);
-  if (frames) {
+  const frames = ownerStacks(node);
+  if (frames.length) {
     return { file: null, line: null, column: null, componentName, via: "stack", stack: frames };
   }
 

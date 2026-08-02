@@ -454,6 +454,7 @@
   <main>
     <!-- ================= OVERVIEW ================= -->
     <section class="panel active" id="panel-overview">
+      <div id="projectContext"></div>
       <div class="tiles" id="overviewTiles"></div>
       <div class="charts">
         <div class="chart-card">
@@ -747,6 +748,9 @@
       if (data.kind === "devices") {
         state.devices = data.devices;
         renderDeviceSelect();
+        // A device connecting or reloading is exactly when the answer can
+        // change: a rebuild, or a switch between Expo Go and a dev build
+        refreshProjectContext();
       } else if (data.kind === "events") {
         ingest(data.deviceId, data.events);
         scheduleRender();
@@ -935,6 +939,7 @@
     // The cache detail is only rendered on click: without this reset it
     // would keep showing the previous app's data after a device switch
     $("cacheDetail").innerHTML = "";
+    refreshProjectContext();
     scheduleRender();
   });
 
@@ -1943,6 +1948,55 @@
   // DESIGN panel: app.json + assets served by the hub
   // ================================================================
   const hubToken = new URLSearchParams(location.search).get("token") ?? "";
+
+  // Project context: what the project declares, what the app actually runs,
+  // and what contradicts. The contradictions are the point, and they belong
+  // on the first screen: nobody thinks to go looking for "is my native build
+  // stale" until they have already lost an afternoon to it.
+  const renderProjectContext = (data) => {
+    const box = $("projectContext");
+    if (!box) return;
+    if (!data || data.error) { box.innerHTML = ""; return; }
+    const d = data.declared ?? {};
+    const r = data.runtime;
+    const fact = (label, value) => value === null || value === undefined || value === ""
+      ? "" : `<span>${label} <b>${esc(String(value))}</b></span>`;
+
+    const facts = [
+      fact("Expo SDK", d.expoSdkMajor),
+      fact("React Native", d.packages?.["react-native"]?.installed),
+      fact("React", r?.renderers?.[0]?.version ?? d.packages?.react?.installed),
+      fact("Engine", r ? [r.jsEngine ?? "unknown", r.jsEngineVersion].filter(Boolean).join(" ") : null),
+      fact("New Architecture", r ? (r.newArchitecture ? "on" : "off") : (d.newArchEnabled ? "declared on" : null)),
+      fact("Bridgeless", r ? (r.bridgeless ? "yes" : "no") : null),
+      fact("Runtime", r?.appOwnership === "expo" ? "Expo Go" : r ? "development build" : null),
+      fact("Platform", r ? [r.platform, r.osVersion].filter(Boolean).join(" ") : null),
+    ].filter(Boolean).join("");
+
+    const divergence = data.divergence ?? [];
+    const worst = divergence.some((x) => x.severity === "high") ? "ctx-crit"
+      : divergence.length ? "ctx-warn" : "";
+    const items = divergence.map((x) =>
+      `<div class="ctx-item"><span class="f">${esc(x.field)}</span>: declared <b>${esc(String(x.declared))}</b>, running <b>${esc(String(x.runtime))}</b><br>${esc(x.hint)}</div>`
+    ).join("");
+
+    box.innerHTML = `<div class="ctx ${worst}">
+      <h3>${divergence.length ? `${divergence.length} thing${divergence.length > 1 ? "s" : ""} the project and the running app disagree on` : "Project and running app agree"}</h3>
+      <div class="ctx-facts">${facts || "<span>No device connected</span>"}</div>
+      ${items}
+      ${!r ? `<div class="ctx-item">${esc(data.note ?? "")}</div>` : ""}
+    </div>`;
+  };
+
+  const refreshProjectContext = async () => {
+    try {
+      const id = current()?.id;
+      const query = `token=${encodeURIComponent(hubToken)}${id ? `&deviceId=${encodeURIComponent(id)}` : ""}`;
+      renderProjectContext(await (await fetch(`/project/context?${query}`)).json());
+    } catch {
+      // The hub may be restarting; the panel simply stays as it was
+    }
+  };
   const designAsset = (path) =>
     `/design/asset?path=${encodeURIComponent(path)}&token=${encodeURIComponent(hubToken)}`;
 

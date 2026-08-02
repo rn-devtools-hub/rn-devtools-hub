@@ -15,10 +15,19 @@
  *   devtools.attachConsole()                  // forwards console.log/warn/error
  *   devtools.startPerformanceSampler()        // JS lag + uptime
  *   devtools.attachUiAutomation()             // ui.tree/ui.query/ui.act for agents
+ *   devtools.attachOriginTracking()           // call-site frames on network events
+ *   devtools.registerPreview(name, factory)   // component an agent can mount in situ
+ *   devtools.registerStore(name, adapter)     // state an agent can read and write
+ *   devtools.attachDeterminism()              // controlled clock and network (JS level)
  *   devtools.markScreenReady("Login")         // "screen ready" signal for agents
  */
 
-import { installUiAutomation } from "./automation";
+import { installUiAutomation, type AutomationApi } from "./automation";
+import { installRuntimeContext } from "./context";
+import { installDeterminism } from "./determinism";
+import { installPreviews, type PreviewFactory, type PreviewRegistry } from "./preview";
+import { captureOrigin } from "./source";
+import { installStateAccess, type StoreAdapter } from "./state";
 import { DevtoolsTransport } from "./transport";
 import {
   ActionDefinition,
@@ -46,6 +55,37 @@ class Devtools {
   private perfTimer: ReturnType<typeof setInterval> | null = null;
   private consoleAttached = false;
   private startedAt = Date.now();
+  private trackOrigin = false;
+  private determinism: ReturnType<typeof installDeterminism> | null = null;
+
+  /**
+   * Enables the controlled clock and controlled network.
+   *
+   * Deterministic at the JS level only: Date and the requests going
+   * through wrapFetch. Native animations and Reanimated read native
+   * clocks and are unaffected, which is stated rather than implied.
+   */
+  attachDeterminism(): void {
+    if (!this.enabled || this.determinism) return;
+    this.determinism = installDeterminism({
+      onCommand: (command, handler) => this.transport?.onCommand(command, handler),
+    });
+  }
+
+  /**
+   * Puts a call site on the event bus, not only on the UI tree: each
+   * request carries the frames of the code that fired it. Capturing a
+   * stack has a cost on every request, so it stays opt-in.
+   */
+  attachOriginTracking(): void {
+    if (!this.enabled) return;
+    this.trackOrigin = true;
+  }
+
+  /** Exposed on the instance so wrapFetch's inner function can reach it */
+  private origin(): string[] | undefined {
+    return this.trackOrigin ? (captureOrigin() ?? undefined) : undefined;
+  }
 
   get enabled(): boolean {
     return this.transport !== null;
@@ -59,6 +99,11 @@ class Devtools {
     this.transport = new DevtoolsTransport(options);
     this.transport.start();
     this.startedAt = Date.now();
+    // Always on: reading globals costs nothing and the answer is what
+    // every other tool needs first (is this binary even current?)
+    installRuntimeContext({
+      onCommand: (command, handler) => this.transport?.onCommand(command, handler),
+    });
     this.emit("app.info", {
       appName: options.appName,
       deviceName: options.deviceName,
@@ -117,6 +162,9 @@ class Devtools {
   // UI automation for agents (MCP): ui.tree / ui.query / ui.act
   // ------------------------------------------------------------------
   private automationAttached = false;
+  private automation: AutomationApi | null = null;
+  private previews: PreviewRegistry | null = null;
+  private stores: ReturnType<typeof installStateAccess> | null = null;
 
   /** Enables runtime UI perception and actions for AI agents.
    * Call it at startup (with the other attach* calls) so the React
@@ -124,10 +172,53 @@ class Devtools {
   attachUiAutomation(): void {
     if (!this.enabled || this.automationAttached) return;
     this.automationAttached = true;
-    installUiAutomation({
+    this.automation = installUiAutomation({
       onCommand: (command, handler) => this.transport?.onCommand(command, handler),
       emit: (type, payload) => this.emit(type, payload),
     });
+  }
+
+  // ------------------------------------------------------------------
+  // Previews: mounted in the live app, under its real providers
+  // ------------------------------------------------------------------
+
+  /** Registers a component an agent can mount on demand. Metro resolves
+   * statically, so previews are named rather than addressed by path. */
+  registerPreview(name: string, factory: PreviewFactory): void {
+    if (!this.enabled) return;
+    this.ensurePreviews().register(name, factory);
+  }
+
+  /** Subscribed by the app's outlet. Returns an unsubscribe function, so
+   * it drops straight into a useEffect. */
+  onPreviewChange(listener: (element: unknown) => void): () => void {
+    return this.ensurePreviews().onChange(listener);
+  }
+
+  private ensurePreviews(): PreviewRegistry {
+    if (!this.previews) {
+      this.previews = installPreviews({
+        onCommand: (command, handler) => this.transport?.onCommand(command, handler),
+        automation: () => this.automation,
+      });
+    }
+    return this.previews;
+  }
+
+  // ------------------------------------------------------------------
+  // Stores: reading is convenient, writing is the point
+  // ------------------------------------------------------------------
+
+  /** Exposes a store to get_state and set_state. The SDK never imports
+   * the library: pass the instance, or one of the provided adapters. */
+  registerStore(name: string, adapter: StoreAdapter): void {
+    if (!this.enabled) return;
+    if (!this.stores) {
+      this.stores = installStateAccess({
+        onCommand: (command, handler) => this.transport?.onCommand(command, handler),
+      });
+    }
+    this.stores.register(name, adapter);
   }
 
   /** Signals that the current screen finished loading its data
@@ -154,6 +245,7 @@ class Devtools {
         url: `${config.baseURL ?? ""}${config.url ?? ""}`,
         headers: redactHeaders(this.flattenAxiosHeaders(config.headers)),
         body: config.data,
+        origin: this.origin(),
       });
       return config;
     });
@@ -232,7 +324,39 @@ class Devtools {
             : init?.body
               ? "[binary]"
               : undefined,
+        origin: self.origin(),
       });
+
+      const plan = self.determinism?.network.plan(url, method) ?? null;
+      if (plan?.delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, plan.delayMs));
+      }
+      if (plan?.fail) {
+        self.emit("network.error", {
+          requestId,
+          source: label,
+          status: null,
+          durationMs: Date.now() - start,
+          message: plan.fail,
+          mocked: true,
+        });
+        throw new Error(plan.fail);
+      }
+      if (plan?.mock) {
+        // A mocked response still goes on the bus, flagged: an agent must
+        // never mistake a fixture for the real backend
+        self.emit("network.response", {
+          requestId,
+          source: label,
+          status: plan.mock.status,
+          durationMs: Date.now() - start,
+          mocked: true,
+        });
+        return new Response(
+          typeof plan.mock.body === "string" ? plan.mock.body : JSON.stringify(plan.mock.body ?? null),
+          { status: plan.mock.status, headers: { "Content-Type": "application/json" } }
+        ) as never;
+      }
 
       try {
         const response = await fetchImpl.apply(this, args as never);
@@ -384,6 +508,16 @@ class Devtools {
 export const devtools = new Devtools();
 export { DevtoolsTransport } from "./transport";
 export { truncateForWire, redactHeaders } from "./types";
+export { collectRuntimeContext } from "./context";
+export { resolveSource, componentNameOf } from "./source";
+export { PREVIEW_OUTLET_TEST_ID } from "./preview";
+export type { PreviewFactory } from "./preview";
+export { zustandStore, reduxStore, reactQueryStore, readPath, applyPatch } from "./state";
+export { conditionProfile, matchRule, createClock, createNetworkControl } from "./determinism";
+export type { NetworkRule, NetworkCondition } from "./determinism";
+export type { StoreAdapter } from "./state";
+export type { SourceLocation, SourceVia } from "./source";
+export type { RuntimeContext, RendererInfo } from "./context";
 export type { UiNode, UiSelector, FiberLike } from "./automation";
 export type {
   ActionDefinition,

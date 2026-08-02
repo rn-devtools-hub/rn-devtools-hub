@@ -15,7 +15,14 @@
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs } from "./native.mjs";
+import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs, screenshotNative } from "./native.mjs";
+import { PROJECT_TOOL, projectContext } from "./project.mjs";
+import { A11Y_TOOLS, parseAndroidA11y, parseIosA11y, crossCheck } from "./a11y.mjs";
+import { BUILD_TOOL, runBuild } from "./build.mjs";
+import { ASSERT_TOOL, runAssert } from "./assert.mjs";
+import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
+import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
+import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -29,6 +36,24 @@ const PORT = (() => {
 const HISTORY_LIMIT_PER_DEVICE = 3000;
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const MCP_COMMAND_TIMEOUT_MS = 8000;
+// Some device commands are structurally slower than reading a prop:
+// mounting a preview under the app's providers, measuring a whole
+// subtree, restoring a store. A single ceiling for every command caps
+// the feature instead of protecting the hub, so the slow ones declare
+// their own budget.
+const COMMAND_TIMEOUT_MS = {
+  "ui.tree": 20000,
+  "ui.query": 15000,
+  "ui.act": 15000,
+  "preview.render": 30000,
+  "preview.unmount": 10000,
+  "state.get": 15000,
+  "state.set": 15000,
+  "context.runtime": 10000,
+  "time.control": 10000,
+  "network.mock": 10000,
+};
+const MAX_COMMAND_TIMEOUT_MS = 120000;
 const HUB_TOKEN = process.env.RN_DEVTOOLS_TOKEN || crypto.randomUUID().replaceAll("-", "");
 
 /** @type {Map<string, {ws: any, appName: string, deviceName: string, connectedAt: number, history: any[]}>} */
@@ -58,6 +83,11 @@ const notifyEventWaiters = (deviceId, events) => {
 };
 
 let nextDeviceId = 1;
+
+// One recorder per hub: an agent records one flow at a time, and a
+// second concurrent recording would interleave two intents into one
+// unusable script
+const recorder = createRecorder();
 
 // Re-read on every request: UI changes are visible with a simple
 // browser refresh, without restarting the hub
@@ -323,17 +353,26 @@ const eventsOfType = (device, types, limit = 100) => device.history
   .filter((event) => types.includes(event.type))
   .slice(-Math.max(1, Math.min(Number(limit) || 100, 1000)));
 
-const sendDeviceCommand = (deviceId, command, payload) => new Promise((resolve) => {
+const commandTimeout = (command, override) => {
+  const requested = Number(override);
+  if (Number.isFinite(requested) && requested > 0) {
+    return Math.min(requested, MAX_COMMAND_TIMEOUT_MS);
+  }
+  return COMMAND_TIMEOUT_MS[command] ?? MCP_COMMAND_TIMEOUT_MS;
+};
+
+const sendDeviceCommand = (deviceId, command, payload, timeoutOverride) => new Promise((resolve) => {
   const device = devices.get(deviceId);
   if (!device || device.ws.readyState !== 1) {
     resolve({ error: "Device not connected" });
     return;
   }
   const requestId = `mcp-${crypto.randomUUID()}`;
+  const budget = commandTimeout(command, timeoutOverride);
   const timer = setTimeout(() => {
     pendingMcpCommands.delete(requestId);
-    resolve({ error: "Timed out" });
-  }, MCP_COMMAND_TIMEOUT_MS);
+    resolve({ error: `Timed out after ${budget} ms` });
+  }, budget);
   pendingMcpCommands.set(requestId, { resolve, timer });
   device.ws.send(JSON.stringify({ type: "command", command, requestId, payload }));
 });
@@ -389,13 +428,13 @@ const MCP_TOOLS = [
   },
   {
     name: "get_ui_tree",
-    description: "Returns the semantic tree of the VISIBLE components (types, testID, text, inputs), read from the React runtime. Screens kept mounted but hidden by the navigator (previous stack cards, inactive tabs) are excluded unless includeHidden. The app must call devtools.attachUiAutomation().",
-    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    description: "Returns the semantic tree of the VISIBLE components (types, testID, text, inputs), read from the React runtime. Every node carries source {file, line, column, componentName, via} when React still knows where it was written, so editing does not start with a repo-wide grep; via states how the location was resolved and via:\"stack\" means bundle coordinates, not source ones. Screens kept mounted but hidden by the navigator (previous stack cards, inactive tabs) are excluded unless includeHidden. The app must call devtools.attachUiAutomation().",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 }, includeHidden: { type: "boolean" }, includeSource: { type: "boolean", description: "Attach the source location to every node (default true); set false to shrink the payload" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: "query_ui",
-    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, props and measured rect (points). Hidden navigator screens are skipped unless includeHidden.",
+    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Hidden navigator screens are skipped unless includeHidden.",
     inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
@@ -417,6 +456,67 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { deviceId: { type: "string" }, type: { type: "string" }, payloadContains: { type: "string" }, timeoutMs: { type: "integer", minimum: 500, maximum: 120000 } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
+  PROJECT_TOOL,
+  ASSERT_TOOL,
+  ...SESSION_TOOLS,
+  ...FLOW_TOOLS,
+  ...VISUAL_TOOLS,
+  ...A11Y_TOOLS,
+  BUILD_TOOL,
+  {
+    name: "list_previews",
+    description: "Lists the components the app registered with devtools.registerPreview, and whether the preview outlet is mounted.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "render_component",
+    description: "Mounts a registered component INSIDE the running app, under its real providers, session and cache: nothing to mock, unlike an isolated preview. Returns the measured rect and the rendered subtree. Verifying a component no longer means navigating to the screen that contains it.",
+    inputSchema: { type: "object", required: ["name"], properties: { deviceId: { type: "string" }, name: { type: "string" }, props: { type: "object" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "unmount_component",
+    description: "Clears the preview outlet and gives the screen back to the app.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "freeze_time",
+    description: "Freezes the app's JS clock at an ISO instant (or now), so relative dates and time-dependent rendering stop drifting between runs. Deterministic at the JS level only: Date, new Date() and Date.now(). Native animations and Reanimated read native clocks and are unaffected.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, iso: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "advance_time",
+    description: "Moves the frozen clock forward by ms. It moves the clock, it does NOT fire pending timers: driving the scheduler would mean replacing setTimeout under a running app.",
+    inputSchema: { type: "object", required: ["ms"], properties: { deviceId: { type: "string" }, ms: { type: "integer" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "restore_time",
+    description: "Gives the app its real clock back.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "mock_network",
+    description: "Controls the requests going through the instrumented fetch: rules to stub a status and a body, or a condition among normal, offline, 3g and flaky. Failures are spaced deterministically rather than randomly, so a flaky profile stays reproducible. Mocked responses are flagged on the bus so an agent never mistakes a fixture for the backend. Only covers wrapFetch; an axios instance keeps its own adapter.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["rules", "condition", "reset", "state"] }, rules: { type: "array", items: { type: "object", properties: { urlContains: { type: "string" }, method: { type: "string" }, status: { type: "integer" }, body: {}, delayMs: { type: "integer" }, fail: { type: "string" } }, additionalProperties: false } }, condition: { type: "string", enum: ["normal", "offline", "3g", "flaky"] } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "get_state",
+    description: "Reads a store the app registered with devtools.registerStore (Zustand, Redux, React Query or a custom adapter). Omit store to list what is available. path drills in with dots; for React Query it is the JSON query key.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, store: { type: "string" }, path: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "set_state",
+    description: "Writes a store, putting the app into an exact state without walking through ten screens. Only possible from inside the runtime, and what makes a recorded flow hermetic: start from an injected session instead of replaying a login. Redux is written by dispatching an action, React Query by query key.",
+    inputSchema: { type: "object", required: ["store"], properties: { deviceId: { type: "string" }, store: { type: "string" }, path: { type: "string" }, value: {} }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
 ];
 
 // Waits for an event from ANY device: session_start launches the app
@@ -434,16 +534,93 @@ const waitForAnyDeviceEvent = ({ type, timeoutMs }) => new Promise((resolve) => 
   eventWaiters.add(waiter);
 });
 
+const pickDevice = (deviceId) => (deviceId
+  ? [String(deviceId), devices.get(String(deviceId))]
+  : Array.from(devices.entries()).find(([, device]) => device.ws.readyState === 1)
+    ?? Array.from(devices.entries())[0]) ?? [];
+
+/** Android exposes uiautomator; iOS needs AXe, and its absence is
+ * reported rather than silently returning an empty tree */
+const captureAccessibilityTree = async (target) => {
+  const { targets } = await listTargets();
+  const chosen = target ?? targets.find((entry) => entry.state === "ready")?.target;
+  if (!chosen) throw new Error("No booted target: pass target from list_targets");
+  const [kind, id] = String(chosen).split(":");
+
+  if (kind === "adb") {
+    const dumped = await runCommand(["adb", "-s", id, "exec-out", "uiautomator", "dump", "/dev/tty"], 20000);
+    const xml = new TextDecoder().decode(dumped.bytes);
+    if (!xml.includes("<node")) {
+      throw new Error(`uiautomator returned no tree: ${dumped.error || "unknown error"}`);
+    }
+    return { platform: "android", via: "uiautomator", nodes: parseAndroidA11y(xml) };
+  }
+  if (!Bun.which("axe")) {
+    throw new Error(
+      "Reading the iOS accessibility tree needs AXe (brew install cameroncooke/axe/axe). On Android it works out of the box through uiautomator."
+    );
+  }
+  const described = await runCommand(["axe", "describe-ui", "--udid", id], 30000);
+  if (!described.ok) throw new Error(`axe describe-ui failed: ${described.error}`);
+  return { platform: "ios", via: "axe", nodes: parseIosA11y(new TextDecoder().decode(described.bytes)) };
+};
+
 const handleMcpTool = async (name, args = {}) => {
   if (name === "list_devices") return Array.from(devices.entries()).map(deviceSummary);
   // Host-side native tools (simctl/adb): no connected JS device needed
   if (NATIVE_TOOLS.some((tool) => tool.name === name)) {
     return handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
   }
-  const entry = args.deviceId
-    ? [String(args.deviceId), devices.get(String(args.deviceId))]
-    : Array.from(devices.entries()).find(([, device]) => device.ws.readyState === 1) ?? Array.from(devices.entries())[0];
-  const [deviceId, device] = entry ?? [];
+  if (SESSION_TOOLS.some((tool) => tool.name === name)) {
+    return handleSessionTool(name, args, PROJECT_ROOT);
+  }
+  if (name === "get_accessibility_tree" || name === "audit_accessibility") {
+    const nodes = await captureAccessibilityTree(args.target);
+    if (name === "get_accessibility_tree") return nodes;
+    const [a11yDeviceId, a11yDevice] = pickDevice(args.deviceId);
+    if (!a11yDevice) throw new Error("audit_accessibility needs a connected app to read the React tree");
+    const tree = await sendDeviceCommand(a11yDeviceId, "ui.tree", { maxNodes: 1500 });
+    if (tree.error) throw new Error(tree.error);
+    const reactNodes = (tree.result?.roots ?? []).flat();
+    return { ...crossCheck(reactNodes, nodes.nodes), platform: nodes.platform, via: nodes.via };
+  }
+  if (name === "build_app") {
+    const [buildDeviceId, buildDevice] = pickDevice(args.deviceId);
+    return runBuild(args, {
+      spawn: (argv) => Bun.spawn(argv, { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }),
+      // Build events join the device's own stream: that shared clock is
+      // the entire reason for delegating the build from here
+      emit: (type, payload) => {
+        const event = { id: 0, type, ts: Date.now(), payload };
+        if (buildDevice) {
+          event.seq = ++buildDevice.lastSeq;
+          buildDevice.history.push(event);
+          appendEvents(buildDevice.sessionFile, [event]);
+          notifyEventWaiters(buildDeviceId, [event]);
+        }
+        broadcastToDashboards({ kind: "events", deviceId: buildDeviceId ?? null, events: [event] });
+      },
+    });
+  }
+  if (name === "snapshot_baseline") {
+    const shot = await screenshotNative({ target: args.target });
+    const bytes = Buffer.from(shot.__mcpImage.data, "base64");
+    const decoded = decodePng(bytes);
+    const file = writeBaseline(PROJECT_ROOT, args.name, bytes);
+    return { ok: true, name: args.name, file, width: decoded.width, height: decoded.height };
+  }
+  if (name === "get_project_context") {
+    // The declared half is always available; the runtime half needs a
+    // device, and its absence is reported instead of failing the call
+    const [contextDeviceId, contextDevice] = pickDevice(args.deviceId);
+    let runtime = null;
+    if (contextDevice && contextDevice.ws.readyState === 1) {
+      const response = await sendDeviceCommand(contextDeviceId, "context.runtime", {});
+      if (!response.error) runtime = response.result ?? null;
+    }
+    return projectContext(PROJECT_ROOT, runtime);
+  }
+  const [deviceId, device] = pickDevice(args.deviceId);
   if (!device) throw new Error("No device available");
   if (name === "get_app_info") {
     const info = eventsOfType(device, ["app.info", "net.info"], 100);
@@ -511,9 +688,93 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
     const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
     const { deviceId: _ignored, ...payload } = args;
+    // The cursor is read BEFORE the action: everything after it is a
+    // consequence of the action, which is the whole pairing rule
+    const cursorBefore = device.lastSeq ?? 0;
     const response = await sendDeviceCommand(deviceId, command, payload);
     if (response.error) throw new Error(response.error);
+    if (name === "ui_act" && response.result?.ok) {
+      recordAct(recorder, {
+        action: payload.action,
+        selector: { by: payload.by, value: payload.value, name: payload.name, within: payload.within },
+        text: payload.text,
+        target: response.result.target,
+        cursor: cursorBefore,
+      });
+    }
     return response.result;
+  }
+  if (name === "freeze_time" || name === "advance_time" || name === "restore_time") {
+    const action = { freeze_time: "freeze", advance_time: "advance", restore_time: "restore" }[name];
+    const response = await sendDeviceCommand(deviceId, "time.control", { action, iso: args.iso, ms: args.ms });
+    if (response.error) throw new Error(response.error);
+    return response.result;
+  }
+  if (name === "mock_network") {
+    const { deviceId: _dropped, ...payload } = args;
+    const response = await sendDeviceCommand(deviceId, "network.mock", payload);
+    if (response.error) throw new Error(response.error);
+    return response.result;
+  }
+  const DEVICE_COMMANDS = {
+    list_previews: "preview.list",
+    render_component: "preview.render",
+    unmount_component: "preview.unmount",
+    get_state: "state.get",
+    set_state: "state.set",
+  };
+  if (DEVICE_COMMANDS[name]) {
+    const { deviceId: _unused, ...payload } = args;
+    const response = await sendDeviceCommand(deviceId, DEVICE_COMMANDS[name], payload);
+    if (response.error) throw new Error(response.error);
+    return response.result;
+  }
+  if (name === "compare_snapshot") {
+    const takenAt = baselineTakenAt(PROJECT_ROOT, args.name);
+    const baseline = readBaseline(PROJECT_ROOT, args.name);
+    const shot = await screenshotNative({ target: args.target });
+    const current = decodePng(Buffer.from(shot.__mcpImage.data, "base64"));
+    const diff = diffImages(baseline, current, { withImage: args.withImage === true });
+    // The runtime measures in points while the screenshot is in device
+    // pixels: the app's own width is what reconciles the two
+    const appInfo = eventsOfType(device, ["app.info"], 1)[0]?.payload ?? {};
+    const explained = await explainDiff(diff, {
+      maxRatio: args.maxRatio,
+      screenWidthPoints: Number(appInfo.screenWidth) || null,
+      changes: changesSince(device.history, takenAt ?? 0),
+      hitTest: async (x, y) => {
+        const response = await sendDeviceCommand(deviceId, "ui.at", { x, y });
+        if (response.error) throw new Error(response.error);
+        return response.result;
+      },
+    });
+    if (args.withImage && diff.image) {
+      return { __mcpImage: { data: diff.image.toString("base64"), mimeType: "image/png" }, ...explained };
+    }
+    return explained;
+  }
+  if (name === "start_recording") {
+    return startRecording(recorder, { name: args.name, cursor: device.lastSeq ?? 0 });
+  }
+  if (name === "stop_recording") return stopRecording(recorder);
+  if (name === "export_flow") {
+    if (!recorder.acts.length) {
+      throw new Error("Nothing recorded: call start_recording, drive the app with ui_act, then export");
+    }
+    const flow = buildFlow(recorder, device.history);
+    if (args.format === "text") return renderFlowText(flow);
+    if (args.format === "mcp") return { name: flow.name, clean: flow.clean, calls: renderFlowMcp(flow) };
+    return flow;
+  }
+  if (name === "assert") {
+    return runAssert(args, {
+      history: () => device.history,
+      queryUi: async (selector) => {
+        const response = await sendDeviceCommand(deviceId, "ui.query", selector);
+        if (response.error) throw new Error(response.error);
+        return response.result;
+      },
+    });
   }
   if (name === "get_events_since") {
     const limit = Math.max(1, Math.min(Number(args.limit) || 200, 1000));
@@ -741,8 +1002,24 @@ const startServer = () => Bun.serve({
             existing.deviceName = message.deviceName ?? existing.deviceName;
             existing.connectedAt = Date.now();
             existing.sessions = (existing.sessions ?? 1) + 1;
+            // A reload is a new run: give it its own session file so an
+            // investigation reads one run rather than a merged blur
+            const reopened = openSession(PROJECT_ROOT, deviceId, {
+              appName: existing.appName,
+              deviceName: existing.deviceName,
+              startedAt: Date.now(),
+              run: existing.sessions,
+            });
+            existing.sessionFile = reopened?.file ?? existing.sessionFile ?? null;
+            existing.sessionId = reopened?.id ?? existing.sessionId ?? null;
+            pruneSessions(PROJECT_ROOT);
             console.log(`[hub] device reconnected: ${existing.deviceName} (session ${existing.sessions})`);
           } else {
+            const opened = openSession(PROJECT_ROOT, deviceId, {
+              appName: message.appName ?? "app",
+              deviceName: message.deviceName ?? "device",
+              startedAt: Date.now(),
+            });
             devices.set(deviceId, {
               ws,
               appName: message.appName ?? "app",
@@ -751,7 +1028,10 @@ const startServer = () => Bun.serve({
               sessions: 1,
               history: [],
               lastSeq: 0,
+              sessionFile: opened?.file ?? null,
+              sessionId: opened?.id ?? null,
             });
+            pruneSessions(PROJECT_ROOT);
             console.log(`[hub] device connected: ${message.deviceName} (${deviceId})`);
           }
           broadcastToDashboards({ kind: "devices", devices: deviceListPayload() });
@@ -787,6 +1067,9 @@ const startServer = () => Bun.serve({
         device.lastSeq = device.lastSeq ?? 0;
         for (const event of others) event.seq = ++device.lastSeq;
         device.history.push(...others);
+        // The in-memory history stays capped for the dashboard; the file
+        // is what makes an investigation possible hours later
+        appendEvents(device.sessionFile, others);
         notifyEventWaiters(ws.data.deviceId, others);
         if (frames.length) device.lastFrame = frames[frames.length - 1];
         if (device.history.length > HISTORY_LIMIT_PER_DEVICE) {

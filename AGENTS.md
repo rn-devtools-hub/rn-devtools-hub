@@ -34,6 +34,21 @@ Known pitfalls:
 - For AI agents: add `devtools.attachUiAutomation()` to the glue file and
   call `devtools.markScreenReady()` when a screen has its data. This
   enables the get_ui_tree / query_ui / ui_act / wait_for_event MCP tools.
+- Optional attachments, each unlocking a family of tools:
+  `attachDeterminism()` (freeze_time, mock_network),
+  `attachOriginTracking()` (call-site frames on network events),
+  `registerStore(name, adapter)` (get_state / set_state, with the
+  zustandStore / reduxStore / reactQueryStore adapters),
+  `registerPreview(name, factory)` (render_component). Previews also need
+  a four-line outlet inside your providers:
+
+  ```tsx
+  function DevtoolsPreviewOutlet() {
+    const [element, setElement] = useState(null);
+    useEffect(() => devtools.onPreviewChange(setElement), []);
+    return <View testID="devtools-preview">{element}</View>;
+  }
+  ```
 - The hub requires Bun. The SDK itself needs nothing.
 - `stableId` in init() prevents ghost sessions on every reload:
   use a stable device identifier.
@@ -45,8 +60,13 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
 - src/client: ZERO external imports. Verify with `grep -r "from \"" src/`
   which must only show relative imports.
 - server/dashboard.html: a single file, no build step, no CDN.
-- Anything requiring native code or a system binary (adb, xcrun, view-shot)
-  must be probed and degrade cleanly with an explanatory message.
+- Anything requiring native code or a system binary (adb, xcrun, view-shot,
+  axe) must be probed and degrade cleanly with an explanatory message.
+- ZERO runtime dependencies, hub included. PNG decoding goes through
+  node:zlib rather than pngjs; adding a package to compare two images
+  would contradict the argument printed on the box.
+- Sessions and baselines are written under `.rn-devtools/` in the host
+  project, which is gitignored and never committed.
 - Commits follow Conventional Commits (commitlint rejects them otherwise).
 - Branch from `develop` and open PRs against `develop`; `main` only receives
   release merges and hotfixes.
@@ -79,6 +99,40 @@ only). Tools:
   rects), ui_act (tap, longPress, type with exact text, clear, submit,
   scrollTo; ambiguous matches return the candidates with rects).
   Selector preference: role+accessible name, then testID, then run_action.
+  Every node and match carries `source` ({file, line, column,
+  componentName, via}) when React still knows where it was written.
+  `via` states how it was resolved; `via:"stack"` means BUNDLE
+  coordinates, which still need symbolication against Metro.
+- Project truth: get_project_context returns what the project declares
+  (installed versions, Expo SDK, New Architecture, JS engine), what the
+  app actually runs (engine, Fabric, bridgeless, native React Native
+  version, mounted renderer) and the contradictions. Call it FIRST when
+  anything behaves impossibly: it catches stale native builds, Expo Go
+  running a plugin project and release bundles before any other work.
+- Proof: assert({kind}). Element kinds (visible, absent, text) retry until
+  timeoutMs; event kinds (network_ok, no_console_error, no_crash) look
+  back over a window given by `since` (a cursor) or windowMs, and prove
+  what a screenshot cannot show. Failures carry their evidence.
+- Determinism (needs `attachDeterminism()`): freeze_time, advance_time,
+  restore_time, mock_network. JS level only: Date and the instrumented
+  fetch. Native animations and Reanimated are unaffected.
+- State (needs `registerStore`): get_state, set_state. Writing puts the
+  app into an exact state without walking ten screens.
+- Previews (needs `registerPreview` and the outlet): list_previews,
+  render_component, unmount_component. The component mounts inside the
+  running app, under its real providers, so nothing has to be mocked.
+- Visual: snapshot_baseline, compare_snapshot. The comparison EXPLAINS the
+  difference: changed ratio, bounding box, the component owning that
+  region with its source, and what the bus recorded since the baseline.
+- Sessions and flows: list_sessions, export_session (one correlated
+  timeline, markdown pastes into an issue), start_recording,
+  stop_recording, export_flow (actions paired with the consequences they
+  caused; format:"mcp" returns the calls to replay it).
+- Accessibility: get_accessibility_tree (what the OS exposes; Android via
+  uiautomator, iOS needs AXe), audit_accessibility (the DIFFERENCE
+  between what React renders and what accessibility exposes).
+- Build: build_app delegates to expo run / eas build and streams the
+  failures onto the same bus as the crashes.
 - Event flow: get_events_since (cursor-based polling without missing
   events), wait_for_event (blocks until a matching event, e.g.
   `screen.ready` after `devtools.markScreenReady()` or a
@@ -91,7 +145,10 @@ only). Tools:
   open_url, screenshot_native (pixels, complements the tree),
   tap_native (last resort: adb / AXe / idb), boot_device, shutdown_device,
   set_location (simulated GPS), set_animations (Android determinism),
-  send_push (iOS simulated push), set_appearance (dark mode).
+  send_push (iOS simulated push), set_appearance (dark mode),
+  install_app, uninstall_app, set_orientation and get_orientation
+  (Android only), start_screen_recording and stop_screen_recording
+  (startedAt is on the bus clock: video offset = event.ts - startedAt).
 - session_start: one-call bootstrap = resolve target, pre-grant
   permissions, cold-launch on the Metro server with onboarding skipped,
   wait until the app connects to the hub.

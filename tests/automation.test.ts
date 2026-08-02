@@ -13,6 +13,7 @@ import {
   fiberMatches,
   findHandler,
   findMeasurableInstance,
+  findShadowNode,
   findTextInputFiber,
   installUiAutomation,
   isHiddenSubtree,
@@ -497,5 +498,54 @@ describe("installUiAutomation", () => {
   it("fails with a typed error when the hook is missing", () => {
     const { handlers } = install();
     expect(() => handlers.get("ui.tree")!({})).toThrow(/hook unavailable/);
+  });
+});
+
+/**
+ * Measurement across architectures.
+ *
+ * On the old architecture the host fiber's stateNode IS the instance. On
+ * Fabric it is not, and looking only there returns null for every element
+ * on screen, which silently breaks the hit test and, with it, the
+ * explanation attached to a visual diff. Found on a real Expo 56 app.
+ */
+describe("measurable instance", () => {
+  const fiber = (stateNode: unknown): FiberLike =>
+    ({ type: "RCTView", memoizedProps: {}, stateNode }) as FiberLike;
+
+  it("finds the instance directly on the old architecture", () => {
+    const instance = { measureInWindow: () => {} };
+    expect(findMeasurableInstance(fiber(instance))).toBe(instance);
+  });
+
+  it("reaches through canonical.publicInstance on Fabric", () => {
+    const publicInstance = { measureInWindow: () => {} };
+    const found = findMeasurableInstance(
+      fiber({ node: {}, canonical: { nativeTag: 1, publicInstance } })
+    );
+    expect(found).toBe(publicInstance);
+  });
+
+  it("returns null on a Fabric node whose public instance is not created yet", () => {
+    expect(
+      findMeasurableInstance(fiber({ node: {}, canonical: { nativeTag: 1, publicInstance: null } }))
+    ).toBeNull();
+  });
+
+  it("exposes the shadow node so Fabric can measure without a public instance", () => {
+    const shadow = { __shadow: true };
+    expect(findShadowNode(fiber({ node: shadow, canonical: { publicInstance: null } }))).toBe(shadow);
+  });
+
+  it("climbs to an ancestor's shadow node when the fiber has none", () => {
+    const shadow = { __shadow: true };
+    const parent = { type: "RCTView", memoizedProps: {}, stateNode: { node: shadow } } as FiberLike;
+    const child = { type: "RCTText", memoizedProps: {}, stateNode: null, return: parent } as FiberLike;
+    expect(findShadowNode(child)).toBe(shadow);
+  });
+
+  it("returns null rather than a wrong node when nothing is measurable", () => {
+    expect(findShadowNode(fiber(null))).toBeNull();
+    expect(findMeasurableInstance(fiber(null))).toBeNull();
   });
 });

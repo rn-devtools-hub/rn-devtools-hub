@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.7](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.6...v0.11.7) (2026-08-02)
+
+### Bug Fixes
+
+* refuse an ambiguous device, and name the project a hub serves ([ab35cbc](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/ab35cbceb758e1386cbe930ef8b44bda938bd27e))
+
 ## [0.11.6](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.5...v0.11.6) (2026-08-02)
 
 ### Bug Fixes

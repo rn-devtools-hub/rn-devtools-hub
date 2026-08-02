@@ -18,6 +18,32 @@
   <a href="#contributing">Contributing</a>
 </p>
 
+## Use it from Claude Code
+
+```
+/plugin marketplace add rn-devtools-hub/rn-devtools-hub
+/plugin install rn-devtools-hub
+```
+
+That installs the MCP server plus a skill that teaches the agent to chain
+its tools: check the project context before debugging anything that looks
+impossible, prove results with assertions instead of screenshots, wait on
+events instead of sleeping, and read an element's source instead of
+grepping the repository.
+
+Then start the hub at the root of your app, which is what the agent talks
+to:
+
+```
+npx rn-devtools-hub
+```
+
+Registering the server by hand works too:
+
+```
+claude mcp add rn-devtools --transport http http://127.0.0.1:8973/mcp
+```
+
 ## Screenshots
 
 <p align="center">

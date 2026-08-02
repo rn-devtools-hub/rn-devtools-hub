@@ -5,10 +5,10 @@
 <h1 align="center">rn-devtools-hub</h1>
 
 <p align="center">
-  Local inspector for React Native and Expo apps: network, crashes, storage,
-  SQLite, screen mirror, remote actions and an MCP server, streamed to a web
-  dashboard. Zero native dependencies. A Flipper alternative that fits in a
-  devDependency.
+  The agent runtime for React Native. Your agent sees the app the way React
+  sees it, knows which file produced each element, acts without coordinates,
+  and proves that it works. Zero dependencies, everything stays on your
+  machine.
 </p>
 
 <p align="center">
@@ -37,13 +37,29 @@
 
 ## Why
 
-Flipper died from its mandatory native dependencies. Reactotron requires a
-desktop app. Expo DevTools plugins open one tab per tool. Cloud alternatives
-(Vexo, LogRocket) send your data elsewhere.
+The SDK lives **inside the JavaScript runtime of your app**.
 
-rn-devtools-hub takes the opposite path: a pure JavaScript SDK in the app
-(inert in production), a local hub in a single process, a dashboard in the
-browser. Your data never leaves your machine.
+An accessibility-driven tool sees what the OS exposes. A WebDriver-driven one
+sees a black box. An IDE inspector sees the tree but will not act on it. None
+of them can read a component's props, call a handler, intercept a request or
+write to a store, because none of them is inside.
+
+That position is what the whole product is built on. Everything else follows
+from it:
+
+| The agent can | Because it is inside the runtime |
+| --- | --- |
+| Find an element by role and accessible name, then act on it | Actions go through the app's own props, not through pixels |
+| Get the file and line that produced an element | The location lives in React's dev bookkeeping |
+| Prove a step without a screenshot | A screenshot cannot show a request that failed silently |
+| Tell a stale native build from a code problem | Only the runtime knows what the binary actually is |
+| Freeze the clock and the network | Date and fetch are in the runtime |
+| Put the app in an exact state without walking ten screens | Stores are reachable directly |
+| Explain a visual regression, not just score it | The changed region maps back to the component that owns it |
+
+A pure JavaScript SDK in the app (inert in production), a local hub in a single
+process, a dashboard in the browser. Zero dependencies anywhere, including the
+hub. Your data never leaves your machine.
 
 ## Features
 

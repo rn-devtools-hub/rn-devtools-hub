@@ -637,6 +637,142 @@ export const sessionStart = async (args, { waitForEvent }) => {
   };
 };
 
+
+// ====================================================================
+// App lifecycle: install / uninstall
+// ====================================================================
+
+export const installApp = async ({ target, path }) => {
+  const { kind, id } = await resolveTarget(target);
+  requireTool(kind);
+  const artifact = String(path ?? "");
+  if (!artifact || /['"\s]/.test(artifact)) throw new Error(`Invalid app path: ${path}`);
+  const result = kind === "sim"
+    ? await runCommand(["xcrun", "simctl", "install", id, artifact], 120000)
+    : await runCommand(["adb", "-s", id, "install", "-r", artifact], 180000);
+  const output = `${textOf(result)} ${result.error}`;
+  if (!result.ok || /Failure|Error/i.test(output)) fail(result, "install");
+  return { ok: true, target: `${kind}:${id}`, path: artifact };
+};
+
+export const uninstallApp = async ({ target, appId }) => {
+  const { kind, id } = await resolveTarget(target);
+  requireTool(kind);
+  const app = requireAppId(appId);
+  const result = kind === "sim"
+    ? await runCommand(["xcrun", "simctl", "uninstall", id, app], 60000)
+    : await runCommand(["adb", "-s", id, "uninstall", app], 60000);
+  if (!result.ok) fail(result, "uninstall");
+  return { ok: true, target: `${kind}:${id}`, appId: app };
+};
+
+// ====================================================================
+// Orientation
+// ====================================================================
+
+// Android stores a rotation index; iOS simulators expose no scriptable
+// rotation at all, so the limit is reported instead of faked
+const ROTATIONS = { portrait: "0", landscape: "1", "portrait-upside-down": "2", "landscape-left": "3" };
+const ROTATION_NAMES = ["portrait", "landscape", "portrait-upside-down", "landscape-left"];
+
+export const setOrientation = async ({ target, orientation }) => {
+  const { kind, id } = await resolveTarget(target);
+  requireTool(kind);
+  if (kind !== "adb") {
+    throw new Error(
+      "iOS simulators expose no scriptable rotation (simctl has no orientation command). Rotate with Cmd+Left/Right in the Simulator, or test rotation on Android."
+    );
+  }
+  const rotation = ROTATIONS[String(orientation)];
+  if (rotation === undefined) {
+    throw new Error(`Unknown orientation "${orientation}". Use: ${Object.keys(ROTATIONS).join(", ")}`);
+  }
+  await runCommand(["adb", "-s", id, "shell", "settings", "put", "system", "accelerometer_rotation", "0"]);
+  const result = await runCommand(["adb", "-s", id, "shell", "settings", "put", "system", "user_rotation", rotation]);
+  if (!result.ok) fail(result, "set orientation");
+  return { ok: true, target: `adb:${id}`, orientation };
+};
+
+export const getOrientation = async ({ target }) => {
+  const { kind, id } = await resolveTarget(target);
+  requireTool(kind);
+  if (kind !== "adb") {
+    return { target: `sim:${id}`, orientation: null, note: "iOS simulators do not report orientation to simctl" };
+  }
+  const result = await runCommand(["adb", "-s", id, "shell", "settings", "get", "system", "user_rotation"]);
+  const index = Number(textOf(result));
+  return {
+    target: `adb:${id}`,
+    orientation: ROTATION_NAMES[index] ?? null,
+    rotation: Number.isFinite(index) ? index : null,
+  };
+};
+
+// ====================================================================
+// Screen recording
+// ====================================================================
+
+// Recordings outlive a single command, so the process is kept and stopped
+// by signal. One per target: a second would overwrite the first's file.
+const recordings = new Map();
+
+export const startScreenRecording = async ({ target, file }) => {
+  const { kind, id } = await resolveTarget(target);
+  requireTool(kind);
+  const key = `${kind}:${id}`;
+  if (recordings.has(key)) {
+    throw new Error(`Already recording ${key}. Call stop_screen_recording first.`);
+  }
+  const output = String(file ?? `rn-devtools-${key.replace(":", "-")}.mp4`).replace(/['"\s]/g, "");
+  const startedAt = Date.now();
+  const argv = kind === "sim"
+    ? ["xcrun", "simctl", "io", id, "recordVideo", "--codec", "h264", "--force", output]
+    : ["adb", "-s", id, "shell", "screenrecord", "/sdcard/rn-devtools-recording.mp4"];
+  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+  recordings.set(key, { proc, output, startedAt, kind, id });
+  return {
+    ok: true,
+    target: key,
+    file: output,
+    startedAt,
+    // The timeline offset is the whole point: an agent can map a frame
+    // back to the event that produced it
+    note: "startedAt is on the same clock as the event bus: subtract it from an event ts to get the video offset.",
+  };
+};
+
+export const stopScreenRecording = async ({ target }) => {
+  const { kind, id } = await resolveTarget(target);
+  const key = `${kind}:${id}`;
+  const recording = recordings.get(key);
+  if (!recording) throw new Error(`No recording in progress on ${key}`);
+  recordings.delete(key);
+  try {
+    recording.proc.kill("SIGINT");
+    await recording.proc.exited;
+  } catch { /* already gone */ }
+
+  if (kind === "adb") {
+    // screenrecord flushes its file after the signal
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const pulled = await runCommand(
+      ["adb", "-s", id, "pull", "/sdcard/rn-devtools-recording.mp4", recording.output],
+      60000
+    );
+    if (!pulled.ok) fail(pulled, "adb pull recording");
+    await runCommand(["adb", "-s", id, "shell", "rm", "/sdcard/rn-devtools-recording.mp4"]);
+  }
+  const durationMs = Date.now() - recording.startedAt;
+  return {
+    ok: true,
+    target: key,
+    file: recording.output,
+    startedAt: recording.startedAt,
+    durationMs,
+    note: "Video offset of an event = event.ts - startedAt.",
+  };
+};
+
 // ====================================================================
 // MCP tool definitions + dispatcher
 // ====================================================================
@@ -729,6 +865,42 @@ export const NATIVE_TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
+    name: "install_app",
+    description: "Installs an app bundle on the target (simctl install / adb install -r).",
+    inputSchema: { type: "object", required: ["path"], properties: { ...targetProp, path: { type: "string", description: "Path to the .app, .ipa or .apk" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "uninstall_app",
+    description: "Removes the app from the target, wiping its data.",
+    inputSchema: { type: "object", required: ["appId"], properties: { ...targetProp, appId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "set_orientation",
+    description: "Rotates the device. Android only: iOS simulators expose no scriptable rotation, and that limit is reported rather than faked.",
+    inputSchema: { type: "object", required: ["orientation"], properties: { ...targetProp, orientation: { type: "string", enum: ["portrait", "landscape", "portrait-upside-down", "landscape-left"] } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "get_orientation",
+    description: "Reads the current rotation (Android).",
+    inputSchema: { type: "object", properties: { ...targetProp }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "start_screen_recording",
+    description: "Starts recording the screen. Returns startedAt on the SAME clock as the event bus, so a frame maps back to the event that produced it: video offset = event.ts - startedAt. Attaching a run's video to a bug report is what this is for.",
+    inputSchema: { type: "object", properties: { ...targetProp, file: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "stop_screen_recording",
+    description: "Stops the recording and returns the file, its start instant and its duration.",
+    inputSchema: { type: "object", properties: { ...targetProp }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
     name: "session_start",
     description: "One-call bootstrap: resolve target, pre-grant permissions, launch the dev build on the given Metro server (cold start, no dialogs, onboarding skipped), then wait until the app connects to the hub (waitFor event, default app.info). Android: pass scheme (e.g. exp+myapp) for a deterministic first connection.",
     inputSchema: { type: "object", required: ["platform", "appId"], properties: { platform: { type: "string", enum: ["ios", "android"] }, target: { type: "string" }, appId: { type: "string" }, serverUrl: { type: "string" }, scheme: { type: "string" }, permissions: { type: "object", additionalProperties: { type: "boolean" } }, coldStart: { type: "boolean" }, waitFor: { type: "string" }, timeoutMs: { type: "integer", minimum: 5000, maximum: 120000 } }, additionalProperties: false },
@@ -752,6 +924,12 @@ export const handleNativeTool = async (name, args, helpers) => {
     case "get_native_logs": return getNativeLogs(args);
     case "send_push": return sendPush(args);
     case "set_appearance": return setAppearance(args);
+    case "install_app": return installApp(args);
+    case "uninstall_app": return uninstallApp(args);
+    case "set_orientation": return setOrientation(args);
+    case "get_orientation": return getOrientation(args);
+    case "start_screen_recording": return startScreenRecording(args);
+    case "stop_screen_recording": return stopScreenRecording(args);
     case "session_start": return sessionStart(args, helpers);
     default: return undefined;
   }

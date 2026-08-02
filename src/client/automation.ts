@@ -17,6 +17,8 @@
  * autocapitalize interference), which is the point for agents.
  */
 
+import { resolveSource, type SourceLocation } from "./source";
+
 // Minimal structural view of a React fiber. Only the fields we read.
 export interface FiberLike {
   tag?: number;
@@ -41,6 +43,8 @@ export interface UiNode {
   pressable?: boolean;
   /** Number of purely structural views merged into this node */
   collapsed?: number;
+  /** Where this element was written, when React still knows */
+  source?: SourceLocation;
   children?: UiNode[];
 }
 
@@ -58,6 +62,8 @@ export interface SerializeOptions {
   maxNodes?: number;
   /** Also include screens the navigator keeps mounted but hidden */
   includeHidden?: boolean;
+  /** Attach the source location to every node (default true) */
+  includeSource?: boolean;
 }
 
 const HOST_TYPE_ALIASES: Record<string, string> = {
@@ -172,6 +178,7 @@ export const isHiddenSubtree = (fiber: FiberLike): boolean => {
 const buildNode = (
   fiber: FiberLike,
   children: UiNode[],
+  includeSource = true,
 ): UiNode => {
   const props = propsOf(fiber);
   const type = prettyHostType(String(fiber.type));
@@ -199,6 +206,11 @@ const buildNode = (
   const text = collectSubtreeText(fiber, isTextType(type) ? 30 : 0);
   if (text) node.text = text;
 
+  if (includeSource) {
+    const source = resolveSource(fiber);
+    if (source) node.source = source;
+  }
+
   if (children.length) node.children = children;
   return node;
 };
@@ -209,7 +221,13 @@ const isCollapsible = (node: UiNode): boolean =>
   node.editable === undefined && !node.role &&
   (node.children?.length ?? 0) === 1;
 
-interface NodeBudget { nodes: number; truncated: boolean; includeHidden: boolean; hiddenSubtrees: number; }
+interface NodeBudget {
+  nodes: number;
+  truncated: boolean;
+  includeHidden: boolean;
+  includeSource: boolean;
+  hiddenSubtrees: number;
+}
 
 const serializeChildren = (
   fiber: FiberLike,
@@ -228,8 +246,10 @@ const serializeChildren = (
       if (depthLeft <= 0) { budget.truncated = true; continue; }
       budget.nodes -= 1;
       const grandChildren = serializeChildren(child, depthLeft - 1, budget);
-      let node = buildNode(child, grandChildren);
-      // Collapse pyramids of purely structural Views
+      let node = buildNode(child, grandChildren, budget.includeSource);
+      // Collapse pyramids of purely structural Views. The collapsed
+      // wrapper's own source is dropped with it: the surviving node keeps
+      // its own, which is the one the agent wants to edit
       if (isCollapsible(node)) {
         const only = node.children![0];
         node = { ...only, collapsed: (only.collapsed ?? 0) + 1 };
@@ -252,6 +272,7 @@ export const serializeTree = (
     nodes: Math.max(1, Math.min(options.maxNodes ?? 2500, 10000)),
     truncated: false,
     includeHidden: options.includeHidden === true,
+    includeSource: options.includeSource !== false,
     hiddenSubtrees: 0,
   };
   const maxDepth = Math.max(1, Math.min(options.maxDepth ?? 60, 200));
@@ -595,6 +616,8 @@ const describeMatch = async (fiber: FiberLike): Promise<Record<string, unknown>>
     label: stringProp(props, "accessibilityLabel", "aria-label") ?? null,
     text: collectSubtreeText(fiber, 30) || null,
     rect: await measureFiber(fiber),
+    // A match without a source turns editing into a repo-wide grep
+    source: resolveSource(fiber),
   };
 };
 
@@ -713,8 +736,16 @@ const resolveScopes = (
   return scopes;
 };
 
+/** What installUiAutomation hands back so other modules (previews) can
+ * reuse the fiber walking without re-implementing root tracking */
+export interface AutomationApi {
+  generation: () => number;
+  query: (selector: UiSelector, limit?: number) => Promise<Array<Record<string, unknown>>>;
+  subtree: (selector: UiSelector, options?: SerializeOptions) => UiNode[] | null;
+}
+
 /** Registers the ui.tree / ui.query / ui.act command handlers */
-export const installUiAutomation = (host: AutomationHost): void => {
+export const installUiAutomation = (host: AutomationHost): AutomationApi => {
   const tracker = trackRoots(host.emit);
 
   host.onCommand("ui.tree", (rawPayload) => {
@@ -724,6 +755,7 @@ export const installUiAutomation = (host: AutomationHost): void => {
       maxDepth: Number(payload.maxDepth) || undefined,
       maxNodes: Number(payload.maxNodes) || undefined,
       includeHidden: payload.includeHidden === true,
+      includeSource: payload.includeSource !== false,
     }));
     return {
       generation: tracker.generation,
@@ -793,4 +825,85 @@ export const installUiAutomation = (host: AutomationHost): void => {
       target: await describeMatch(target),
     };
   });
+
+  /**
+   * Which elements own a point on screen, outermost first.
+   *
+   * Descends measuring as it goes and prunes any subtree whose box does
+   * not contain the point, so a hit test costs a handful of measurements
+   * instead of one per node. The approximation is stated on purpose:
+   * a child rendered outside its parent's bounds is missed, which is
+   * rare in a layout engine built on flexbox.
+   */
+  const hitTest = async (
+    x: number,
+    y: number,
+    limit = 200,
+  ): Promise<Array<Record<string, unknown>>> => {
+    const path: Array<Record<string, unknown>> = [];
+    let measurements = 0;
+
+    const visit = async (fiber: FiberLike): Promise<void> => {
+      for (let child = fiber.child ?? null; child; child = child.sibling ?? null) {
+        if (isHiddenSubtree(child) || isTextFiber(child)) continue;
+        if (!isHostFiber(child)) {
+          await visit(child);
+          continue;
+        }
+        if (measurements >= limit) return;
+        measurements += 1;
+        const rect = await measureFiber(child);
+        if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+        const inside =
+          x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+        if (!inside) continue;
+        path.push({ ...(await describeMatch(child)), rect });
+        await visit(child);
+      }
+    };
+
+    for (const root of requireRoots(tracker)) await visit(root);
+    return path;
+  };
+
+  host.onCommand("ui.at", async (rawPayload) => {
+    const payload = (rawPayload ?? {}) as Record<string, unknown>;
+    const x = Number(payload.x);
+    const y = Number(payload.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error("ui.at needs numeric x and y in points");
+    }
+    const path = await hitTest(x, y, Math.max(20, Math.min(Number(payload.limit) || 200, 1000)));
+    return {
+      generation: tracker.generation,
+      point: { x, y },
+      // The deepest element is the one that actually drew there
+      deepest: path[path.length - 1] ?? null,
+      path,
+    };
+  });
+
+  const firstMatch = (selector: UiSelector): FiberLike | null => {
+    for (const fiber of requireRoots(tracker)) {
+      const found = queryFibers(fiber, selector, 1, false);
+      if (found.length) return found[0];
+    }
+    return null;
+  };
+
+  return {
+    generation: () => tracker.generation,
+    query: async (selector, limit = 10) => {
+      const matches: FiberLike[] = [];
+      for (const fiber of requireRoots(tracker)) {
+        matches.push(...queryFibers(fiber, selector, limit - matches.length, false));
+        if (matches.length >= limit) break;
+      }
+      return Promise.all(matches.map(describeMatch));
+    },
+    subtree: (selector, options) => {
+      const fiber = firstMatch(selector);
+      return fiber ? serializeTree(fiber, options).nodes : null;
+    },
+  };
 };

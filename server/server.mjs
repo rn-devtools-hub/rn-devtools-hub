@@ -15,10 +15,11 @@
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs } from "./native.mjs";
+import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs, screenshotNative } from "./native.mjs";
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
+import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -457,6 +458,7 @@ const MCP_TOOLS = [
   ASSERT_TOOL,
   ...SESSION_TOOLS,
   ...FLOW_TOOLS,
+  ...VISUAL_TOOLS,
   {
     name: "list_previews",
     description: "Lists the components the app registered with devtools.registerPreview, and whether the preview outlet is mounted.",
@@ -517,6 +519,13 @@ const handleMcpTool = async (name, args = {}) => {
   }
   if (SESSION_TOOLS.some((tool) => tool.name === name)) {
     return handleSessionTool(name, args, PROJECT_ROOT);
+  }
+  if (name === "snapshot_baseline") {
+    const shot = await screenshotNative({ target: args.target });
+    const bytes = Buffer.from(shot.__mcpImage.data, "base64");
+    const decoded = decodePng(bytes);
+    const file = writeBaseline(PROJECT_ROOT, args.name, bytes);
+    return { ok: true, name: args.name, file, width: decoded.width, height: decoded.height };
   }
   if (name === "get_project_context") {
     // The declared half is always available; the runtime half needs a
@@ -625,6 +634,30 @@ const handleMcpTool = async (name, args = {}) => {
     const response = await sendDeviceCommand(deviceId, DEVICE_COMMANDS[name], payload);
     if (response.error) throw new Error(response.error);
     return response.result;
+  }
+  if (name === "compare_snapshot") {
+    const takenAt = baselineTakenAt(PROJECT_ROOT, args.name);
+    const baseline = readBaseline(PROJECT_ROOT, args.name);
+    const shot = await screenshotNative({ target: args.target });
+    const current = decodePng(Buffer.from(shot.__mcpImage.data, "base64"));
+    const diff = diffImages(baseline, current, { withImage: args.withImage === true });
+    // The runtime measures in points while the screenshot is in device
+    // pixels: the app's own width is what reconciles the two
+    const appInfo = eventsOfType(device, ["app.info"], 1)[0]?.payload ?? {};
+    const explained = await explainDiff(diff, {
+      maxRatio: args.maxRatio,
+      screenWidthPoints: Number(appInfo.screenWidth) || null,
+      changes: changesSince(device.history, takenAt ?? 0),
+      hitTest: async (x, y) => {
+        const response = await sendDeviceCommand(deviceId, "ui.at", { x, y });
+        if (response.error) throw new Error(response.error);
+        return response.result;
+      },
+    });
+    if (args.withImage && diff.image) {
+      return { __mcpImage: { data: diff.image.toString("base64"), mimeType: "image/png" }, ...explained };
+    }
+    return explained;
   }
   if (name === "start_recording") {
     return startRecording(recorder, { name: args.name, cursor: device.lastSeq ?? 0 });

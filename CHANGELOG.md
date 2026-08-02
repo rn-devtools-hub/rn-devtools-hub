@@ -2,6 +2,76 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.4](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.3...v0.11.4) (2026-08-02)
+
+### Bug Fixes
+
+* expose an input's value, retry query_ui, align state naming, trust boot state ([23fee16](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/23fee16ee71be3df9b70b1691b684897babca8c7))
+
+## [0.11.3](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.2...v0.11.3) (2026-08-02)
+
+### Bug Fixes
+
+* **security:** gate the device socket, bound frames and PNG dimensions ([0a700cf](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/0a700cf88f7f4512a1dd8769b1d578aa91bf39ca))
+
+## [0.11.2](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.1...v0.11.2) (2026-08-02)
+
+### Bug Fixes
+
+* **symbolicate:** allow Metro on the local network, not just loopback ([491d264](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/491d264bd10d4aebf90d7d467b547c01d1283383))
+
+## [0.11.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.0...v0.11.1) (2026-08-02)
+
+### Bug Fixes
+
+* **cli:** start the hub on either runtime from the stdio bridge ([2329296](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/23292960d7cda983c6ca853f506f36a7d6fc9f9c))
+
+## [0.11.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.10.1...v0.11.0) (2026-08-02)
+
+### Features
+
+* run the hub on Node as well as Bun, and fix the store adapter types ([bd9894c](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/bd9894cba3ed4d75ea195fc93550211a29633e0e))
+* ship the plugin and the skill for Codex, and drop the Bun requirement ([e8787f5](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/e8787f5a0b71e16ba21f628f132c6d04fbdc1cca))
+
+### Bug Fixes
+
+* **ci:** probe the WebSocket over raw TCP instead of the global client ([3f82e24](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/3f82e24bf9a506023d7513ccb6de6ecca00c5f23))
+
+## [0.10.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.10.0...v0.10.1) (2026-08-02)
+
+### Bug Fixes
+
+* **session:** make the artifacts directory ignore itself ([9a65a35](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/9a65a3590a70a513ae724e787d94c3a03bd75cb2))
+
+## [0.10.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.9.0...v0.10.0) (2026-08-02)
+
+### Features
+
+* **dashboard:** show the project context and its contradictions ([38ab973](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/38ab9734d51581da73f2465c7893a0e63c16a1d4))
+
+### Bug Fixes
+
+* **automation:** measure on the New Architecture ([ef8b59e](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/ef8b59e4145e8e72017eeaaf652c64e646f30bdb))
+* **source:** walk the owner chain when collecting stacks ([8be58cd](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/8be58cd1399dc6a8c06ea6e8983526b00431f7ac))
+
+## [0.9.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.8.0...v0.9.0) (2026-08-02)
+
+### Features
+
+* **cli:** speak MCP over stdio, and list on Smithery ([70bd134](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/70bd134c872514d9411695ca042f858e94a41243))
+
+## [0.8.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.7.1...v0.8.0) (2026-08-02)
+
+### Features
+
+* **source:** symbolicate owner stacks into real file and line ([ff63554](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/ff6355486335d26ca44ebadf5d0f6a3a27e42b80))
+
+## [0.7.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.7.0...v0.7.1) (2026-08-02)
+
+### Bug Fixes
+
+* **registry:** keep server.json within the registry's field limits ([30e6877](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/30e687755e916a688047a7f4d17cb4047678ae9e))
+
 ## [0.7.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.6.0...v0.7.0) (2026-08-02)
 
 ### Features

@@ -2,6 +2,8 @@
 
 Generated automatically from conventional commits.
 
+## [0.12.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.12.0...v0.12.1) (2026-08-02)
+
 ## [0.12.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.7...v0.12.0) (2026-08-02)
 
 ### Features

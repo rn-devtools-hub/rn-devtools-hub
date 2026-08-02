@@ -65,18 +65,26 @@ describe("MCP registry manifest", () => {
   });
 
   it("points at the npm package it is published alongside", () => {
-    const npmPackage = server.packages.find(
-      (entry: { registryType: string }) => entry.registryType === "npm"
-    );
-    expect(npmPackage.identifier).toBe(pkg.name);
-    expect(npmPackage.registryBaseUrl).toBe("https://registry.npmjs.org");
+    for (const entry of server.packages) {
+      expect(entry.identifier).toBe(pkg.name);
+      expect(entry.registryBaseUrl).toBe("https://registry.npmjs.org");
+    }
+  });
+
+  /**
+   * A client that discovers the server through the registry can install a
+   * stdio package by itself. It cannot know that an http:// URL on
+   * localhost requires the user to have started the hub first, so a
+   * registry entry offering only that silently fails to connect.
+   */
+  it("offers stdio first, so discovery can install it unattended", () => {
+    expect(server.packages[0].transport.type).toBe("stdio");
+    expect(server.packages[0].packageArguments[0].value).toBe("mcp");
+    expect(server.packages.some((entry: any) => entry.transport.type === "streamable-http")).toBe(true);
   });
 
   it("keeps the manifest version aligned with the package version", () => {
-    const npmPackage = server.packages.find(
-      (entry: { registryType: string }) => entry.registryType === "npm"
-    );
-    expect(server.version).toBe(npmPackage.version);
+    for (const entry of server.packages) expect(entry.version).toBe(server.version);
     // release-it bumps package.json; this catches the manifest left behind
     expect(server.version).toBe(pkg.version);
   });

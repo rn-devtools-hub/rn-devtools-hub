@@ -15,6 +15,24 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "rn-devtools-hub",
       "version": "0.11.4",
+      "runtimeHint": "npx",
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "valueHint": "mcp",
+          "description": "Speak MCP over stdio, bridging to the local hub and starting it if needed"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "rn-devtools-hub",
+      "version": "0.11.4",
       "transport": {
         "type": "streamable-http",
         "url": "http://127.0.0.1:8973/mcp"

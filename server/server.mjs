@@ -478,6 +478,30 @@ const MCP_TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
+    name: "freeze_time",
+    description: "Freezes the app's JS clock at an ISO instant (or now), so relative dates and time-dependent rendering stop drifting between runs. Deterministic at the JS level only: Date, new Date() and Date.now(). Native animations and Reanimated read native clocks and are unaffected.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, iso: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "advance_time",
+    description: "Moves the frozen clock forward by ms. It moves the clock, it does NOT fire pending timers: driving the scheduler would mean replacing setTimeout under a running app.",
+    inputSchema: { type: "object", required: ["ms"], properties: { deviceId: { type: "string" }, ms: { type: "integer" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "restore_time",
+    description: "Gives the app its real clock back.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "mock_network",
+    description: "Controls the requests going through the instrumented fetch: rules to stub a status and a body, or a condition among normal, offline, 3g and flaky. Failures are spaced deterministically rather than randomly, so a flaky profile stays reproducible. Mocked responses are flagged on the bus so an agent never mistakes a fixture for the backend. Only covers wrapFetch; an axios instance keeps its own adapter.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["rules", "condition", "reset", "state"] }, rules: { type: "array", items: { type: "object", properties: { urlContains: { type: "string" }, method: { type: "string" }, status: { type: "integer" }, body: {}, delayMs: { type: "integer" }, fail: { type: "string" } }, additionalProperties: false } }, condition: { type: "string", enum: ["normal", "offline", "3g", "flaky"] } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
     name: "get_state",
     description: "Reads a store the app registered with devtools.registerStore (Zustand, Redux, React Query or a custom adapter). Omit store to list what is available. path drills in with dots; for React Query it is the JSON query key.",
     inputSchema: { type: "object", properties: { deviceId: { type: "string" }, store: { type: "string" }, path: { type: "string" } }, additionalProperties: false },
@@ -620,6 +644,18 @@ const handleMcpTool = async (name, args = {}) => {
         cursor: cursorBefore,
       });
     }
+    return response.result;
+  }
+  if (name === "freeze_time" || name === "advance_time" || name === "restore_time") {
+    const action = { freeze_time: "freeze", advance_time: "advance", restore_time: "restore" }[name];
+    const response = await sendDeviceCommand(deviceId, "time.control", { action, iso: args.iso, ms: args.ms });
+    if (response.error) throw new Error(response.error);
+    return response.result;
+  }
+  if (name === "mock_network") {
+    const { deviceId: _dropped, ...payload } = args;
+    const response = await sendDeviceCommand(deviceId, "network.mock", payload);
+    if (response.error) throw new Error(response.error);
     return response.result;
   }
   const DEVICE_COMMANDS = {

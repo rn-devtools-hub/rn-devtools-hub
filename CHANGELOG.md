@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.5](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.4...v0.11.5) (2026-08-02)
+
+### Bug Fixes
+
+* **registry:** advertise stdio as well as http, stdio first ([c2eef7b](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/c2eef7b55e5727cd7db9c4731cbaf49877871368))
+
 ## [0.11.4](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.3...v0.11.4) (2026-08-02)
 
 ### Bug Fixes

@@ -2,6 +2,24 @@
 
 Generated automatically from conventional commits.
 
+## [0.6.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.5.0...v0.6.0) (2026-08-02)
+
+### Features
+
+* **assert:** prove results without a screenshot ([5ce8852](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/5ce885269677df6870c3a702a9c489c9f65ff231))
+* **context:** report declared, runtime and contradicting project state ([e3705c2](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/e3705c2992f2a552fc3d81e6d66ca93f19dcbf95))
+* **determinism:** control the clock and the network from inside ([168d53b](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/168d53b2785f386b8d68d5519316c08e45d7778c))
+* **flow:** record actions with the consequences they caused ([01673a8](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/01673a84d85a05ef9ae968d74d9bd7f9a9e29708))
+* **native,a11y,build:** close the remaining loops ([9bd5acd](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/9bd5acdb5934c961a7a0de60d2bb0eaf206ebbb7))
+* **preview,state:** mount components in situ and write app state ([dd52e20](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/dd52e20afbf11f444c46b687c387ecb4eb739ef1))
+* **session:** persist runs and export them as one correlated artifact ([fe51f07](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/fe51f07e5199feaf6a31432309849c9548b816d0))
+* **source:** put the source location on the tree and on the bus ([f0162c5](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/f0162c5568dbda99136bd5fddfe7a7835f887e20))
+* **visual:** explain a visual regression instead of scoring it ([31f6a1f](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/31f6a1f38242a35612ec17b7752200df40b80cff))
+
+### Bug Fixes
+
+* **server:** give slow device commands their own timeout budget ([be7802e](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/be7802e6098f51425cf783aa6d3d8c0a30c52b1c))
+
 ## [0.5.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.4.0...v0.5.0) (2026-07-24)
 
 ### Features

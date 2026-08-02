@@ -1,0 +1,53 @@
+---
+description: Drive the running React Native app through the rn-devtools-hub MCP server. Use when checking whether a change works in the app, tapping or typing in the UI, finding which file renders an element, proving a request succeeded, diagnosing behaviour that looks impossible, or investigating a bug after the fact.
+alwaysApply: false
+---
+
+# Driving the app with rn-devtools-hub
+
+The SDK runs inside the app's JavaScript runtime, so you read what React
+reads and act through the app's own props. Three habits follow.
+
+1. **Never verify with a screenshot.** Use `assert`. A screenshot cannot show
+   a request that failed silently or a promise that rejected.
+2. **Never sleep.** Use `wait_for_event`.
+3. **Never grep the repo for a component you can see.** Every node carries
+   `source` with its file and line.
+
+## Before anything else
+
+If the app behaves impossibly (a library is missing, a prop does nothing, a
+feature that worked is gone), call `get_project_context` FIRST. It returns
+what the project declares, what the app actually runs, and the
+contradictions between them. Most "impossible" bugs are a stale native
+binary, and reading code before checking that is the most common waste.
+
+## The loop
+
+```
+query_ui        find by role + accessible name
+ui_act          tap / type / scroll through the app's own props
+wait_for_event  block on the consequence, never sleep
+assert          prove it, with evidence attached on failure
+```
+
+Take a cursor from `get_events_since` BEFORE acting, then pass it as `since`
+so the assertion window covers exactly your step and nothing else.
+
+If a UI path is long or fragile, skip it: `list_actions` and `run_action`
+jump straight there, and `set_state` puts the app in an exact state without
+walking any screen at all.
+
+## Reading failures
+
+- "React DevTools hook unavailable" means a release bundle, or
+  `attachUiAutomation()` is missing from the glue file.
+- `ui_act` returning `reason: "ambiguous"` lists the candidates with their
+  rects: pass `index` or scope with `within`.
+- `source.via` says how far to trust a location. `debugSource` and
+  `symbolicated` are exact, `stack` is a bundle position that still needs
+  symbolication, `componentOnly` has a name but no file.
+- An element in `get_ui_tree` but not in `query_ui` sits in a hidden
+  navigator screen. Only pass `includeHidden` if you know why.
+
+The hub must be running: `npx rn-devtools-hub` from the project root.

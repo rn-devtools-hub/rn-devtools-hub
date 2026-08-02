@@ -107,6 +107,60 @@ describe("MCP registry manifest", () => {
  * duplication safe, because a skill that drifts between the two silently
  * teaches two different things.
  */
+/**
+ * Cursor has no marketplace: the rule and the MCP entry only reach a user
+ * if `init` writes them into their project, so the template has to be in
+ * the published package and has to be a rule Cursor will actually load.
+ */
+describe("Cursor rule template", () => {
+  const rule = readFileSync(join(root, "templates/cursor-rule.mdc"), "utf-8");
+
+  it("carries the frontmatter Cursor needs to route it", () => {
+    expect(rule.startsWith("---\n")).toBe(true);
+    expect(rule).toMatch(/^description: .{60,}/m);
+    // Always-on rules cost tokens on every request, including the ones
+    // that have nothing to do with the app
+    expect(rule).toMatch(/^alwaysApply: false$/m);
+  });
+
+  it("ships to npm consumers, since init reads it from the package", () => {
+    expect(pkg.files).toContain("templates");
+  });
+
+  it("teaches the same three habits as the skill", () => {
+    expect(rule).toContain("get_project_context");
+    expect(rule).toContain("assert");
+    expect(rule).toContain("wait_for_event");
+  });
+});
+
+/**
+ * Cursor's setup is documented, not automated, so the template has to be
+ * in the published package: the instructions tell the user to copy it out
+ * of node_modules, and a rule Cursor will not load helps nobody.
+ */
+describe("Cursor rule template", () => {
+  const rule = readFileSync(join(root, "templates/cursor-rule.mdc"), "utf-8");
+
+  it("carries the frontmatter Cursor needs to route it", () => {
+    expect(rule.startsWith("---\n")).toBe(true);
+    expect(rule).toMatch(/^description: .{60,}/m);
+    // Always-on rules cost tokens on every request, including the ones
+    // that have nothing to do with the app
+    expect(rule).toMatch(/^alwaysApply: false$/m);
+  });
+
+  it("ships to npm consumers, since the docs tell them to copy it", () => {
+    expect(pkg.files).toContain("templates");
+  });
+
+  it("teaches the same three habits as the skill", () => {
+    expect(rule).toContain("get_project_context");
+    expect(rule).toContain("assert");
+    expect(rule).toContain("wait_for_event");
+  });
+});
+
 describe("Codex plugin", () => {
   it("carries the same skill as the Claude Code plugin, byte for byte", () => {
     const claude = readFileSync(

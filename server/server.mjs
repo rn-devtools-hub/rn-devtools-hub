@@ -273,7 +273,8 @@ const mirrorHint = (sources, adbPath, simctlAvailable) => {
   return (
     `${names} reached the hub over the network, so its screen cannot be captured from here. ` +
     "Two ways to get a mirror: attach it with adb (a cable, or `adb connect` over Wi-Fi), " +
-    "or add react-native-view-shot to the app so it can capture itself, which works in Expo Go."
+    "or add react-native-view-shot to the app so it can capture itself (`npx expo install react-native-view-shot`). " +
+    "That second path carries native code, so check whether your runtime supports it before relying on it."
   );
 };
 

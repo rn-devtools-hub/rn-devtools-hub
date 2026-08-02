@@ -473,7 +473,9 @@ export const runInit = (argv, root = process.cwd()) => {
   if (!project.features.viewShot) {
     console.log("");
     console.log("  Tip: npx expo install react-native-view-shot enables the live");
-    console.log("  app screen mirror (works in Expo Go, no native build needed).");
+    console.log("  app screen mirror. It carries native code, so check that your");
+    console.log("  runtime supports it. Without it, the mirror still works for any");
+    console.log("  device attached with adb or for an iOS simulator.");
   }
   console.log("");
   return 0;

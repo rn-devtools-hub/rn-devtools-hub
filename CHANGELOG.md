@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.6](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.5...v0.11.6) (2026-08-02)
+
+### Bug Fixes
+
+* **dashboard:** the project context panel had no styles at all ([afd3349](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/afd3349db8a51d3c9f28b4a7ded8857063342292))
+
 ## [0.11.5](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.4...v0.11.5) (2026-08-02)
 
 ### Bug Fixes

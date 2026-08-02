@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.0...v0.11.1) (2026-08-02)
+
+### Bug Fixes
+
+* **cli:** start the hub on either runtime from the stdio bridge ([2329296](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/23292960d7cda983c6ca853f506f36a7d6fc9f9c))
+
 ## [0.11.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.10.1...v0.11.0) (2026-08-02)
 
 ### Features

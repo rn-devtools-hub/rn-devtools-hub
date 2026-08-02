@@ -14,12 +14,22 @@
   },
   "plugins": {
     "@release-it/conventional-changelog": {
-      "preset": { "name": "conventionalcommits" },
+      "preset": {
+        "name": "conventionalcommits"
+      },
       "infile": "CHANGELOG.md",
       "header": "# Changelog\n\nGenerated automatically from conventional commits."
     }
   },
   "hooks": {
-    "before:init": ["npm run typecheck", "npm run test", "npm run build"]
+    "before:init": [
+      "npm run typecheck",
+      "npm run test",
+      "npm run build"
+    ],
+    "after:bump": [
+      "node scripts/sync-server-json.mjs ${version}",
+      "git add server.json"
+    ]
   }
 }

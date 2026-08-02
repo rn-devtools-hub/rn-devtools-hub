@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.9.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.8.0...v0.9.0) (2026-08-02)
+
+### Features
+
+* **cli:** speak MCP over stdio, and list on Smithery ([70bd134](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/70bd134c872514d9411695ca042f858e94a41243))
+
 ## [0.8.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.7.1...v0.8.0) (2026-08-02)
 
 ### Features

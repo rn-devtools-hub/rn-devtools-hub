@@ -179,6 +179,15 @@ Codex: `codex plugin marketplace add rn-devtools-hub/rn-devtools-hub`, or
 `[mcp_servers.rn-devtools] url = "http://127.0.0.1:8973/mcp"` in
 `~/.codex/config.toml`.
 
+Cursor has no marketplace, so its setup is documented rather than
+automated: the user declares the server in `.cursor/mcp.json` and copies
+`templates/cursor-rule.mdc` into `.cursor/rules/`. The rule sets
+`alwaysApply: false` on purpose, because a rule that is always in context
+costs tokens on every request, including the ones with nothing to do with
+the app. `init` deliberately does NOT write these: it already touches the
+entry point and package.json, and writing into someone's editor config on
+top of that is further than an install command should reach.
+
 The skill lives in TWO places because the two agents look in different
 ones: `plugins/rn-devtools-hub/skills/` for Claude Code and
 `.agents/skills/` for Codex. The format is identical and a packaging test

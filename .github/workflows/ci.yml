@@ -44,23 +44,12 @@ jobs:
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -q "list_devices"
 
       # A device really connecting is what exercises the WebSocket server;
-      # a handshake can look correct and still be rejected by a real client
+      # a handshake can look correct and still be rejected by a real client.
+      # The probe speaks raw TCP rather than the global WebSocket, which only
+      # exists from Node 22 while this package supports Node 20.
       - name: A device connects over WebSocket and its events arrive
         run: |
-          node -e '
-            const ws = new WebSocket("ws://127.0.0.1:8973");
-            ws.onopen = () => {
-              ws.send(JSON.stringify({kind:"hello",role:"device",appName:"ci",deviceName:"ci",stableId:"ci1"}));
-              setTimeout(() => {
-                ws.send(JSON.stringify({kind:"events",events:[{id:1,type:"crash",ts:Date.now(),payload:{message:"ci-probe"}}]}));
-                setTimeout(() => ws.close(1000, "bye"), 400);
-              }, 200);
-            };
-            ws.onerror = () => { console.error("websocket error"); process.exit(1); };
-            ws.onclose = (e) => { if (!e.wasClean) { console.error("unclean close " + e.code); process.exit(1); } process.exit(0); };
-            setTimeout(() => { console.error("timeout"); process.exit(1); }, 8000);
-          '
-          sleep 1
+          node scripts/ws-probe.mjs 8973
           curl -sf -X POST http://127.0.0.1:8973/mcp \
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_crashes","arguments":{}}}' | grep -q "ci-probe"

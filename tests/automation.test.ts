@@ -509,6 +509,71 @@ describe("installUiAutomation", () => {
  * on screen, which silently breaks the hit test and, with it, the
  * explanation attached to a visual diff. Found on a real Expo 56 app.
  */
+/**
+ * Raising the keyboard needs the native command, not a method call. On
+ * Fabric the stateNode is `{ node, canonical }` with no methods, so
+ * calling `.focus()` on it found nothing, did nothing, and still reported
+ * success. Reported from a real Android device.
+ */
+describe("focus dispatch", () => {
+  const withInput = (stateNode: unknown): FiberLike =>
+    ({
+      type: "AndroidTextInput",
+      memoizedProps: { onChangeText: () => {} },
+      stateNode,
+    }) as FiberLike;
+
+  const withFabric = <T,>(uiManager: unknown, run: () => T): T => {
+    const key = "nativeFabricUIManager";
+    const previous = (globalThis as Record<string, unknown>)[key];
+    (globalThis as Record<string, unknown>)[key] = uiManager;
+    try {
+      return run();
+    } finally {
+      (globalThis as Record<string, unknown>)[key] = previous;
+    }
+  };
+
+  it("calls the public instance when there is one", () => {
+    let called = "";
+    const publicInstance = { focus: () => { called = "focus"; }, measureInWindow: () => {} };
+    const result = performAct(withInput({ node: {}, canonical: { publicInstance } }), {
+      action: "focus",
+    });
+    expect(called).toBe("focus");
+    expect(result.detail).toContain("public instance");
+  });
+
+  it("dispatches the command when Fabric has no public instance yet", () => {
+    const dispatched: unknown[] = [];
+    const result = withFabric(
+      { dispatchCommand: (node: unknown, name: string) => dispatched.push([node, name]) },
+      () => performAct(withInput({ node: { shadow: true }, canonical: { publicInstance: null } }), {
+        action: "focus",
+      })
+    );
+    expect(dispatched).toEqual([[{ shadow: true }, "focus"]]);
+    expect(result.detail).toContain("dispatched");
+  });
+
+  it("blurs through the same path", () => {
+    const dispatched: string[] = [];
+    withFabric({ dispatchCommand: (_n: unknown, name: string) => dispatched.push(name) }, () =>
+      performAct(withInput({ node: {}, canonical: { publicInstance: null } }), { action: "blur" })
+    );
+    expect(dispatched).toEqual(["blur"]);
+  });
+
+  // The defect being fixed: no path at all used to report success
+  it("fails loudly when no path exists rather than claiming success", () => {
+    expect(() =>
+      withFabric(undefined, () =>
+        performAct(withInput({ node: {}, canonical: { publicInstance: null } }), { action: "focus" })
+      )
+    ).toThrow(/Could not focus/);
+  });
+});
+
 describe("measurable instance", () => {
   const fiber = (stateNode: unknown): FiberLike =>
     ({ type: "RCTView", memoizedProps: {}, stateNode }) as FiberLike;

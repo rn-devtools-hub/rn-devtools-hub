@@ -582,6 +582,52 @@ const measureFiber = (fiber: FiberLike): Promise<
     done(null);
   });
 
+/**
+ * Raising the keyboard needs the native COMMAND, not a method call.
+ *
+ * On Android the soft keyboard only appears through ReactEditText's
+ * requestFocusFromJS, which the "focus" command maps to. And on Fabric the
+ * fiber's stateNode is `{ node, canonical }`, an object with no methods at
+ * all, so calling `.focus()` on it found nothing and did nothing while
+ * still reporting success. Both paths are tried, and the absence of any is
+ * an error rather than a silent no-op.
+ */
+const dispatchFocus = (input: FiberLike, action: "focus" | "blur"): string | null => {
+  const instance = findMeasurableInstance(input);
+  if (instance && typeof instance[action] === "function") {
+    try {
+      (instance[action] as () => void).call(instance);
+      return `${action} called on the public instance`;
+    } catch {
+      // fall through to the command
+    }
+  }
+
+  const fabric = (globalThis as Record<string, any>).nativeFabricUIManager;
+  const shadowNode = fabric ? findShadowNode(input) : null;
+  if (shadowNode && typeof fabric.dispatchCommand === "function") {
+    try {
+      fabric.dispatchCommand(shadowNode, action, []);
+      return `${action} command dispatched`;
+    } catch {
+      // fall through
+    }
+  }
+
+  // Old architecture: the view manager takes the same command name
+  const legacy = (globalThis as Record<string, any>).nativeModuleProxy?.UIManager;
+  const tag = (findStateNode(input) as Record<string, any> | null)?._nativeTag;
+  if (legacy && tag && typeof legacy.dispatchViewManagerCommand === "function") {
+    try {
+      legacy.dispatchViewManagerCommand(tag, action, []);
+      return `${action} command dispatched (legacy)`;
+    } catch {
+      // nothing left to try
+    }
+  }
+  return null;
+};
+
 export interface ActRequest {
   action:
     | "tap"
@@ -620,10 +666,13 @@ export const performAct = (fiber: FiberLike, request: ActRequest): { detail: str
   if (request.action === "focus" || request.action === "blur") {
     const input = findTextInputFiber(fiber);
     if (!input) throw new Error("No text input found on the element or nearby");
-    const instance = findStateNode(input);
-    if (!instance) throw new Error("No native instance found to focus");
-    callNative(instance, request.action);
-    return { detail: `${request.action} invoked` };
+    const detail = dispatchFocus(input, request.action);
+    if (!detail) {
+      throw new Error(
+        `Could not ${request.action} the input: no public instance and no Fabric UIManager to dispatch through`
+      );
+    }
+    return { detail };
   }
 
   if (request.action === "type" || request.action === "clear") {

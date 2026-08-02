@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodePng, diffImages } from "./png.mjs";
+import { ensureArtifactDir } from "./session.mjs";
 
 const BASELINE_DIR = join(".rn-devtools", "baselines");
 const CHANGE_TYPES = new Set(["ui.change", "network.response", "network.error", "nav", "screen.ready"]);
@@ -38,7 +39,7 @@ export const baselinePath = (projectRoot, name) =>
 
 export const writeBaseline = (projectRoot, name, bytes) => {
   const root = baselineRoot(projectRoot);
-  mkdirSync(root, { recursive: true });
+  ensureArtifactDir(root);
   const file = baselinePath(projectRoot, name);
   writeFileSync(file, bytes);
   return file;

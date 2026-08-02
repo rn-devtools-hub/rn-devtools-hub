@@ -16,7 +16,7 @@
  * line instead of the whole session.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SESSION_DIR = join(".rn-devtools", "sessions");
@@ -29,14 +29,29 @@ const SKIPPED_TYPES = new Set(["screen.frame", "perf.sample"]);
 
 export const sessionRoot = (projectRoot) => join(projectRoot, SESSION_DIR);
 
-const ensureDir = (path) => {
+/**
+ * Creates the directory and makes it ignore itself.
+ *
+ * The hub writes sessions and visual baselines into the HOST project. A
+ * user who never runs `init`, or who upgraded into the feature, would
+ * otherwise find them in `git status` and some would commit a folder of
+ * JSONL and PNGs. Dropping a `.gitignore` containing `*` inside the
+ * directory needs no cooperation from the project and cannot go stale.
+ */
+export const ensureArtifactDir = (path) => {
   try {
     mkdirSync(path, { recursive: true });
+    const marker = join(path, "..", ".gitignore");
+    if (!existsSync(marker)) {
+      writeFileSync(marker, "# Local devtools artifacts, never committed\n*\n");
+    }
     return true;
   } catch {
     return false;
   }
 };
+
+const ensureDir = ensureArtifactDir;
 
 /** Filesystem-safe and sortable: the timestamp leads so a directory
  * listing is already in chronological order */

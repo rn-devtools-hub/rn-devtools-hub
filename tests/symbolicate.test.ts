@@ -10,8 +10,9 @@ interface Frame {
   collapse?: boolean;
 }
 
-const { parseFrames, firstAppFrame, metroUrlFromFrames, symbolicate, upgradeSource, upgradeTreeSources } =
+const { parseFrames, firstAppFrame, metroUrlFromFrames, symbolicate, upgradeSource, upgradeTreeSources, isLocalNetwork } =
   symbolicateModule as {
+    isLocalNetwork: (url: string) => boolean;
     parseFrames: (frames: string[]) => Frame[];
     firstAppFrame: (frames: unknown[]) => Frame | null;
     metroUrlFromFrames: (frames: unknown[], fallback?: string) => string;
@@ -102,6 +103,55 @@ describe("metroUrlFromFrames", () => {
   });
 });
 
+/**
+ * Where a stack may be sent.
+ *
+ * Loopback alone was too narrow and broke the feature everywhere it
+ * matters: Expo derives the bundle URL from hostUri, which is the LAN
+ * address as soon as the app runs on a device or on a normally launched
+ * simulator. Symbolication was refused, the source stayed null, and it
+ * only ever worked on a loopback launch, which is how it passed review.
+ */
+describe("isLocalNetwork", () => {
+  it("accepts loopback and the private ranges Metro really runs on", () => {
+    for (const url of [
+      "http://127.0.0.1:8081",
+      "http://localhost:8081",
+      "http://192.168.2.86:8081",
+      "http://10.0.0.5:8081",
+      "http://172.16.4.2:8081",
+      "http://172.31.255.1:8081",
+      "http://169.254.1.1:8081",
+      "http://macbook.local:8081",
+    ]) {
+      expect(isLocalNetwork(url), url).toBe(true);
+    }
+  });
+
+  it("refuses anything that would send a stack off the local network", () => {
+    for (const url of [
+      "https://evil.example.com/x",
+      "http://8.8.8.8:8081",
+      "http://172.32.0.1:8081",
+      "ftp://127.0.0.1",
+    ]) {
+      expect(isLocalNetwork(url), url).toBe(false);
+    }
+  });
+
+  // A public domain that merely starts like a private address. Prefix
+  // matching on the hostname string accepted it.
+  it("refuses a public domain disguised as a private address", () => {
+    expect(isLocalNetwork("http://192.168.2.86.evil.com")).toBe(false);
+    expect(isLocalNetwork("http://10.0.0.1.attacker.net")).toBe(false);
+    expect(isLocalNetwork("http://notlocal.localdomain")).toBe(false);
+  });
+
+  it("refuses an octet out of range rather than parsing it loosely", () => {
+    expect(isLocalNetwork("http://192.168.2.999")).toBe(false);
+  });
+});
+
 describe("symbolicate", () => {
   const metroAnswer = (stack: unknown) => ({
     ok: true,
@@ -134,7 +184,7 @@ describe("symbolicate", () => {
     });
     expect(called).toBe(false);
     expect(result.ok).toBe(false);
-    expect(result.reason).toContain("non-local");
+    expect(result.reason).toContain("outside the local network");
   });
 
   it("degrades when Metro is not running", async () => {

@@ -2185,8 +2185,13 @@
       const response = await fetch(`/mirror/sources?token=${encodeURIComponent(hubToken)}`);
       const data = await response.json();
       mirror.sources = data.sources ?? [];
+      // The hub explains WHY there is nothing to mirror. Dropping it left
+      // an empty panel and no way to learn that a device can be connected
+      // to the hub and still be impossible to capture.
+      mirror.hint = data.hint ?? null;
     } catch {
       mirror.sources = [];
+      mirror.hint = null;
     }
     // "App" source: real-time streaming via react-native-view-shot,
     // works everywhere in Expo Go (including physical iPhone over Wi-Fi)
@@ -2202,6 +2207,10 @@
       ? mirror.sources.map((s) => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join("")
       : `<option value="">No source detected</option>`;
     $("mirrorToggle").disabled = !mirror.sources.length;
+    if (!mirror.sources.length && mirror.hint) {
+      $("mirrorEmpty").textContent = mirror.hint;
+      $("mirrorEmpty").style.display = "";
+    }
     return mirror.sources;
   };
 

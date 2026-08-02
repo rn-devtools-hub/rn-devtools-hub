@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.rn-devtools-hub/rn-devtools-hub",
+  "title": "rn-devtools-hub",
+  "description": "Drive a running React Native or Expo app from inside its JavaScript runtime: semantic UI perception with source locations, actions through the app's own props instead of coordinates, structured assertions, deterministic clock and network, visual regression with an explanation, and correlated session export. Local only, zero dependencies.",
+  "version": "0.6.0",
+  "websiteUrl": "https://rn-devtools-hub.github.io/rn-devtools-hub/",
+  "repository": {
+    "url": "https://github.com/rn-devtools-hub/rn-devtools-hub",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "rn-devtools-hub",
+      "version": "0.6.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://127.0.0.1:8973/mcp"
+      }
+    }
+  ]
+}

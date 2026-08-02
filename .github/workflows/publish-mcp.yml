@@ -4,9 +4,12 @@ name: Publish to MCP Registry
 # server's metadata with registry.modelcontextprotocol.io. Authentication
 # is OIDC, so no token is stored anywhere: GitHub vouches for the
 # io.github.rn-devtools-hub namespace directly.
+# A tag pushed by release-it carries the GITHUB_TOKEN, and GitHub refuses
+# to trigger workflows from it (loop protection). Waiting on a tag push
+# therefore never fires, which is exactly what happened on v0.7.1, so
+# release.yml calls this job directly instead.
 on:
-  push:
-    tags: ["v*"]
+  workflow_call:
   workflow_dispatch:
 
 permissions:

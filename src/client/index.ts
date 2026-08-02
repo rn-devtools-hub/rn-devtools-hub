@@ -18,11 +18,13 @@
  *   devtools.attachOriginTracking()           // call-site frames on network events
  *   devtools.registerPreview(name, factory)   // component an agent can mount in situ
  *   devtools.registerStore(name, adapter)     // state an agent can read and write
+ *   devtools.attachDeterminism()              // controlled clock and network (JS level)
  *   devtools.markScreenReady("Login")         // "screen ready" signal for agents
  */
 
 import { installUiAutomation, type AutomationApi } from "./automation";
 import { installRuntimeContext } from "./context";
+import { installDeterminism } from "./determinism";
 import { installPreviews, type PreviewFactory, type PreviewRegistry } from "./preview";
 import { captureOrigin } from "./source";
 import { installStateAccess, type StoreAdapter } from "./state";
@@ -54,6 +56,21 @@ class Devtools {
   private consoleAttached = false;
   private startedAt = Date.now();
   private trackOrigin = false;
+  private determinism: ReturnType<typeof installDeterminism> | null = null;
+
+  /**
+   * Enables the controlled clock and controlled network.
+   *
+   * Deterministic at the JS level only: Date and the requests going
+   * through wrapFetch. Native animations and Reanimated read native
+   * clocks and are unaffected, which is stated rather than implied.
+   */
+  attachDeterminism(): void {
+    if (!this.enabled || this.determinism) return;
+    this.determinism = installDeterminism({
+      onCommand: (command, handler) => this.transport?.onCommand(command, handler),
+    });
+  }
 
   /**
    * Puts a call site on the event bus, not only on the UI tree: each
@@ -310,6 +327,37 @@ class Devtools {
         origin: self.origin(),
       });
 
+      const plan = self.determinism?.network.plan(url, method) ?? null;
+      if (plan?.delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, plan.delayMs));
+      }
+      if (plan?.fail) {
+        self.emit("network.error", {
+          requestId,
+          source: label,
+          status: null,
+          durationMs: Date.now() - start,
+          message: plan.fail,
+          mocked: true,
+        });
+        throw new Error(plan.fail);
+      }
+      if (plan?.mock) {
+        // A mocked response still goes on the bus, flagged: an agent must
+        // never mistake a fixture for the real backend
+        self.emit("network.response", {
+          requestId,
+          source: label,
+          status: plan.mock.status,
+          durationMs: Date.now() - start,
+          mocked: true,
+        });
+        return new Response(
+          typeof plan.mock.body === "string" ? plan.mock.body : JSON.stringify(plan.mock.body ?? null),
+          { status: plan.mock.status, headers: { "Content-Type": "application/json" } }
+        ) as never;
+      }
+
       try {
         const response = await fetchImpl.apply(this, args as never);
         self.emit("network.response", {
@@ -465,6 +513,8 @@ export { resolveSource, componentNameOf } from "./source";
 export { PREVIEW_OUTLET_TEST_ID } from "./preview";
 export type { PreviewFactory } from "./preview";
 export { zustandStore, reduxStore, reactQueryStore, readPath, applyPatch } from "./state";
+export { conditionProfile, matchRule, createClock, createNetworkControl } from "./determinism";
+export type { NetworkRule, NetworkCondition } from "./determinism";
 export type { StoreAdapter } from "./state";
 export type { SourceLocation, SourceVia } from "./source";
 export type { RuntimeContext, RendererInfo } from "./context";

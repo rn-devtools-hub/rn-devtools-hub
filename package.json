@@ -63,7 +63,8 @@
     "src/cli",
     "assets/logo.svg",
     "plugins",
-    "server.json"
+    "server.json",
+    "smithery.yaml"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

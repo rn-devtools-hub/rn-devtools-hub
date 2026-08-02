@@ -62,7 +62,9 @@
     "assets/logo.svg",
     "plugins",
     "server.json",
-    "smithery.yaml"
+    "smithery.yaml",
+    ".agents",
+    ".codex-plugin"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

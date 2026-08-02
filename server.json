@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.rn-devtools-hub/rn-devtools-hub",
   "title": "rn-devtools-hub",
-  "description": "Drive a running React Native or Expo app from inside its JavaScript runtime: semantic UI perception with source locations, actions through the app's own props instead of coordinates, structured assertions, deterministic clock and network, visual regression with an explanation, and correlated session export. Local only, zero dependencies.",
+  "description": "Drive a running React Native or Expo app from inside its JS runtime: see, act, prove.",
   "version": "0.7.0",
   "websiteUrl": "https://rn-devtools-hub.github.io/rn-devtools-hub/",
   "repository": {

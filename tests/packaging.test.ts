@@ -81,6 +81,17 @@ describe("MCP registry manifest", () => {
     expect(server.version).toBe(pkg.version);
   });
 
+  // The registry enforces these and rejects with a 422 AFTER the tag and
+  // the npm publish already happened, so the limits are asserted here
+  // rather than discovered by a failed release
+  it("respects the registry's field limits", () => {
+    expect(server.description.length).toBeGreaterThan(0);
+    expect(server.description.length).toBeLessThanOrEqual(100);
+    expect(server.title.length).toBeLessThanOrEqual(100);
+    expect(server.name.length).toBeLessThanOrEqual(200);
+    expect(server.name).toMatch(/^[a-zA-Z0-9.-]+\/[a-zA-Z0-9._-]+$/);
+  });
+
   it("ships the plugin and the manifest to npm consumers", () => {
     expect(pkg.files).toContain("plugins");
     expect(pkg.files).toContain("server.json");

@@ -748,6 +748,8 @@
         storageWrites: [],
         storageKeys: [],
         capabilities: null,
+        framesSeen: 0,
+        frameTruncated: false,
         endpoints: null,
         appInfo: null,
         netInfo: null,
@@ -847,6 +849,18 @@
         case "actions.register": store.actions = p.actions || []; break;
         case "capabilities": store.capabilities = p; break;
         case "screen.frame":
+          /**
+           * Receiving a frame IS the capability. Requiring a separate
+           * `capabilities` declaration meant a glue that streams frames but
+           * never declares itself got "No source detected" forever, which
+           * is exactly what a hand-written glue does.
+           */
+          if (p?.base64) {
+            store.framesSeen = (store.framesSeen ?? 0) + 1;
+            // truncateForWire marks what it cut; a cut frame is a corrupt
+            // JPEG and silently renders nothing
+            store.frameTruncated = String(p.base64).includes("[truncated");
+          }
           // Real-time app stream: displayed directly, no history
           if (deviceId === state.selectedDevice && p?.base64) {
             const mirrorImg = document.getElementById("mirrorImage");
@@ -2195,7 +2209,9 @@
     }
     // "App" source: real-time streaming via react-native-view-shot,
     // works everywhere in Expo Go (including physical iPhone over Wi-Fi)
-    if (current().capabilities?.viewShotAvailable) {
+    const canCaptureItself =
+      current().capabilities?.viewShotAvailable || (current().framesSeen ?? 0) > 0;
+    if (canCaptureItself) {
       mirror.sources.push({
         id: "app:viewshot",
         label: "Live app (view-shot)",
@@ -2207,6 +2223,13 @@
       ? mirror.sources.map((s) => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join("")
       : `<option value="">No source detected</option>`;
     $("mirrorToggle").disabled = !mirror.sources.length;
+    if (current().frameTruncated) {
+      $("mirrorEmpty").textContent =
+        "Frames are arriving truncated, so the image cannot be decoded. The glue is sending them " +
+        "with devtools.emit, which caps payloads at 20 KB; screen frames need devtools.emitRaw.";
+      $("mirrorEmpty").style.display = "";
+      return mirror.sources;
+    }
     if (!mirror.sources.length && mirror.hint) {
       $("mirrorEmpty").textContent = mirror.hint;
       $("mirrorEmpty").style.display = "";
@@ -2509,7 +2532,7 @@
     const simCount = (data.sources ?? []).filter((s) => s.kind === "ios-simulator").length;
 
     // App connected with screen capture (view-shot)
-    const appLive = !!current().capabilities?.viewShotAvailable &&
+    const appLive = (!!current().capabilities?.viewShotAvailable || (current().framesSeen ?? 0) > 0) &&
       state.devices.some((d) => d.id === state.selectedDevice && d.connected);
     badges.push(`<span class="cap-badge ${appLive ? "on" : ""}"
       title="${appLive ? "App mirror available (view-shot)" : "App not connected or view-shot missing"}">App mirror</span>`);

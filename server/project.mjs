@@ -119,6 +119,8 @@ export const declaredContext = (projectRoot) => {
   return {
     projectDir: projectRoot,
     name: manifest.name ?? null,
+    expoName: expoConfig?.name ?? null,
+    slug: expoConfig?.slug ?? null,
     version: manifest.version ?? null,
     packageManager: detectPackageManager(projectRoot),
     packages,
@@ -223,6 +225,26 @@ export const compareContexts = (declared, runtime) => {
       severity: "high",
       hint: "__DEV__ is false: this is a release bundle. UI automation needs the React DevTools hook, which release builds strip.",
     });
+  }
+
+  /**
+   * The hub reads the project from its own working directory while the
+   * device announces whatever app it runs. With several apps on several
+   * ports, connecting to the wrong hub reads another project entirely and
+   * nothing in the answer would say so.
+   */
+  if (runtime.appName && declared.name) {
+    const normalize = (value) => String(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+    const known = [declared.name, declared.expoName, declared.slug].filter(Boolean).map(normalize);
+    if (known.length && !known.includes(normalize(runtime.appName))) {
+      divergences.push({
+        field: "app",
+        declared: declared.name,
+        runtime: runtime.appName,
+        severity: "high",
+        hint: `This hub serves ${declared.projectDir}, but the connected device runs "${runtime.appName}". Everything it reports is about another project. Launch one hub per project, each on its own port.`,
+      });
+    }
   }
 
   if (runtime.appOwnership === "expo" && declared.plugins?.length) {

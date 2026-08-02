@@ -457,7 +457,7 @@
 <body>
   <header>
     <div class="conn-dot" id="connDot"></div>
-    <h1>rn-devtools-hub <span>local inspector</span></h1>
+    <h1>rn-devtools-hub <span id="hubProject">local inspector</span></h1>
     <select id="deviceSelect"><option value="">No device</option></select>
     <span class="dev-mode-badge" id="devModeBadge" style="display:none"></span>
     <span id="capBadges" style="display:flex; gap:6px"></span>
@@ -2026,11 +2026,27 @@
     </div>`;
   };
 
+  /**
+   * Which project this hub serves, in the header.
+   *
+   * The hub reads the project from its own working directory. With several
+   * apps on several ports there is otherwise nothing on screen saying
+   * which dashboard is which, and two of them look identical.
+   */
+  const renderHubProject = (declared) => {
+    const el = $("hubProject");
+    if (!el || !declared) return;
+    el.textContent = declared.name ?? declared.projectDir ?? "local inspector";
+    el.title = declared.projectDir ?? "";
+  };
+
   const refreshProjectContext = async () => {
     try {
       const id = current()?.id;
       const query = `token=${encodeURIComponent(hubToken)}${id ? `&deviceId=${encodeURIComponent(id)}` : ""}`;
-      renderProjectContext(await (await fetch(`/project/context?${query}`)).json());
+      const data = await (await fetch(`/project/context?${query}`)).json();
+      renderHubProject(data.declared);
+      renderProjectContext(data);
     } catch {
       // The hub may be restarting; the panel simply stays as it was
     }

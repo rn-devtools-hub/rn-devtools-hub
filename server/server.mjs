@@ -30,6 +30,15 @@ import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, b
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
 const PROJECT_ROOT = process.cwd();
+/** Read once: it names the project every answer from this hub is about */
+const PROJECT_NAME = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(join(PROJECT_ROOT, "package.json"), "utf-8"));
+    return pkg.name ?? PROJECT_ROOT.split(sep).pop() ?? null;
+  } catch {
+    return PROJECT_ROOT.split(sep).pop() ?? null;
+  }
+})();
 
 const PORT = (() => {
   const index = process.argv.indexOf("--port");
@@ -561,10 +570,28 @@ const waitForAnyDeviceEvent = ({ type, timeoutMs }) => new Promise((resolve) => 
   eventWaiters.add(waiter);
 });
 
-const pickDevice = (deviceId) => (deviceId
-  ? [String(deviceId), devices.get(String(deviceId))]
-  : Array.from(devices.entries()).find(([, device]) => device.ws.readyState === 1)
-    ?? Array.from(devices.entries())[0]) ?? [];
+/**
+ * Which device a tool acts on.
+ *
+ * Silently taking the first connected one is wrong as soon as two are
+ * attached, which happens the moment a simulator and an Expo Go session
+ * are both up: the agent's taps land on whichever registered first, and
+ * nothing says so. Ambiguity is refused with the list instead, the same
+ * way ui_act refuses an ambiguous selector.
+ */
+const pickDevice = (deviceId) => {
+  if (deviceId) return [String(deviceId), devices.get(String(deviceId))];
+  const connected = Array.from(devices.entries()).filter(([, d]) => d.ws.readyState === 1);
+  if (connected.length > 1) {
+    const list = connected
+      .map(([id, d]) => `${id} (${d.appName} on ${d.deviceName})`)
+      .join(", ");
+    throw new Error(
+      `${connected.length} devices are connected, so the target is ambiguous: pass deviceId. Connected: ${list}`
+    );
+  }
+  return connected[0] ?? Array.from(devices.entries())[0] ?? [];
+};
 
 /** Android exposes uiautomator; iOS needs AXe, and its absence is
  * reported rather than silently returning an empty tree */
@@ -593,7 +620,15 @@ const captureAccessibilityTree = async (target) => {
 };
 
 const handleMcpTool = async (name, args = {}) => {
-  if (name === "list_devices") return Array.from(devices.entries()).map(deviceSummary);
+  if (name === "list_devices") {
+    // An agent talking to a port has no other way to learn which project
+    // this hub serves. With several apps on several ports, that is the
+    // difference between reading the right project and another one.
+    return {
+      project: { name: PROJECT_NAME, directory: PROJECT_ROOT, port: PORT },
+      devices: Array.from(devices.entries()).map(deviceSummary),
+    };
+  }
   // Host-side native tools (simctl/adb): no connected JS device needed
   if (NATIVE_TOOLS.some((tool) => tool.name === name)) {
     return handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
@@ -643,7 +678,9 @@ const handleMcpTool = async (name, args = {}) => {
     let runtime = null;
     if (contextDevice && contextDevice.ws.readyState === 1) {
       const response = await sendDeviceCommand(contextDeviceId, "context.runtime", {});
-      if (!response.error) runtime = response.result ?? null;
+      // appName comes from the hub's own registry, not from the runtime:
+      // it is what the device announced when it connected
+      if (!response.error) runtime = { ...(response.result ?? {}), appName: contextDevice.appName };
     }
     return projectContext(PROJECT_ROOT, runtime);
   }

@@ -8,6 +8,7 @@ const { acceptKey, encodeFrame, decodeFrames, which } = runtime as {
   decodeFrames: (buffer: Buffer) => {
     frames: Array<{ fin: boolean; opcode: number; payload: Buffer }>;
     rest: Buffer;
+    oversized?: number;
   };
   which: (command: string) => string | null;
 };
@@ -129,5 +130,32 @@ describe("which", () => {
 
   it("returns null for a command that does not", () => {
     expect(which("definitely-not-a-real-binary-xyz")).toBeNull();
+  });
+});
+
+/**
+ * A client declares its payload length; nothing obliges it to send the
+ * payload. Without a ceiling the buffer grows until the process dies, and
+ * the WebSocket needs no credentials to get that far.
+ */
+describe("frame size ceiling", () => {
+  const declare = (length: bigint): Buffer => {
+    const header = Buffer.alloc(10);
+    header[0] = 0x81;
+    header[1] = 127;
+    header.writeBigUInt64BE(length, 2);
+    return header;
+  };
+
+  it("reports an oversized declared length instead of waiting for it", () => {
+    const result = decodeFrames(declare(2n ** 40n));
+    expect(result.oversized).toBe(Number(2n ** 40n));
+    expect(result.frames).toHaveLength(0);
+  });
+
+  it("still accepts a large but legitimate payload", () => {
+    const result = decodeFrames(declare(1_000_000n));
+    expect(result.oversized).toBeUndefined();
+    expect(result.frames).toHaveLength(0); // body not sent yet, which is normal
   });
 });

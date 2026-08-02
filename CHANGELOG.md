@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.4](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.3...v0.11.4) (2026-08-02)
+
+### Bug Fixes
+
+* expose an input's value, retry query_ui, align state naming, trust boot state ([23fee16](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/23fee16ee71be3df9b70b1691b684897babca8c7))
+
 ## [0.11.3](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.2...v0.11.3) (2026-08-02)
 
 ### Bug Fixes

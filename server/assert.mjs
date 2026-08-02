@@ -117,10 +117,13 @@ export const evaluateElementAssertion = (kind, queryResult, options = {}) => {
   }
   if (kind === "text") {
     const needle = String(options.value ?? "");
+    // An input's content is `value`, a Text's is `text`. Checking only one
+    // makes the assertion silently unusable on half the elements.
+    const contentOf = (match) => [match.text, match.value].filter((part) => typeof part === "string");
     const found = matches.filter((match) =>
-      options.exact
-        ? String(match.text ?? "") === needle
-        : String(match.text ?? "").includes(needle)
+      contentOf(match).some((content) =>
+        options.exact ? content === needle : content.includes(needle)
+      )
     );
     return { ok: found.length > 0, matches: found.length ? found : matches };
   }

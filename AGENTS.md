@@ -67,6 +67,15 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
   would contradict the argument printed on the box.
 - Sessions and baselines are written under `.rn-devtools/` in the host
   project, which is gitignored and never committed.
+- Measurement must work on BOTH architectures. On Fabric the host fiber's
+  stateNode is not the instance: it holds `{ node, canonical }` and the
+  measurable instance is `canonical.publicInstance`, created lazily, with
+  `nativeFabricUIManager` as the fallback. Reading only `stateNode` returns
+  null for every element on any New Architecture app.
+- Source locations on React 19 resolve to owner stacks, which are BUNDLE
+  positions. The hub symbolicates them against Metro before an agent sees
+  them; one stack is not enough, the owner chain must be walked, or every
+  answer lands in node_modules.
 - Commits follow Conventional Commits (commitlint rejects them otherwise).
 - Branch from `develop` and open PRs against `develop`; `main` only receives
   release merges and hotfixes.
@@ -153,8 +162,19 @@ only). Tools:
   permissions, cold-launch on the Metro server with onboarding skipped,
   wait until the app connects to the hub.
 
-Registration on the Claude Code side:
+Two transports. The hub speaks streamable HTTP; `npx rn-devtools-hub mcp`
+bridges stdio to it for clients that speak nothing else, starting the hub
+on demand in the current directory.
+
+Registration on the Claude Code side, either:
 `claude mcp add rn-devtools --transport http http://127.0.0.1:8973/mcp`
+or install the plugin, which registers it and adds the skill:
+`/plugin marketplace add rn-devtools-hub/rn-devtools-hub`
+
+The dashboard's Overview panel leads with the same project context the
+`get_project_context` tool returns, and with whatever the project and the
+running app disagree on. Check it before debugging anything that behaves
+impossibly.
 
 Recommended agent loop: `session_start`, then `ui_act` (by role/testID),
 then `wait_for_event` on the expected effect, then `query_ui` to verify.

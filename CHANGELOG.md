@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.2](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.1...v0.11.2) (2026-08-02)
+
+### Bug Fixes
+
+* **symbolicate:** allow Metro on the local network, not just loopback ([491d264](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/491d264bd10d4aebf90d7d467b547c01d1283383))
+
 ## [0.11.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.0...v0.11.1) (2026-08-02)
 
 ### Bug Fixes

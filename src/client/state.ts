@@ -185,24 +185,40 @@ export const installStateAccess = (
   registry = createStoreRegistry()
 ): ReturnType<typeof createStoreRegistry> => {
   host.onCommand("state.list", () => ({ stores: registry.names() }));
+  // The SDK registers with `name`, the MCP tool takes `store`, and a patch
+  // is `value` on one side. Guessing wrong costs a round trip and an
+  // unhelpful error, so both spellings are accepted.
+  const storeOf = (payload: Record<string, unknown>): string | undefined => {
+    const raw = payload.store ?? payload.name;
+    return typeof raw === "string" && raw ? raw : undefined;
+  };
+
   host.onCommand("state.get", (rawPayload) => {
     const payload = (rawPayload ?? {}) as Record<string, unknown>;
-    if (!payload.store) return { stores: registry.names() };
+    if (!storeOf(payload)) return { stores: registry.names() };
     return {
-      store: payload.store,
+      store: storeOf(payload),
       path: payload.path ?? null,
-      value: registry.get(String(payload.store), payload.path ? String(payload.path) : undefined),
+      value: registry.get(storeOf(payload)!, payload.path ? String(payload.path) : undefined),
     };
   });
   host.onCommand("state.set", (rawPayload) => {
     const payload = (rawPayload ?? {}) as Record<string, unknown>;
-    if (!payload.store) throw new Error("state.set needs a store name");
+    const store = storeOf(payload);
+    if (!store) {
+      throw new Error(
+        `state.set needs the store to write, as "store" (or "name"). Known: ${registry
+          .names()
+          .map((entry) => entry.name)
+          .join(", ") || "none"}`
+      );
+    }
     return {
-      store: payload.store,
+      store,
       path: payload.path ?? null,
       result: registry.set(
-        String(payload.store),
-        payload.value,
+        store,
+        "value" in payload ? payload.value : payload.patch,
         payload.path ? String(payload.path) : undefined
       ),
     };

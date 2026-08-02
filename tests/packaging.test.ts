@@ -46,3 +46,73 @@ describe("SDK dependencies", () => {
     expect(pkg.dependencies ?? {}).toEqual({});
   });
 });
+
+/**
+ * Registry and plugin contract.
+ *
+ * The MCP registry verifies that the npm package claims the server name it
+ * is published under, and it rejects a server.json whose version does not
+ * match the package it points at. Both are silent-at-authoring, loud-at-
+ * publishing failures, so they are asserted here instead.
+ */
+describe("MCP registry manifest", () => {
+  const server = JSON.parse(readFileSync(join(root, "server.json"), "utf-8"));
+
+  it("claims the registry name from package.json, which proves ownership", () => {
+    expect(pkg.mcpName).toBe(server.name);
+    // GitHub-based authentication only accepts this namespace
+    expect(server.name.startsWith("io.github.rn-devtools-hub/")).toBe(true);
+  });
+
+  it("points at the npm package it is published alongside", () => {
+    const npmPackage = server.packages.find(
+      (entry: { registryType: string }) => entry.registryType === "npm"
+    );
+    expect(npmPackage.identifier).toBe(pkg.name);
+    expect(npmPackage.registryBaseUrl).toBe("https://registry.npmjs.org");
+  });
+
+  it("keeps the manifest version aligned with the package version", () => {
+    const npmPackage = server.packages.find(
+      (entry: { registryType: string }) => entry.registryType === "npm"
+    );
+    expect(server.version).toBe(npmPackage.version);
+    // release-it bumps package.json; this catches the manifest left behind
+    expect(server.version).toBe(pkg.version);
+  });
+
+  it("ships the plugin and the manifest to npm consumers", () => {
+    expect(pkg.files).toContain("plugins");
+    expect(pkg.files).toContain("server.json");
+  });
+});
+
+describe("Claude Code plugin", () => {
+  const marketplace = JSON.parse(
+    readFileSync(join(root, ".claude-plugin", "marketplace.json"), "utf-8")
+  );
+
+  it("lists a plugin whose source directory really exists", () => {
+    const entry = marketplace.plugins[0];
+    expect(entry.source).toBe("./plugins/rn-devtools-hub");
+    const plugin = JSON.parse(
+      readFileSync(join(root, "plugins/rn-devtools-hub/.claude-plugin/plugin.json"), "utf-8")
+    );
+    expect(plugin.name).toBe(entry.name);
+  });
+
+  it("registers the MCP server on the port the hub actually listens on", () => {
+    const mcp = JSON.parse(readFileSync(join(root, "plugins/rn-devtools-hub/.mcp.json"), "utf-8"));
+    expect(mcp.mcpServers["rn-devtools"].url).toContain("8973");
+  });
+
+  it("carries a skill with the frontmatter Claude Code needs to route it", () => {
+    const skill = readFileSync(
+      join(root, "plugins/rn-devtools-hub/skills/rn-devtools-hub/SKILL.md"),
+      "utf-8"
+    );
+    expect(skill.startsWith("---\n")).toBe(true);
+    expect(skill).toMatch(/^name: rn-devtools-hub$/m);
+    expect(skill).toMatch(/^description: .{40,}/m);
+  });
+});

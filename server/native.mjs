@@ -404,16 +404,43 @@ export const tapNative = async ({ target, x, y, label }) => {
 // Device state helpers
 // ====================================================================
 
+/** Authoritative answer, unlike an exit code: ask simctl what state it is in */
+const simulatorState = async (udid) => {
+  const result = await runCommand(["xcrun", "simctl", "list", "devices", "-j"], 15000);
+  try {
+    const parsed = JSON.parse(textOf(result));
+    for (const runtime of Object.values(parsed.devices ?? {})) {
+      for (const sim of runtime) if (sim.udid === udid) return sim.state;
+    }
+  } catch {
+    // unreadable output, treat as unknown
+  }
+  return null;
+};
+
 export const bootDevice = async ({ target }) => {
   const { kind, id } = parseTarget(target);
   requireTool(kind);
   if (kind === "sim") {
-    const result = await runCommand(["xcrun", "simctl", "boot", id], 30000);
+    const result = await runCommand(["xcrun", "simctl", "boot", id], 60000);
+    // A cold boot regularly outlives the command timeout, which kills the
+    // process and leaves a non-zero exit while the simulator carries on and
+    // finishes booting. Reporting that as a failure is simply wrong, so the
+    // device's own state decides.
     if (!result.ok && !/already booted|current state: Booted/i.test(result.error)) {
-      fail(result, "simctl boot");
+      let state = await simulatorState(id);
+      for (let waited = 0; state !== "Booted" && waited < 30000; waited += 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        state = await simulatorState(id);
+      }
+      if (state !== "Booted") {
+        throw new Error(
+          `simctl boot failed and the device is still ${state ?? "unknown"}: ${result.error || textOf(result) || "no output"}`
+        );
+      }
     }
     await runCommand(["open", "-a", "Simulator"]); // show the window
-    return { ok: true, target: `sim:${id}` };
+    return { ok: true, target: `sim:${id}`, state: "Booted" };
   }
   throw new Error(
     "Booting an Android emulator needs the emulator binary and an AVD name; start it manually (emulator -avd <name>) or use an already-running device"

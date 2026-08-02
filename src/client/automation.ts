@@ -66,6 +66,9 @@ export interface SerializeOptions {
   includeSource?: boolean;
 }
 
+/** Long enough for React to commit a state update triggered by onChangeText */
+const COMMIT_SETTLE_MS = 50;
+
 const HOST_TYPE_ALIASES: Record<string, string> = {
   RCTView: "View",
   RCTText: "Text",
@@ -669,13 +672,36 @@ interface RootTracker {
   hookFound: boolean;
 }
 
+/**
+ * What an agent sees for one element.
+ *
+ * `value` was missing here while being present in get_ui_tree, so the two
+ * calls that make up the actual loop, query_ui and the target returned by
+ * ui_act, could never show what a field contains. An agent typing into an
+ * input then had no way to prove the result from the tree and fell back to
+ * a screenshot, which is the exact cost this tool exists to remove.
+ *
+ * A TextInput's content is `value`, never `text`: `text` is rendered
+ * children, and an input has none. Both are returned so it does not matter
+ * which one is read.
+ */
 const describeMatch = async (fiber: FiberLike): Promise<Record<string, unknown>> => {
   const props = propsOf(fiber);
+  const type = prettyHostType(String(fiber.type ?? "?"));
+  const input = isInputType(type);
+  const value = props?.value ?? props?.text ?? props?.defaultValue;
   return {
-    type: prettyHostType(String(fiber.type ?? "?")),
+    type,
     testID: stringProp(props, "testID", "data-testid") ?? null,
     label: stringProp(props, "accessibilityLabel", "aria-label") ?? null,
     text: collectSubtreeText(fiber, 30) || null,
+    ...(input
+      ? {
+          value: typeof value === "string" ? value : null,
+          placeholder: stringProp(props, "placeholder") ?? null,
+          editable: props?.editable !== false,
+        }
+      : {}),
     rect: await measureFiber(fiber),
     // A match without a source turns editing into a repo-wide grep
     source: resolveSource(fiber),
@@ -871,6 +897,7 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
       };
     }
     const target = matches[Math.min(index, matches.length - 1)];
+    const before = tracker.generation;
     const result = performAct(target, {
       action,
       text: typeof payload.text === "string" ? payload.text : undefined,
@@ -878,12 +905,32 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
       x: Number(payload.x) || undefined,
       y: Number(payload.y) || undefined,
     });
+    /**
+     * Typing goes through onChangeText, so the new value only exists after
+     * React commits. Waiting is not enough: on commit React swaps to the
+     * fiber's alternate, so the reference held here keeps the OLD props and
+     * reports the value from before the edit. The selector has to be run
+     * again to reach the fresh fiber.
+     */
+    let described = target;
+    if (action === "type" || action === "clear") {
+      await new Promise((resolve) => setTimeout(resolve, COMMIT_SETTLE_MS));
+      for (const fiber of liveRootFibers(tracker)) {
+        const fresh = queryFibers(fiber, selector, index + 1, includeHidden);
+        if (fresh.length > index) {
+          described = fresh[index];
+          break;
+        }
+      }
+    }
+
     return {
       ok: true,
       generation: tracker.generation,
+      committed: tracker.generation > before,
       action,
       detail: result.detail,
-      target: await describeMatch(target),
+      target: await describeMatch(described),
     };
   });
 

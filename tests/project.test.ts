@@ -178,11 +178,15 @@ describe("missingCapabilities", () => {
     expect(gaps.find((gap) => gap.missing === "react-native-view-shot")).toBeUndefined();
   });
 
-  it("does not promise the capability just because the package is added", () => {
-    // It carries native code; installing it into a runtime that cannot
-    // load it changes nothing, and saying otherwise sends people looking
-    // for a bug that is not there
+  /**
+   * The note has to say that installing is enough, because the reflex
+   * otherwise is to assume a native rebuild and give up on a physical
+   * phone. react-native-view-shot is bundled into Expo Go, so the package
+   * plus a reload is the whole procedure.
+   */
+  it("says installing is enough, with no native build", () => {
     const gaps = missingCapabilities({ packages: {} });
-    expect(gaps[0].note).toMatch(/native code/);
+    expect(gaps[0].note).toMatch(/Expo Go/);
+    expect(gaps[0].note).toMatch(/no native build/i);
   });
 });

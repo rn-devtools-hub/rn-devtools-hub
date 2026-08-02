@@ -24,8 +24,12 @@ Follow docs/integration.md to the letter. Summary of the reliable procedure:
    appear in the selector within 5 seconds.
 
 Known pitfalls:
-- Never put large data in `emit` (truncated at 20 KB); for legitimate
-  binary data (screen frames), use `emitRaw`.
+- `emit` truncates at 20 KB. Protocol binary types (`screen.frame`) are
+  kept whole automatically, and anything else that gets truncated warns
+  once with the fix, because silent corruption of a payload is worse than
+  a dropped event: a truncated base64 frame is an undecodable image and a
+  blank panel with no error anywhere. Use `emitRaw` for your own binary
+  events.
 - The hub reads app.json and the assets from its cwd: launch it from the
   host project root. With SEVERAL projects at once, launch one hub per
   project on distinct ports (`--port`), otherwise the Design panel shows

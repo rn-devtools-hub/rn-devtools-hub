@@ -184,3 +184,48 @@ describe("redactHeaders", () => {
     expect(result.Accept).toBe("application/json");
   });
 });
+
+/**
+ * Silent corruption is the failure this prevents.
+ *
+ * A base64 frame sent with emit was truncated at 20 KB, which yields an
+ * undecodable JPEG and a blank mirror with no error anywhere. Asking every
+ * caller to remember emitRaw is a rule that gets forgotten, by a person or
+ * by an agent, so the SDK keeps protocol binary types whole and says so
+ * when it truncates anything else unexpectedly.
+ */
+describe("emit and binary payloads", () => {
+  const bigBase64 = "A".repeat(60000);
+
+  it("keeps a screen frame whole", () => {
+    devtools.stop();
+    devtools.init({ serverUrl: "ws://127.0.0.1:1", appName: "test" });
+    devtools.emit("screen.frame", { base64: bigBase64 });
+    const queued = devtools.__transport!["buffer" as never] as unknown as Array<{
+      type: string;
+      payload: { base64: string };
+    }>;
+    const frame = queued.find((event) => event.type === "screen.frame");
+    expect(frame!.payload.base64.length).toBe(60000);
+    expect(frame!.payload.base64).not.toContain("[truncated");
+    devtools.stop();
+  });
+
+  it("warns once, with the fix, when it truncates something else", () => {
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (message: string) => warnings.push(String(message));
+    try {
+      devtools.stop();
+      devtools.init({ serverUrl: "ws://127.0.0.1:1", appName: "test" });
+      devtools.emit("my.custom", { blob: bigBase64 });
+      devtools.emit("my.custom", { blob: bigBase64 });
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("emitRaw");
+      expect(warnings[0]).toContain("my.custom");
+    } finally {
+      console.warn = original;
+      devtools.stop();
+    }
+  });
+});

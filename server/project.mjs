@@ -279,7 +279,7 @@ export const missingCapabilities = (declared) => {
       missing: "react-native-view-shot",
       install: "npx expo install react-native-view-shot",
       affects: ["mirror panel over the network"],
-      note: "Only needed for a device the host cannot reach with adb or simctl. It carries native code, so a runtime that cannot load it will not gain the capability by installing it alone.",
+      note: "Only needed for a device the host cannot reach with adb or simctl, which is the usual case for a physical phone on Wi-Fi. Bundled into Expo Go, so installing it and reloading is enough: no native build.",
     });
   }
   return gaps;

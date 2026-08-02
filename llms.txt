@@ -1,17 +1,22 @@
 # rn-devtools-hub
 
-> Local inspector for React Native and Expo apps: a pure JavaScript SDK in
-> the app (inert in production, zero dependencies), a local hub (Bun, WebSocket),
-> a web dashboard. Panels: network, crashes, logs, storage, SQLite, React Query
-> cache, screens, uploads, remote actions, design (icons/splash/fonts),
-> screen mirror (view-shot, adb, iOS simulator). Local MCP server for
-> AI agent control. A Flipper alternative with no native dependency.
+> The agent runtime for React Native and Expo: a pure JavaScript SDK in the
+> app (inert in production, zero dependencies), a local hub (Bun, WebSocket),
+> a web dashboard, and a local MCP server. The SDK runs INSIDE the app's JS
+> runtime, so an agent perceives the UI as React sees it, gets the source file
+> and line behind each element, acts through the app's own props rather than
+> pixel coordinates, controls the clock and the network, and proves results
+> with assertions instead of screenshots. Dashboard panels: project context,
+> network, crashes, logs, storage, SQLite, React Query cache, screens,
+> uploads, remote actions, design, screen mirror.
 
 Key points to integrate the package into an app:
 - Install as a devDependency: `npm i -D rn-devtools-hub` (the hub requires Bun on the dev machine)
 - Start the hub from the host project root: `npx rn-devtools-hub`
 - In the app: `import { devtools } from "rn-devtools-hub/client"` in a glue file loaded via `if (__DEV__) require(...)`
-- API: init({serverUrl, appName, stableId}), emit, emitRaw, onCommand, attachAxios, wrapFetch, attachConsole, attachCrashReporting, startPerformanceSampler, registerAction, attachUiAutomation, markScreenReady
+- API: init({serverUrl, appName, stableId}), emit, emitRaw, onCommand, attachAxios, wrapFetch, attachConsole, attachCrashReporting, startPerformanceSampler, registerAction, attachUiAutomation, markScreenReady, attachDeterminism, attachOriginTracking, registerStore, registerPreview, onPreviewChange
+- Two transports: streamable HTTP on 127.0.0.1:8973/mcp, or `npx rn-devtools-hub mcp` for stdio-only clients
+- Claude Code: `/plugin marketplace add rn-devtools-hub/rn-devtools-hub` installs the server plus a skill that teaches an agent to chain the tools
 - The events/commands contract of each panel is in docs/protocol.md: implementing it is enough to feed the dashboard
 - Security: dashboard token, secret redaction, read-only SQLite, MCP on localhost only
 

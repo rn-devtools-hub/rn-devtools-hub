@@ -45,10 +45,10 @@
   <img class="logo" src="assets/logo.svg" alt="">
   <h1>rn-devtools-hub</h1>
   <p class="tagline">
-    Local inspector for React Native and Expo apps. Network, crashes, logs,
-    storage, SQLite, cache, screen mirror, remote actions and an MCP server,
-    streamed to a web dashboard. Zero native dependencies, inert in
-    production, your data stays on your machine.
+    The agent runtime for React Native. Your agent sees the app the way React
+    sees it, knows which file produced each element, acts without coordinates,
+    and proves that it works. Zero dependencies, inert in production, your data
+    stays on your machine.
   </p>
 
   <div class="links">
@@ -67,6 +67,16 @@ npx rn-devtools-hub
 
 # 3. In the app: 3 lines of glue, see the integration guide</pre>
 
+  <h2>From Claude Code</h2>
+  <pre>/plugin marketplace add rn-devtools-hub/rn-devtools-hub
+/plugin install rn-devtools-hub</pre>
+  <p>
+    That registers the MCP server and installs a skill that teaches an agent to
+    chain its tools. Clients that speak only stdio use
+    <code>npx rn-devtools-hub mcp</code>, which bridges to the hub and starts it
+    on demand.
+  </p>
+
   <h2>Screenshots</h2>
   <figure>
     <img src="assets/screenshots/overview.png" alt="Overview panel">
@@ -81,13 +91,22 @@ npx rn-devtools-hub
     <figcaption>Mirror: live device screen over adb with tap, swipe and keys</figcaption>
   </figure>
 
-  <h2>Why not Flipper, Reactotron, or a SaaS</h2>
+  <h2>What being inside the runtime buys you</h2>
+  <p>
+    The SDK runs inside your app's JavaScript runtime. An accessibility-driven
+    tool sees what the OS exposes; a WebDriver-driven one sees a black box.
+    Neither can read a component's props, call a handler, intercept a request
+    or write to a store. Everything below follows from that position.
+  </p>
   <table>
-    <tr><th></th><th>rn-devtools-hub</th><th>Flipper</th><th>Reactotron</th><th>SaaS (Vexo...)</th></tr>
-    <tr><td>Native dependencies</td><td>None</td><td>Mandatory (what killed it)</td><td>None</td><td>Native SDK</td></tr>
-    <tr><td>Interface</td><td>Browser, multi-device</td><td>Electron app</td><td>Desktop app</td><td>Cloud</td></tr>
-    <tr><td>Your data</td><td>Stays local</td><td>Local</td><td>Local</td><td>On their servers</td></tr>
-    <tr><td>Drivable by AI agents</td><td>Built-in MCP</td><td>No</td><td>No</td><td>No</td></tr>
+    <tr><th>The agent can</th><th>Because</th></tr>
+    <tr><td>Find an element by role and accessible name, then act on it</td><td>Actions go through the app's own props, not through pixels</td></tr>
+    <tr><td>Get the file and line behind each element</td><td>The location lives in React's dev bookkeeping, symbolicated against Metro</td></tr>
+    <tr><td>Prove a step without a screenshot</td><td>A screenshot cannot show a request that failed silently</td></tr>
+    <tr><td>Tell a stale native build from a code problem</td><td>Only the runtime knows what the binary actually is</td></tr>
+    <tr><td>Freeze the clock and the network</td><td>Date and fetch are in the runtime</td></tr>
+    <tr><td>Put the app in an exact state without walking ten screens</td><td>Stores are reachable directly</td></tr>
+    <tr><td>Explain a visual regression, not just score it</td><td>The changed region maps back to the component that owns it</td></tr>
   </table>
 
   <h2>For AI agents</h2>

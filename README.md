@@ -103,12 +103,35 @@ hub. Your data never leaves your machine.
 | Endpoints | Map of declared endpoints, calls, latencies |
 | Actions | Buttons driving the app: reload, clear caches, your custom actions |
 | Design | Icon, splash, fonts, sounds, identity (read from app.json and the assets) |
-| Mirror | Live app screen (view-shot), full Android via adb (tap, swipe, keyboard, Wi-Fi), iOS simulator via xcrun |
+| Mirror | Live app screen (needs react-native-view-shot in the app), full Android via adb (tap, swipe, keyboard, Wi-Fi), iOS simulator via xcrun |
+
+The Overview panel opens with the project context: what the project declares,
+what the app actually runs, and whatever the two disagree on. A stale native
+build is the most common way to lose an afternoon here, and it is named before
+you start reading code.
 
 Plus: multi-device with merged sessions, bug report export in Markdown (ready
 for a GitHub issue), real-time capability badges, and a local MCP server to
-drive everything from Claude, Cursor or any MCP client (`list_devices`,
-`get_recent_network`, `get_crashes`, `query_sqlite`, `run_action`...).
+drive everything from Claude, Cursor or any MCP client.
+
+## What an agent gets
+
+| Tool | What it answers |
+| --- | --- |
+| `get_project_context` | What the project declares, what it actually runs, and the contradictions. Call it first when anything behaves impossibly |
+| `get_ui_tree`, `query_ui` | The visible components, each carrying the source file and line that produced it |
+| `ui_act` | Tap, type, submit, scroll, by element and never by pixel |
+| `assert` | Proves a step: element kinds retry, event kinds catch a request that failed silently, a console error, an unhandled rejection |
+| `freeze_time`, `mock_network` | Deterministic at the JS level, so a scenario runs the same twice |
+| `get_state`, `set_state` | Put the app in an exact state without walking ten screens |
+| `render_component` | Mount a component inside the running app, under its real providers |
+| `snapshot_baseline`, `compare_snapshot` | A visual diff that names the component owning the changed region |
+| `export_session`, `export_flow` | One correlated timeline, and actions paired with the consequences they caused |
+| `audit_accessibility` | What React renders but the accessibility tree does not expose |
+
+Source locations survive React 19, where the location lives in owner stacks
+pointing into the bundle: the hub symbolicates them against Metro before the
+agent sees them.
 
 For AI agents, the hub also exposes runtime UI automation over MCP:
 `get_ui_tree` (semantic tree of the visible components, read from the React

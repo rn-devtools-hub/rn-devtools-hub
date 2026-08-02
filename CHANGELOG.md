@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.7.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.6.0...v0.7.0) (2026-08-02)
+
+### Features
+
+* **distribution:** ship a Claude Code plugin and register with MCP ([762ebac](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/762ebacb964b413d43ceab40aa425323caad1c6f))
+
 ## [0.6.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.5.0...v0.6.0) (2026-08-02)
 
 ### Features

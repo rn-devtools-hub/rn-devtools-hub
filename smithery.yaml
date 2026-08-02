@@ -1,0 +1,23 @@
+# Smithery configuration: https://smithery.ai/docs/build/project-config
+#
+# The hub is a LOCAL server. It reads the host project from its working
+# directory and shells out to adb and xcrun to reach the device, so it
+# cannot be hosted: it has to run on the same machine as the app. Smithery
+# lists it as a stdio server, and `rn-devtools-hub mcp` bridges stdio to
+# the hub's HTTP transport, starting the hub if it is not already up.
+startCommand:
+  type: stdio
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'rn-devtools-hub', 'mcp', '--port', String(config.port ?? 8973)]
+    })
+  configSchema:
+    type: object
+    properties:
+      port:
+        type: integer
+        default: 8973
+        description: Port the hub listens on. Change it only when running several projects at once.
+  exampleConfig:
+    port: 8973

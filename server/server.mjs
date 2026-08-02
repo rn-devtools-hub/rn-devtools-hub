@@ -461,8 +461,8 @@ const MCP_TOOLS = [
   },
   {
     name: "query_ui",
-    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Hidden navigator screens are skipped unless includeHidden.",
-    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, the current value of an input, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Retries while nothing matches (timeoutMs, default 1000) so a screen transition is not mistaken for a regression. Hidden navigator screens are skipped unless includeHidden.",
+    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, timeoutMs: { type: "integer", minimum: 0, maximum: 30000, description: "Retry while nothing matches, up to this deadline (default 1000). A UI is asynchronous and an empty answer during a transition reads like a regression. Pass 0 for a single immediate look." }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
@@ -540,7 +540,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_state",
-    description: "Writes a store, putting the app into an exact state without walking through ten screens. Only possible from inside the runtime, and what makes a recorded flow hermetic: start from an injected session instead of replaying a login. Redux is written by dispatching an action, React Query by query key.",
+    description: "Writes a store (the store name may be given as \"store\" or \"name\", the payload as \"value\" or \"patch\"), putting the app into an exact state without walking through ten screens. Only possible from inside the runtime, and what makes a recorded flow hermetic: start from an injected session instead of replaying a login. Redux is written by dispatching an action, React Query by query key.",
     inputSchema: { type: "object", required: ["store"], properties: { deviceId: { type: "string" }, store: { type: "string" }, path: { type: "string" }, value: {} }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
@@ -715,6 +715,27 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
     const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
     const { deviceId: _ignored, ...payload } = args;
+
+    /**
+     * A UI is asynchronous. query_ui answering "nothing matched" during a
+     * screen transition reads exactly like a regression, and reporting one
+     * that does not exist costs more than the wait. It now retries on an
+     * empty result, like assert does; pass timeoutMs: 0 to opt out.
+     */
+    if (name === "query_ui") {
+      const deadline = Date.now() + Math.min(Number(args.timeoutMs ?? 1000) || 0, 30000);
+      for (;;) {
+        const attempt = await sendDeviceCommand(deviceId, command, payload);
+        if (attempt.error) throw new Error(attempt.error);
+        if (attempt.result?.count > 0 || Date.now() >= deadline) {
+          for (const match of attempt.result?.matches ?? []) {
+            if (match.source) match.source = await upgradeSource(match.source, args.metroUrl ? { metroUrl: String(args.metroUrl) } : {});
+          }
+          return attempt.result;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
     // The cursor is read BEFORE the action: everything after it is a
     // consequence of the action, which is the whole pairing rule
     const cursorBefore = device.lastSeq ?? 0;

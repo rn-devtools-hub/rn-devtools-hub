@@ -2,7 +2,17 @@ import { describe, expect, it } from "vitest";
 // The hub is plain .mjs with no declarations: type the surface at the
 // call site rather than duplicating the module in a .d.ts
 // @ts-expect-error untyped hub module
-import { compareContexts as rawCompareContexts } from "../server/project.mjs";
+import { compareContexts as rawCompareContexts, missingCapabilities as rawMissing } from "../server/project.mjs";
+
+interface Gap {
+  capability: string;
+  missing: string;
+  install: string;
+  affects: string[];
+  note: string;
+}
+
+const missingCapabilities = rawMissing as (declared: unknown) => Gap[];
 
 interface Divergence {
   field: string;
@@ -143,5 +153,36 @@ describe("compareContexts", () => {
     expect(fields(found)).toEqual(
       expect.arrayContaining(["reactNativeVersion", "newArchitecture", "dev", "appOwnership"])
     );
+  });
+});
+
+/**
+ * An agent already has a shell. What it lacks is knowing that a package is
+ * missing and what that costs it. Owning the install would mean owning a
+ * change to someone's package.json, lockfile and native build, which is
+ * not this tool's to make; naming the gap is.
+ */
+describe("missingCapabilities", () => {
+  it("names the gap and the command, without performing it", () => {
+    const gaps = missingCapabilities({ packages: {} });
+    const shot = gaps.find((gap) => gap.missing === "react-native-view-shot");
+    expect(shot).toBeTruthy();
+    expect(shot!.install).toBe("npx expo install react-native-view-shot");
+    expect(shot!.affects.join(" ")).toContain("mirror");
+  });
+
+  it("stays quiet once the package is installed", () => {
+    const gaps = missingCapabilities({
+      packages: { "react-native-view-shot": { range: "^4.0.0", installed: "4.0.3" } },
+    });
+    expect(gaps.find((gap) => gap.missing === "react-native-view-shot")).toBeUndefined();
+  });
+
+  it("does not promise the capability just because the package is added", () => {
+    // It carries native code; installing it into a runtime that cannot
+    // load it changes nothing, and saying otherwise sends people looking
+    // for a bug that is not there
+    const gaps = missingCapabilities({ packages: {} });
+    expect(gaps[0].note).toMatch(/native code/);
   });
 });

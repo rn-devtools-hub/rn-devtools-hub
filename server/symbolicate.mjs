@@ -68,7 +68,44 @@ export const firstAppFrame = (frames) =>
     );
   }) ?? null;
 
-const isLocalhost = (url) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(String(url ?? ""));
+/**
+ * Metro is a development server on the developer's own machine or their own
+ * network. Loopback alone is too narrow: Expo derives the bundle URL from
+ * `hostUri`, which is the LAN address as soon as the app runs on a physical
+ * device, or on a simulator launched normally. Refusing those made the
+ * source location resolve to null for almost every real setup, while only
+ * ever passing on a loopback launch, which is exactly how it went unnoticed.
+ *
+ * The intent stands: a stack must never leave the local network.
+ */
+const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+/** RFC 1918 plus loopback and link-local, on a FULLY parsed address.
+ * Prefix-matching the hostname string would accept 192.168.2.86.evil.com,
+ * a public domain that merely starts like a private address. */
+const isPrivateIPv4 = (hostname) => {
+  const match = IPV4.exec(hostname);
+  if (!match) return false;
+  const [a, b] = match.slice(1).map(Number);
+  if (match.slice(1).some((part) => Number(part) > 255)) return false;
+  if (a === 127 || a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+};
+
+export const isLocalNetwork = (url) => {
+  try {
+    const { hostname, protocol } = new URL(String(url));
+    if (!protocol.startsWith("http")) return false;
+    if (hostname === "localhost" || hostname === "[::1]" || hostname === "::1") return true;
+    if (hostname.endsWith(".local")) return true;
+    return isPrivateIPv4(hostname);
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Guesses Metro's address from the frames themselves. The bundle URL in a
@@ -98,8 +135,12 @@ export const symbolicate = async (rawFrames, options = {}) => {
   const metroUrl = options.metroUrl ?? metroUrlFromFrames(frames);
   // Symbolicating against a remote host would leak a stack off the machine;
   // Metro is a local dev server and nothing else should be asked
-  if (!isLocalhost(metroUrl)) {
-    return { ok: false, reason: `refusing to symbolicate against a non-local host: ${metroUrl}`, frames: [] };
+  if (!isLocalNetwork(metroUrl)) {
+    return {
+      ok: false,
+      reason: `refusing to symbolicate against a host outside the local network: ${metroUrl}`,
+      frames: [],
+    };
   }
 
   const request = options.fetchImpl ?? fetch;

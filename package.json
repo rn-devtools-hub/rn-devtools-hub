@@ -64,7 +64,8 @@
     "server.json",
     "smithery.yaml",
     ".agents",
-    ".codex-plugin"
+    ".codex-plugin",
+    "templates"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

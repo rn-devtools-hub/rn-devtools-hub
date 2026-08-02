@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.3](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.2...v0.11.3) (2026-08-02)
+
+### Bug Fixes
+
+* **security:** gate the device socket, bound frames and PNG dimensions ([0a700cf](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/0a700cf88f7f4512a1dd8769b1d578aa91bf39ca))
+
 ## [0.11.2](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.1...v0.11.2) (2026-08-02)
 
 ### Bug Fixes

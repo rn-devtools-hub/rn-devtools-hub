@@ -3,7 +3,7 @@
   "name": "io.github.rn-devtools-hub/rn-devtools-hub",
   "title": "rn-devtools-hub",
   "description": "Drive a running React Native or Expo app from inside its JS runtime: see, act, prove.",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "websiteUrl": "https://rn-devtools-hub.github.io/rn-devtools-hub/",
   "repository": {
     "url": "https://github.com/rn-devtools-hub/rn-devtools-hub",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "rn-devtools-hub",
-      "version": "0.11.2",
+      "version": "0.11.3",
       "transport": {
         "type": "streamable-http",
         "url": "http://127.0.0.1:8973/mcp"

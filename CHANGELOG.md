@@ -2,6 +2,13 @@
 
 Generated automatically from conventional commits.
 
+## [0.12.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.7...v0.12.0) (2026-08-02)
+
+### Features
+
+* **context:** name the capabilities a project has not enabled ([5560cd8](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/5560cd8a4ef8e50f0d130d3a8c849b0fd99f7a33))
+* **ui_act:** add focus and blur, and say why a device cannot be mirrored ([4ddc94f](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/4ddc94fe0ad480b4428feafad2853e98cf062d6e))
+
 ## [0.11.7](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.11.6...v0.11.7) (2026-08-02)
 
 ### Bug Fixes

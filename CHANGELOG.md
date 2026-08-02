@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.8.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.7.1...v0.8.0) (2026-08-02)
+
+### Features
+
+* **source:** symbolicate owner stacks into real file and line ([ff63554](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/ff6355486335d26ca44ebadf5d0f6a3a27e42b80))
+
 ## [0.7.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.7.0...v0.7.1) (2026-08-02)
 
 ### Bug Fixes

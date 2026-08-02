@@ -1,8 +1,9 @@
 {
   "name": "rn-devtools-hub",
   "version": "0.5.0",
-  "description": "Local inspector for React Native and Expo apps: network, crashes, storage, SQLite, screen mirror, device actions and MCP server, streamed to a web dashboard over WebSocket. Zero native dependencies.",
+  "description": "The agent runtime for React Native and Expo: an MCP server that sees the app the way React sees it, knows which file produced each element, acts without coordinates, and proves it works. Local only, zero dependencies.",
   "license": "MIT",
+  "mcpName": "io.github.rn-devtools-hub/rn-devtools-hub",
   "author": "Joberno Joseph",
   "repository": {
     "type": "git",
@@ -20,7 +21,13 @@
     "flipper-alternative",
     "reactotron-alternative",
     "mcp",
-    "screen-mirror"
+    "screen-mirror",
+    "mcp-server",
+    "model-context-protocol",
+    "claude-code",
+    "ai-agent",
+    "ui-automation",
+    "e2e-testing"
   ],
   "type": "module",
   "bin": {
@@ -54,7 +61,9 @@
     "server",
     "bin",
     "src/cli",
-    "assets/logo.svg"
+    "assets/logo.svg",
+    "plugins",
+    "server.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

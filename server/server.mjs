@@ -753,15 +753,21 @@ const handleMcpTool = async (name, args = {}) => {
     const current = decodePng(Buffer.from(shot.__mcpImage.data, "base64"));
     const diff = diffImages(baseline, current, { withImage: args.withImage === true });
     // The runtime measures in points while the screenshot is in device
-    // pixels: the app's own width is what reconciles the two
-    const appInfo = eventsOfType(device, ["app.info"], 1)[0]?.payload ?? {};
+    // pixels. Asking the runtime for its own viewport beats reading a
+    // screen width the app may never have emitted: on a retina device a
+    // missing scale sends the hit test to the wrong element entirely.
+    const viewport = await sendDeviceCommand(deviceId, "ui.viewport", {});
     const explained = await explainDiff(diff, {
       maxRatio: args.maxRatio,
-      screenWidthPoints: Number(appInfo.screenWidth) || null,
+      screenWidthPoints: Number(viewport.result?.width) || null,
       changes: changesSince(device.history, takenAt ?? 0),
       hitTest: async (x, y) => {
         const response = await sendDeviceCommand(deviceId, "ui.at", { x, y });
         if (response.error) throw new Error(response.error);
+        // Same upgrade as the tree: an owner named without a file turns
+        // the explanation back into a guess
+        const deepest = response.result?.deepest;
+        if (deepest?.source) deepest.source = await upgradeSource(deepest.source, {});
         return response.result;
       },
     });

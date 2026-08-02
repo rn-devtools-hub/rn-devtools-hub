@@ -91,3 +91,13 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npx release-it --ci ${{ inputs.increment }}
+
+  # Registering the server has to follow the npm publish, and cannot be
+  # driven by the tag push: see the note at the top of publish-mcp.yml
+  register-mcp:
+    needs: release
+    if: needs.decide.outputs.should_release == 'true'
+    uses: ./.github/workflows/publish-mcp.yml
+    permissions:
+      id-token: write
+      contents: read

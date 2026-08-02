@@ -21,7 +21,7 @@ import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs,
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
 import { A11Y_TOOLS, parseAndroidA11y, parseIosA11y, crossCheck } from "./a11y.mjs";
 import { BUILD_TOOL, runBuild } from "./build.mjs";
-import { upgradeTreeSources, upgradeSource } from "./symbolicate.mjs";
+import { upgradeTreeSources, upgradeSource, isLocalNetwork } from "./symbolicate.mjs";
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
@@ -114,6 +114,30 @@ const isLocalRequest = (request, bunServer) => {
 };
 
 const hasValidToken = (url) => url.searchParams.get("token") === HUB_TOKEN;
+
+/**
+ * Who may open the device WebSocket.
+ *
+ * WebSocket is not subject to CORS, so any page the developer happens to
+ * visit while the hub runs can connect and announce itself as a device. It
+ * then joins the device table, and an MCP call without an explicit
+ * deviceId picks the first connected one. The consequence is not just fake
+ * readings: `ui_act` is routed to it WITH its payload, so text the agent
+ * types into a password field is delivered to the page.
+ *
+ * A browser always sends Origin. React Native does too on Android, but the
+ * value it sends is derived from the hub's own URL (WebSocketModule
+ * getDefaultOrigin), so it is a local-network origin. Refusing a non-local
+ * Origin therefore blocks pages without touching real devices.
+ *
+ * Residual: a page served from localhost still passes. Blocking it would
+ * break legitimate local dashboards, and a local page is a much narrower
+ * threat than an arbitrary site.
+ */
+const allowDeviceUpgrade = (origin) => {
+  if (!origin) return true; // native clients that send no Origin at all
+  return isLocalNetwork(origin);
+};
 
 // ====================================================================
 // DESIGN module: reads app.json + host project assets (icons, splash,
@@ -913,6 +937,7 @@ const deviceListPayload = () =>
 
 const startServer = () => serve({
   port: PORT,
+  allowUpgrade: allowDeviceUpgrade,
   // Bun kills idle requests after 10 s by default: wait_for_event
   // long-polls (up to 120 s) and native log dumps need much more
   idleTimeout: 240,
@@ -997,6 +1022,9 @@ const startServer = () => serve({
     }
 
     // Upgrade WebSocket
+    if (!allowDeviceUpgrade(request.headers.get("origin"))) {
+      return new Response("Forbidden origin", { status: 403 });
+    }
     if (bunServer.upgrade(request, { data: { role: null, deviceId: null } })) {
       return undefined;
     }

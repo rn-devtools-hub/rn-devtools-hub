@@ -111,6 +111,16 @@ describe("PNG round trip without a dependency", () => {
     expect(sameAsLeft / total).toBeGreaterThan(0.5);
   });
 
+  // Baselines live in the host project, so the bytes are not always ours.
+  // A header can claim any dimensions and inflate can expand a tiny chunk
+  // into gigabytes.
+  it("refuses dimensions that would allocate gigabytes", () => {
+    const png = encodePng(2, 2, solid(2, 2, [0, 0, 0]));
+    png.writeUInt32BE(40000, 16); // width in IHDR
+    png.writeUInt32BE(40000, 20); // height
+    expect(() => decodePng(png)).toThrow(/pixel ceiling/);
+  });
+
   it("rejects anything that is not a PNG with a clear message", () => {
     expect(() => decodePng(Buffer.from("not an image"))).toThrow(/Not a PNG/);
   });

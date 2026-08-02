@@ -54,6 +54,24 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_crashes","arguments":{}}}' | grep -q "ci-probe"
 
+      # WebSocket is not subject to CORS, so a page the developer visits
+      # could otherwise announce itself as a device and receive the payload
+      # of commands meant for the real app
+      - name: A browser origin cannot open the device socket
+        run: |
+          req() {
+            if [ -z "$1" ]; then
+              printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1:8973\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n'
+            else
+              printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1:8973\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nOrigin: %s\r\n\r\n' "$1"
+            fi | timeout 3 nc 127.0.0.1 8973 | head -1 | tr -d '\r'
+          }
+          # A native device sends no Origin; RN on Android sends the hub's own URL
+          req "" | grep -q "101" || { echo "a device with no Origin was refused"; exit 1; }
+          req "http://127.0.0.1:8973" | grep -q "101" || { echo "a React Native Origin was refused"; exit 1; }
+          req "https://evil.example.com" | grep -q "403" || { echo "a browser origin was ACCEPTED"; exit 1; }
+          req "http://127.0.0.1.evil.example.com" | grep -q "403" || { echo "a lookalike origin was ACCEPTED"; exit 1; }
+
       # The stdio bridge cannot be unit tested: the bug it regressed on was
       # the process exiting, and killing the hub, while the answers were
       # still in flight. Only a real pipe shows that, and it shows as

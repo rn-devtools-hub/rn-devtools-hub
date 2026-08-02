@@ -2,6 +2,17 @@
 
 Generated automatically from conventional commits.
 
+## [0.11.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.10.1...v0.11.0) (2026-08-02)
+
+### Features
+
+* run the hub on Node as well as Bun, and fix the store adapter types ([bd9894c](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/bd9894cba3ed4d75ea195fc93550211a29633e0e))
+* ship the plugin and the skill for Codex, and drop the Bun requirement ([e8787f5](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/e8787f5a0b71e16ba21f628f132c6d04fbdc1cca))
+
+### Bug Fixes
+
+* **ci:** probe the WebSocket over raw TCP instead of the global client ([3f82e24](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/3f82e24bf9a506023d7513ccb6de6ecca00c5f23))
+
 ## [0.10.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.10.0...v0.10.1) (2026-08-02)
 
 ### Bug Fixes

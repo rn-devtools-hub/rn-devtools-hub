@@ -13,7 +13,7 @@
  * project's assets and versions.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -94,7 +94,14 @@ export const createBridge = ({ post, write }) => {
 
 const startHub = (port) =>
   new Promise((resolve, reject) => {
-    const child = spawn("bun", [join(HERE, "..", "..", "server", "server.mjs"), "--port", String(port)], {
+    // The hub runs on either runtime, so the bridge must too. Hardcoding
+    // Bun here meant the bridge failed on a Node-only machine while the
+    // hub itself was perfectly happy.
+    const hub = join(HERE, "..", "..", "server", "server.mjs");
+    const useBun = !spawnSync("bun", ["--version"], { stdio: "ignore" }).error;
+    const command = useBun ? "bun" : process.execPath;
+
+    const child = spawn(command, [hub, "--port", String(port)], {
       cwd: process.cwd(),
       // The hub's banner would corrupt the JSON-RPC stream if it reached
       // stdout, so it goes to stderr where clients show it as a log
@@ -102,16 +109,21 @@ const startHub = (port) =>
       env: process.env,
     });
     child.stdout.on("data", (data) => process.stderr.write(data));
-    child.on("error", (error) =>
-      reject(
-        new Error(
-          error.code === "ENOENT"
-            ? "The hub needs Bun (https://bun.sh). Install it, or start the hub yourself with `npx rn-devtools-hub` and point this bridge at it."
-            : String(error.message)
-        )
-      )
-    );
-    resolve(child);
+
+    // Resolving immediately swallowed the spawn failure: the caller then
+    // waited out the whole start timeout and reported "no answer" instead
+    // of the reason. Settle on the first event either way.
+    let settled = false;
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`Could not start the hub with ${command}: ${error.message}`));
+    });
+    setImmediate(() => {
+      if (settled) return;
+      settled = true;
+      resolve(child);
+    });
   });
 
 export const runStdioBridge = async (argv = []) => {

@@ -112,6 +112,37 @@
     font-size: 26px; font-weight: 600; line-height: 1.1;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* Project context: what the project declares, what runs, what disagrees.
+     Quiet when they agree, so it costs nothing to leave on screen. */
+  .ctx {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
+  }
+  .ctx h3 {
+    margin: 0; font-size: 12px; font-weight: 600; color: var(--ink);
+    letter-spacing: 0.01em;
+  }
+  .ctx-facts {
+    display: flex; flex-wrap: wrap; gap: 4px 0;
+    margin-top: 10px; font-size: 11.5px; color: var(--muted);
+  }
+  .ctx-facts span { display: inline-flex; gap: 5px; align-items: baseline; }
+  /* A separator between items, never trailing */
+  .ctx-facts span + span::before {
+    content: ""; width: 1px; height: 10px; margin: 0 12px;
+    background: var(--border); align-self: center;
+  }
+  .ctx-facts b { color: var(--ink-2); font-weight: 500; }
+  .ctx-item {
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+    font-size: 12px; line-height: 1.5; color: var(--ink-2);
+  }
+  .ctx-item .f { color: var(--ink); font-weight: 600; }
+  .ctx-item .hint { display: block; margin-top: 3px; color: var(--muted); }
+  /* Severity shows on the left edge only: a full tinted panel would shout
+     louder than a crash, which sits in a plain tile right below it. */
+  .ctx-warn { border-left: 2px solid var(--warning); }
+  .ctx-crit { border-left: 2px solid var(--critical); }
   .tile .sub {
     color: var(--ink-2); font-size: 11px; margin-top: 5px;
     overflow-wrap: anywhere; word-break: break-word;
@@ -1960,13 +1991,13 @@
     const d = data.declared ?? {};
     const r = data.runtime;
     const fact = (label, value) => value === null || value === undefined || value === ""
-      ? "" : `<span>${label} <b>${esc(String(value))}</b></span>`;
+      ? "" : `<span>${label}<b>${esc(String(value))}</b></span>`;
 
     const facts = [
       fact("Expo SDK", d.expoSdkMajor),
       fact("React Native", d.packages?.["react-native"]?.installed),
       fact("React", r?.renderers?.[0]?.version ?? d.packages?.react?.installed),
-      fact("Engine", r ? [r.jsEngine ?? "unknown", r.jsEngineVersion].filter(Boolean).join(" ") : null),
+      fact("Engine", r?.jsEngine ?? null),
       fact("New Architecture", r ? (r.newArchitecture ? "on" : "off") : (d.newArchEnabled ? "declared on" : null)),
       fact("Bridgeless", r ? (r.bridgeless ? "yes" : "no") : null),
       fact("Runtime", r?.appOwnership === "expo" ? "Expo Go" : r ? "development build" : null),
@@ -1977,14 +2008,21 @@
     const worst = divergence.some((x) => x.severity === "high") ? "ctx-crit"
       : divergence.length ? "ctx-warn" : "";
     const items = divergence.map((x) =>
-      `<div class="ctx-item"><span class="f">${esc(x.field)}</span>: declared <b>${esc(String(x.declared))}</b>, running <b>${esc(String(x.runtime))}</b><br>${esc(x.hint)}</div>`
+      `<div class="ctx-item">
+         <span class="f">${esc(x.field)}</span> declared <b>${esc(String(x.declared))}</b>, running <b>${esc(String(x.runtime))}</b>
+         <span class="hint">${esc(x.hint)}</span>
+       </div>`
     ).join("");
 
+    const heading = divergence.length
+      ? `${divergence.length} thing${divergence.length > 1 ? "s" : ""} the project and the running app disagree on`
+      : "Project and running app agree";
+
     box.innerHTML = `<div class="ctx ${worst}">
-      <h3>${divergence.length ? `${divergence.length} thing${divergence.length > 1 ? "s" : ""} the project and the running app disagree on` : "Project and running app agree"}</h3>
+      <h3>${heading}</h3>
       <div class="ctx-facts">${facts || "<span>No device connected</span>"}</div>
       ${items}
-      ${!r ? `<div class="ctx-item">${esc(data.note ?? "")}</div>` : ""}
+      ${!r ? `<div class="ctx-item"><span class="hint">${esc(data.note ?? "")}</span></div>` : ""}
     </div>`;
   };
 

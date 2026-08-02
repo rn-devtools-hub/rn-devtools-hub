@@ -1,0 +1,16 @@
+{
+  "name": "rn-devtools-hub",
+  "owner": {
+    "name": "Joberno Joseph"
+  },
+  "metadata": {
+    "description": "The agent runtime for React Native: drive a running app from inside its JS runtime"
+  },
+  "plugins": [
+    {
+      "name": "rn-devtools-hub",
+      "source": "./plugins/rn-devtools-hub",
+      "description": "See the app as React sees it, act without coordinates, and prove it works. Wires the local MCP server and teaches an agent to chain its tools."
+    }
+  ]
+}

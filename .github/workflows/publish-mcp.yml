@@ -24,7 +24,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      # main, not the triggering ref. release-it commits the version bump
+      # AFTER the merge commit that started this run, so checking out the
+      # trigger would register the PREVIOUS version, forever one behind.
       - uses: actions/checkout@v5
+        with:
+          ref: main
 
       # The registry verifies ownership by reading mcpName from the
       # PUBLISHED tarball, so it must be on npm before we register. release-it

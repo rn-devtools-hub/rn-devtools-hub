@@ -18,6 +18,21 @@ d'agir. Aucun d'eux ne peut lire les props d'un composant, appeler un handler,
 intercepter une requête ou écrire dans un store, parce qu'aucun d'eux n'est
 dedans.
 
+**Correction, vérifiée le 1er août 2026.** Cette position n'est pas exclusive.
+Buoy (`@buoy-gg/*`, propriétaire, 29 $ par siège et par mois) l'occupe déjà :
+inspection de `__REACT_DEVTOOLS_GLOBAL_HOOK__`, parcours des fibers, invocation
+directe des handlers, serveur MCP de 13 outils. Vérifié en décompilant leurs
+paquets npm publiés, leur dépôt GitHub ne contenant aucun code source.
+
+Ce que cela change: la position dans le runtime est une condition nécessaire,
+pas un fossé. Le fossé est ce qu'on en fait. Buoy s'arrête à inspecter et
+piloter; il n'a ni assertion, ni contrôle du temps, ni simulation réseau, ni
+régression visuelle, ni export de session ou de flow, et il lit `_debugSource`
+sans jamais exposer de localisation source en MCP. La couche de preuve est donc
+le vrai différenciateur, pas l'emplacement du code. Et l'asymétrie qui reste
+structurelle est ailleurs: la couche hôte (simctl, adb, build, permissions,
+push) qu'ils n'ont pas, et la licence.
+
 Le critère de sélection de chaque chantier de ce document est donc unique:
 
 > Est-ce que ma position dans le runtime rend cette fonctionnalité **d'une autre
@@ -379,5 +394,7 @@ position ne permet d'assembler:
 > par assertion et par diff expliqué, puis exporte le tout en test rejouable et
 > en session corrélée.
 
-Chaque maillon isolé est imitable. La chaîne ne l'est pas sans écrire un SDK
-embarqué, c'est-à-dire sans devenir ce produit.
+Chaque maillon isolé est imitable, et la position dans le runtime l'est aussi:
+quelqu'un l'occupe déjà (voir la correction en section 1). Ce qui ne l'est pas à
+bon compte, c'est la chaîne entière, et le fait qu'elle soit MIT et gratuite en
+face d'une offre fermée à 29 $ par siège.

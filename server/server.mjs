@@ -913,7 +913,7 @@ const startServer = () => Bun.serve({
     if (url.pathname === "/mcp") return handleMcpRequest(request, bunServer);
 
     // Design, Mirror and Native endpoints: protected by the hub token
-    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/")) {
+    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/")) {
       if (!hasValidToken(url)) return jsonResponse({ error: "Invalid token" }, 401);
 
       if (url.pathname === "/native/targets") return jsonResponse(await listTargets());
@@ -929,6 +929,18 @@ const startServer = () => Bun.serve({
         } catch (error) {
           return jsonResponse({ error: String(error?.message ?? error) }, 502);
         }
+      }
+      if (url.pathname === "/project/context") {
+        // Same answer as the MCP tool. A stale native build is the most
+        // common way to lose an afternoon here, and a developer opening
+        // the dashboard will not think to ask an agent about it.
+        const [contextDeviceId, contextDevice] = pickDevice(url.searchParams.get("deviceId"));
+        let runtime = null;
+        if (contextDevice && contextDevice.ws.readyState === 1) {
+          const response = await sendDeviceCommand(contextDeviceId, "context.runtime", {});
+          if (!response.error) runtime = response.result ?? null;
+        }
+        return jsonResponse(projectContext(PROJECT_ROOT, runtime));
       }
       if (url.pathname === "/design/manifest") return jsonResponse(designManifest());
       if (url.pathname === "/design/asset") return serveProjectAsset(url.searchParams.get("path"));

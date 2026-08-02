@@ -93,12 +93,24 @@ export const createStoreRegistry = () => {
 // Adapters: the app passes its instance, the SDK imports nothing
 // ====================================================================
 
-interface ZustandLike {
-  getState: () => unknown;
-  setState: (patch: unknown) => void;
+/**
+ * Structural constraints, not fixed signatures.
+ *
+ * Declaring `setState: (patch: unknown) => void` looks harmless and makes
+ * every real store unassignable: under strictFunctionTypes parameters are
+ * contravariant, so a store whose setState takes `Partial<T>` only fits a
+ * parameter typed `unknown` if `unknown` is assignable to `Partial<T>`,
+ * which it is not. Every TypeScript user hits it and reaches for a cast.
+ *
+ * Constraining on shape and inferring the store's own type instead accepts
+ * a real Zustand, Redux or React Query instance as it is.
+ */
+export interface ZustandLike {
+  getState: () => any;
+  setState: (...args: any[]) => any;
 }
 
-export const zustandStore = (store: ZustandLike): StoreAdapter => ({
+export const zustandStore = <S extends ZustandLike>(store: S): StoreAdapter => ({
   kind: "zustand",
   get: (path) => readPath(store.getState(), path),
   set: (patch, path) => {
@@ -107,9 +119,9 @@ export const zustandStore = (store: ZustandLike): StoreAdapter => ({
   },
 });
 
-interface ReduxLike {
-  getState: () => unknown;
-  dispatch: (action: unknown) => unknown;
+export interface ReduxLike {
+  getState: () => any;
+  dispatch: (...args: any[]) => any;
 }
 
 /**
@@ -117,7 +129,7 @@ interface ReduxLike {
  * adapter refuses to fake a mutation it cannot legitimately perform, and
  * says how to do it instead.
  */
-export const reduxStore = (store: ReduxLike): StoreAdapter => ({
+export const reduxStore = <S extends ReduxLike>(store: S): StoreAdapter => ({
   kind: "redux",
   get: (path) => readPath(store.getState(), path),
   set: (patch) => {
@@ -131,17 +143,17 @@ export const reduxStore = (store: ReduxLike): StoreAdapter => ({
   },
 });
 
-interface QueryClientLike {
-  getQueryCache: () => { getAll: () => Array<Record<string, any>> };
-  setQueryData: (key: unknown, data: unknown) => unknown;
-  invalidateQueries?: (filters?: unknown) => unknown;
+export interface QueryClientLike {
+  getQueryCache: () => { getAll: () => Array<any> };
+  setQueryData: (...args: any[]) => any;
+  invalidateQueries?: (...args: any[]) => any;
 }
 
 /**
  * React Query is keyed, not a single tree: reading returns the cache
  * entries, writing targets one key. `path` is the JSON-encoded query key.
  */
-export const reactQueryStore = (client: QueryClientLike): StoreAdapter => ({
+export const reactQueryStore = <C extends QueryClientLike>(client: C): StoreAdapter => ({
   kind: "react-query",
   get: (path) => {
     const queries = client.getQueryCache().getAll();

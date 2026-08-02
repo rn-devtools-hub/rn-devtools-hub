@@ -21,17 +21,38 @@ jobs:
 
   hub-smoke:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The hub runs on both, and the Node path carries a hand-written
+        # WebSocket server: it has to be exercised, not assumed
+        runtime: [bun, node]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - name: Start the hub and verify the dashboard
         run: |
-          RN_DEVTOOLS_TOKEN=ci bun server/server.mjs &
+          RN_DEVTOOLS_TOKEN=ci ${{ matrix.runtime }} server/server.mjs &
           sleep 2
           curl -sf "http://localhost:8973/?token=ci" | grep -q "rn-devtools-hub"
           curl -sf -X POST http://127.0.0.1:8973/mcp \
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -q "list_devices"
+
+      # A device really connecting is what exercises the WebSocket server;
+      # a handshake can look correct and still be rejected by a real client.
+      # The probe speaks raw TCP rather than the global WebSocket, which only
+      # exists from Node 22 while this package supports Node 20.
+      - name: A device connects over WebSocket and its events arrive
+        run: |
+          node scripts/ws-probe.mjs 8973
+          curl -sf -X POST http://127.0.0.1:8973/mcp \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_crashes","arguments":{}}}' | grep -q "ci-probe"
 
       # The stdio bridge cannot be unit tested: the bug it regressed on was
       # the process exiting, and killing the hub, while the answers were

@@ -98,6 +98,45 @@ describe("MCP registry manifest", () => {
   });
 });
 
+/**
+ * Two agents, one skill.
+ *
+ * Claude Code reads plugins/<name>/skills/<name>/SKILL.md, Codex reads
+ * .agents/skills/<name>/SKILL.md. The format is the same, so the file is
+ * duplicated rather than abstracted; this test is what makes the
+ * duplication safe, because a skill that drifts between the two silently
+ * teaches two different things.
+ */
+describe("Codex plugin", () => {
+  it("carries the same skill as the Claude Code plugin, byte for byte", () => {
+    const claude = readFileSync(
+      join(root, "plugins/rn-devtools-hub/skills/rn-devtools-hub/SKILL.md"),
+      "utf-8"
+    );
+    const codex = readFileSync(join(root, ".agents/skills/rn-devtools-hub/SKILL.md"), "utf-8");
+    expect(codex).toBe(claude);
+  });
+
+  it("declares a plugin Codex can read", () => {
+    const plugin = JSON.parse(readFileSync(join(root, ".codex-plugin/plugin.json"), "utf-8"));
+    expect(plugin.name).toBe("rn-devtools-hub");
+    expect(plugin.interface.displayName).toBeTruthy();
+    expect(plugin.interface.defaultPrompt.length).toBeGreaterThan(0);
+  });
+
+  it("lists itself in the marketplace manifest Codex looks for", () => {
+    const marketplace = JSON.parse(
+      readFileSync(join(root, ".agents/plugins/marketplace.json"), "utf-8")
+    );
+    expect(marketplace.plugins[0].name).toBe("rn-devtools-hub");
+  });
+
+  it("ships both plugin layouts to npm consumers", () => {
+    expect(pkg.files).toContain(".agents");
+    expect(pkg.files).toContain(".codex-plugin");
+  });
+});
+
 describe("Claude Code plugin", () => {
   const marketplace = JSON.parse(
     readFileSync(join(root, ".claude-plugin", "marketplace.json"), "utf-8")

@@ -18,18 +18,27 @@
   <a href="#contributing">Contributing</a>
 </p>
 
-## Use it from Claude Code
+## Use it from an agent
+
+Both plugins install the MCP server plus a skill that teaches the agent to
+chain its tools: check the project context before debugging anything that
+looks impossible, prove results with assertions instead of screenshots, wait
+on events instead of sleeping, and read an element's source instead of
+grepping the repository.
+
+**Claude Code**
 
 ```
 /plugin marketplace add rn-devtools-hub/rn-devtools-hub
 /plugin install rn-devtools-hub
 ```
 
-That installs the MCP server plus a skill that teaches the agent to chain
-its tools: check the project context before debugging anything that looks
-impossible, prove results with assertions instead of screenshots, wait on
-events instead of sleeping, and read an element's source instead of
-grepping the repository.
+**Codex**
+
+```
+codex plugin marketplace add rn-devtools-hub/rn-devtools-hub
+codex plugin add rn-devtools-hub
+```
 
 Then start the hub at the root of your app, which is what the agent talks
 to:
@@ -38,11 +47,21 @@ to:
 npx rn-devtools-hub
 ```
 
-Registering the server by hand works too:
+Registering the server by hand works too. Claude Code:
 
 ```
 claude mcp add rn-devtools --transport http http://127.0.0.1:8973/mcp
 ```
+
+Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.rn-devtools]
+url = "http://127.0.0.1:8973/mcp"
+```
+
+Any client that speaks only stdio uses `npx rn-devtools-hub mcp`, which
+bridges to the hub and starts it on demand.
 
 ## Screenshots
 
@@ -155,7 +174,7 @@ Android devices, with every capability probed and degrading cleanly.
 
 ## Quick start
 
-Prerequisites: Node 20+, and [Bun](https://bun.sh) for the hub. Optional
+Prerequisites: Node 20+. [Bun](https://bun.sh) is used when present, and is not required. Optional
 capabilities (adb mirror, iOS simulator, Wi-Fi) have their own prerequisites:
 see the [integration guide](docs/integration.md#prerequisites-by-capability).
 
@@ -167,7 +186,7 @@ npm install --save-dev rn-devtools-hub
 #    hooks the entry point, adds the `devtools` script):
 npx rn-devtools-hub init
 
-# 3. Start the hub (Bun required)
+# 3. Start the hub (runs on Bun or Node 20+)
 npm run devtools
 # -> Dashboard: http://localhost:8973/?token=... (URL printed at startup)
 ```

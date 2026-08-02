@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.12.3](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.12.2...v0.12.3) (2026-08-02)
+
+### Bug Fixes
+
+* **sdk:** keep binary events whole instead of relying on the caller ([b5d8bb1](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/b5d8bb152190e25751a8dcd079dbb63bed52475e))
+
 ## [0.12.2](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.12.1...v0.12.2) (2026-08-02)
 
 ### Bug Fixes

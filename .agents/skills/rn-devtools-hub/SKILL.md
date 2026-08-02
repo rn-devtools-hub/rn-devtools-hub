@@ -181,6 +181,16 @@ percentage: a diagnosis.
 | `source` is `null` everywhere | Production build, or a React version without dev bookkeeping |
 | `audit_accessibility` returns `conclusive: false` | One of the two trees came back empty; the report is not a clean bill of health |
 
+## Writing or editing the glue file
+
+`devtools.emit` truncates payloads at 20 KB. That is right for logs and
+network bodies and wrong for anything binary: a truncated base64 frame is
+an undecodable image and a blank panel, with no error anywhere.
+
+`screen.frame` is kept whole automatically, and any other type that gets
+truncated warns once naming `emitRaw`. For your own binary events, reach
+for `devtools.emitRaw(type, payload)` directly.
+
 ## What not to do
 
 - Do not take a screenshot to check a result. `assert` is faster, cheaper

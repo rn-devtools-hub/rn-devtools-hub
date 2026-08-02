@@ -120,8 +120,34 @@ class Devtools {
     }
   }
 
+  /**
+   * Event types the protocol defines as carrying binary payloads.
+   *
+   * Truncating one produces an undecodable image and a blank panel, with
+   * no error anywhere. Asking every caller to remember `emitRaw` for these
+   * is a rule that will be forgotten, by a person or by an agent, so the
+   * SDK keeps them whole instead of relying on the reminder.
+   */
+  private static readonly BINARY_TYPES = new Set(["screen.frame"]);
+
+  private warnedTruncation = new Set<string>();
+
   emit(type: string, payload: unknown): void {
-    this.transport?.enqueue(type, truncateForWire(payload));
+    if (Devtools.BINARY_TYPES.has(type)) {
+      this.transport?.enqueue(type, payload);
+      return;
+    }
+    const wire = truncateForWire(payload);
+    // Truncation is normally desirable, but a caller who did not expect it
+    // gets silent corruption. Say it once per type, with the fix.
+    if (!this.warnedTruncation.has(type) && JSON.stringify(wire ?? null)?.includes("[truncated")) {
+      this.warnedTruncation.add(type);
+      console.warn(
+        `[rn-devtools-hub] "${type}" was truncated at 20 KB. If this payload is binary or must ` +
+          "arrive whole, send it with devtools.emitRaw(type, payload) instead of devtools.emit."
+      );
+    }
+    this.transport?.enqueue(type, wire);
   }
 
   /** Emission WITHOUT truncation: reserved for legitimate binary payloads

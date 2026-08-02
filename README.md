@@ -60,6 +60,28 @@ Codex, in `~/.codex/config.toml`:
 url = "http://127.0.0.1:8973/mcp"
 ```
 
+**Cursor** has no marketplace, so it is two files in your own project.
+Declare the server in `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "rn-devtools": { "type": "http", "url": "http://127.0.0.1:8973/mcp" }
+  }
+}
+```
+
+And copy the rule, which is the Cursor equivalent of the skill:
+
+```bash
+mkdir -p .cursor/rules
+cp node_modules/rn-devtools-hub/templates/cursor-rule.mdc \
+   .cursor/rules/rn-devtools-hub.mdc
+```
+
+It ships with `alwaysApply: false`, so Cursor pulls it in when the task
+matches instead of paying for it on every request.
+
 Any client that speaks only stdio uses `npx rn-devtools-hub mcp`, which
 bridges to the hub and starts it on demand.
 

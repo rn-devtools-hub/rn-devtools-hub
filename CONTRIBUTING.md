@@ -12,11 +12,11 @@ src/client/        SDK embedded in the app (TypeScript, ZERO dependencies)
   types.ts         Types + truncation + redaction
 
 server/
-  server.mjs       Bun hub: WebSocket, per-device history, command relay,
+  server.mjs       Hub: WebSocket, per-device history, command relay,
                    MCP, Design and Mirror endpoints (adb/xcrun)
   dashboard.html   Single-page dashboard (vanilla JS, NO build step)
 
-bin/rn-devtools-hub.mjs   npx launcher (checks Bun, delegates to the server)
+bin/rn-devtools-hub.mjs   npx launcher (Bun if present, Node otherwise)
 ```
 
 Non-negotiable principles:
@@ -39,7 +39,7 @@ npm install        # also installs husky (git hooks)
 npm test           # vitest
 npm run typecheck  # strict tsc
 npm run build      # dist/ (published to npm)
-npm run hub        # starts the local hub (requires Bun)
+npm run hub        # starts the local hub (Bun; `node server/server.mjs` also works)
 ```
 
 To test the dashboard without an app: `npm run hub` then open the printed URL.

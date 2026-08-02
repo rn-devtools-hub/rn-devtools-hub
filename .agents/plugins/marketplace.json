@@ -1,0 +1,10 @@
+{
+  "name": "rn-devtools-hub",
+  "plugins": [
+    {
+      "name": "rn-devtools-hub",
+      "source": ".",
+      "description": "The agent runtime for React Native: perceive, act, and prove from inside the app's JS runtime."
+    }
+  ]
+}

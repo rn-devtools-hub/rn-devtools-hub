@@ -1,7 +1,7 @@
 # rn-devtools-hub
 
 > The agent runtime for React Native and Expo: a pure JavaScript SDK in the
-> app (inert in production, zero dependencies), a local hub (Bun, WebSocket),
+> app (inert in production, zero dependencies), a local hub (Bun or Node 20+,
 > a web dashboard, and a local MCP server. The SDK runs INSIDE the app's JS
 > runtime, so an agent perceives the UI as React sees it, gets the source file
 > and line behind each element, acts through the app's own props rather than
@@ -11,7 +11,7 @@
 > uploads, remote actions, design, screen mirror.
 
 Key points to integrate the package into an app:
-- Install as a devDependency: `npm i -D rn-devtools-hub` (the hub requires Bun on the dev machine)
+- Install as a devDependency: `npm i -D rn-devtools-hub` (the hub runs on Bun or Node 20+, whichever is on the machine)
 - Start the hub from the host project root: `npx rn-devtools-hub`
 - In the app: `import { devtools } from "rn-devtools-hub/client"` in a glue file loaded via `if (__DEV__) require(...)`
 - API: init({serverUrl, appName, stableId}), emit, emitRaw, onCommand, attachAxios, wrapFetch, attachConsole, attachCrashReporting, startPerformanceSampler, registerAction, attachUiAutomation, markScreenReady, attachDeterminism, attachOriginTracking, registerStore, registerPreview, onPreviewChange

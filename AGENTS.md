@@ -173,8 +173,17 @@ on demand in the current directory.
 
 Registration on the Claude Code side, either:
 `claude mcp add rn-devtools --transport http http://127.0.0.1:8973/mcp`
-or install the plugin, which registers it and adds the skill:
-`/plugin marketplace add rn-devtools-hub/rn-devtools-hub`
+or install the plugin, which registers it and adds the skill.
+Claude Code: `/plugin marketplace add rn-devtools-hub/rn-devtools-hub`
+Codex: `codex plugin marketplace add rn-devtools-hub/rn-devtools-hub`, or
+`[mcp_servers.rn-devtools] url = "http://127.0.0.1:8973/mcp"` in
+`~/.codex/config.toml`.
+
+The skill lives in TWO places because the two agents look in different
+ones: `plugins/rn-devtools-hub/skills/` for Claude Code and
+`.agents/skills/` for Codex. The format is identical and a packaging test
+asserts the files are byte-for-byte equal, because a skill that drifts
+between the two silently teaches two different things.
 
 The dashboard's Overview panel leads with the same project context the
 `get_project_context` tool returns, and with whatever the project and the

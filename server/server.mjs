@@ -19,6 +19,7 @@ import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs,
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
 import { A11Y_TOOLS, parseAndroidA11y, parseIosA11y, crossCheck } from "./a11y.mjs";
 import { BUILD_TOOL, runBuild } from "./build.mjs";
+import { upgradeTreeSources, upgradeSource } from "./symbolicate.mjs";
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
@@ -429,7 +430,7 @@ const MCP_TOOLS = [
   {
     name: "get_ui_tree",
     description: "Returns the semantic tree of the VISIBLE components (types, testID, text, inputs), read from the React runtime. Every node carries source {file, line, column, componentName, via} when React still knows where it was written, so editing does not start with a repo-wide grep; via states how the location was resolved and via:\"stack\" means bundle coordinates, not source ones. Screens kept mounted but hidden by the navigator (previous stack cards, inactive tabs) are excluded unless includeHidden. The app must call devtools.attachUiAutomation().",
-    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 }, includeHidden: { type: "boolean" }, includeSource: { type: "boolean", description: "Attach the source location to every node (default true); set false to shrink the payload" } }, additionalProperties: false },
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 }, includeHidden: { type: "boolean" }, includeSource: { type: "boolean", description: "Attach the source location to every node (default true); set false to shrink the payload" }, metroUrl: { type: "string", description: "Metro server used to map bundle positions back to source (default: read from the stack, else http://localhost:8081)" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
@@ -693,6 +694,22 @@ const handleMcpTool = async (name, args = {}) => {
     const cursorBefore = device.lastSeq ?? 0;
     const response = await sendDeviceCommand(deviceId, command, payload);
     if (response.error) throw new Error(response.error);
+    // React 19 dropped _debugSource, so the cascade lands on owner stacks,
+    // which are BUNDLE positions. Only Metro can map them back to a file
+    // and a line, so the upgrade happens here rather than shipping
+    // coordinates no agent can use.
+    const metro = args.metroUrl ? { metroUrl: String(args.metroUrl) } : {};
+    if (name === "get_ui_tree" && Array.isArray(response.result?.roots)) {
+      for (const root of response.result.roots) await upgradeTreeSources(root, metro);
+    }
+    if (name === "query_ui" && Array.isArray(response.result?.matches)) {
+      for (const match of response.result.matches) {
+        if (match.source) match.source = await upgradeSource(match.source, metro);
+      }
+    }
+    if (name === "ui_act" && response.result?.target?.source) {
+      response.result.target.source = await upgradeSource(response.result.target.source, metro);
+    }
     if (name === "ui_act" && response.result?.ok) {
       recordAct(recorder, {
         action: payload.action,

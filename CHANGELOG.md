@@ -2,6 +2,17 @@
 
 Generated automatically from conventional commits.
 
+## [0.10.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.9.0...v0.10.0) (2026-08-02)
+
+### Features
+
+* **dashboard:** show the project context and its contradictions ([38ab973](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/38ab9734d51581da73f2465c7893a0e63c16a1d4))
+
+### Bug Fixes
+
+* **automation:** measure on the New Architecture ([ef8b59e](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/ef8b59e4145e8e72017eeaaf652c64e646f30bdb))
+* **source:** walk the owner chain when collecting stacks ([8be58cd](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/8be58cd1399dc6a8c06ea6e8983526b00431f7ac))
+
 ## [0.9.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.8.0...v0.9.0) (2026-08-02)
 
 ### Features

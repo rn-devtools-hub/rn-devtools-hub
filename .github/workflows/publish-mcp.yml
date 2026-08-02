@@ -1,0 +1,65 @@
+name: Publish to MCP Registry
+
+# The npm package is published by release.yml; this only registers the
+# server's metadata with registry.modelcontextprotocol.io. Authentication
+# is OIDC, so no token is stored anywhere: GitHub vouches for the
+# io.github.rn-devtools-hub namespace directly.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC
+  contents: read
+
+concurrency:
+  group: publish-mcp
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The registry verifies ownership by reading mcpName from the
+      # PUBLISHED tarball, so it must be on npm before we register. release-it
+      # pushes the tag and publishes in quick succession, and which lands
+      # first is not guaranteed: wait rather than fail the first time.
+      - name: Wait for the npm package to be available
+        run: |
+          VERSION=$(jq -r .version server.json)
+          echo "Waiting for rn-devtools-hub@$VERSION on npm"
+          for attempt in $(seq 1 30); do
+            PUBLISHED=$(npm view "rn-devtools-hub@$VERSION" version 2>/dev/null || true)
+            if [ "$PUBLISHED" = "$VERSION" ]; then
+              echo "Found rn-devtools-hub@$VERSION"
+              exit 0
+            fi
+            echo "attempt $attempt: not on npm yet, retrying in 20s"
+            sleep 20
+          done
+          echo "rn-devtools-hub@$VERSION never appeared on npm; not registering a version that does not exist"
+          exit 1
+
+      - name: Check the published tarball proves ownership
+        run: |
+          VERSION=$(jq -r .version server.json)
+          CLAIMED=$(npm view "rn-devtools-hub@$VERSION" mcpName 2>/dev/null || true)
+          EXPECTED=$(jq -r .name server.json)
+          if [ "$CLAIMED" != "$EXPECTED" ]; then
+            echo "Published package claims mcpName '$CLAIMED' but server.json is '$EXPECTED'."
+            echo "The registry would reject this. Fix package.json and cut a new version."
+            exit 1
+          fi
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish

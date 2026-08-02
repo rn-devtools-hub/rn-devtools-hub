@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error untyped hub module
 import * as sessionModule from "../server/session.mjs";
@@ -24,8 +27,9 @@ interface SessionExport {
   timeline: TimelineEntry[];
 }
 
-const { parseSessionFile, summarizeEvent, buildSessionExport, renderSessionMarkdown, sessionIdFor } =
+const { openSession, parseSessionFile, summarizeEvent, buildSessionExport, renderSessionMarkdown, sessionIdFor } =
   sessionModule as {
+    openSession: (root: string, deviceId: string, meta?: Record<string, unknown>) => { id: string; file: string } | null;
     parseSessionFile: (raw: string) => { meta: Record<string, unknown>; events: Array<Record<string, any>> };
     summarizeEvent: (event: Record<string, unknown>) => string;
     buildSessionExport: (meta: unknown, events: unknown) => SessionExport;
@@ -211,5 +215,27 @@ describe("renderSessionMarkdown", () => {
     const clean = renderSessionMarkdown(buildSessionExport({ id: "s2", startedAt: 0 }, []));
     expect(clean).not.toContain("## Crashes");
     expect(clean).not.toContain("## Failed requests");
+  });
+});
+
+/**
+ * The hub writes into the HOST project. A user who never runs init, or
+ * who upgraded into persistence, would find sessions and PNG baselines in
+ * git status, and some would commit them. The directory has to ignore
+ * itself, because that needs no cooperation and cannot go stale.
+ */
+describe("artifact directory", () => {
+  it("makes itself invisible to git on creation", () => {
+    const root = mkdtempSync(join(tmpdir(), "rn-devtools-test-"));
+    try {
+      const opened = openSession(root, "d1", { appName: "test" });
+      expect(opened).not.toBeNull();
+      const marker = join(root, ".rn-devtools", ".gitignore");
+      expect(existsSync(marker)).toBe(true);
+      expect(readFileSync(marker, "utf-8")).toContain("*");
+      expect(existsSync(opened!.file)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

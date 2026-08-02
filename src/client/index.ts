@@ -515,7 +515,7 @@ export type { PreviewFactory } from "./preview";
 export { zustandStore, reduxStore, reactQueryStore, readPath, applyPatch } from "./state";
 export { conditionProfile, matchRule, createClock, createNetworkControl } from "./determinism";
 export type { NetworkRule, NetworkCondition } from "./determinism";
-export type { StoreAdapter } from "./state";
+export type { StoreAdapter, ZustandLike, ReduxLike, QueryClientLike } from "./state";
 export type { SourceLocation, SourceVia } from "./source";
 export type { RuntimeContext, RendererInfo } from "./context";
 export type { UiNode, UiSelector, FiberLike } from "./automation";

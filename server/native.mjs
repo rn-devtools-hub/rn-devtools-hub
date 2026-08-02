@@ -13,15 +13,17 @@
  * produce false mappings. list_targets is the source of truth.
  */
 
+import { spawn, which } from "./runtime.mjs";
+
 const SAFE_ID = /^[A-Za-z0-9._:-]+$/;
 const APP_ID = /^[A-Za-z0-9._-]+$/;
 
 export const runCommand = async (argv, timeoutMs = 6000, stdinText = null) => {
   try {
-    const proc = Bun.spawn(argv, {
+    const proc = spawn(argv, {
       stdout: "pipe",
       stderr: "pipe",
-      ...(stdinText !== null ? { stdin: new TextEncoder().encode(stdinText) } : {}),
+      ...(stdinText !== null ? { stdin: stdinText } : {}),
     });
     const timer = setTimeout(() => proc.kill(), timeoutMs);
     const [bytes, errText, exitCode] = await Promise.all([
@@ -68,8 +70,8 @@ const requireUrl = (raw) => {
   return url;
 };
 
-const simctlAvailable = () => process.platform === "darwin" && !!Bun.which("xcrun");
-const adbAvailable = () => !!Bun.which("adb");
+const simctlAvailable = () => process.platform === "darwin" && !!which("xcrun");
+const adbAvailable = () => !!which("adb");
 
 const requireTool = (kind) => {
   if (kind === "sim" && !simctlAvailable()) {
@@ -380,7 +382,7 @@ export const tapNative = async ({ target, x, y, label }) => {
 
   // iOS: simctl cannot tap. AXe (single binary, maintained) first,
   // then idb (needs companion + Python <= 3.11), else a clear message.
-  if (Bun.which("axe")) {
+  if (which("axe")) {
     const argv = label
       ? ["axe", "tap", "--label", String(label), "--udid", id]
       : ["axe", "tap", "-x", String(px), "-y", String(py), "--udid", id];
@@ -388,7 +390,7 @@ export const tapNative = async ({ target, x, y, label }) => {
     if (!result.ok) fail(result, "axe tap");
     return { ok: true, target: `sim:${id}`, via: "axe", label: label ?? null };
   }
-  if (Bun.which("idb") && hasPoint) {
+  if (which("idb") && hasPoint) {
     const result = await runCommand(["idb", "ui", "tap", "--udid", id, String(px), String(py)], 10000);
     if (!result.ok) fail(result, "idb ui tap");
     return { ok: true, target: `sim:${id}`, x: px, y: py, via: "idb" };
@@ -728,7 +730,7 @@ export const startScreenRecording = async ({ target, file }) => {
   const argv = kind === "sim"
     ? ["xcrun", "simctl", "io", id, "recordVideo", "--codec", "h264", "--force", output]
     : ["adb", "-s", id, "shell", "screenrecord", "/sdcard/rn-devtools-recording.mp4"];
-  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+  const proc = spawn(argv, { stdout: "pipe", stderr: "pipe" });
   recordings.set(key, { proc, output, startedAt, kind, id });
   return {
     ok: true,

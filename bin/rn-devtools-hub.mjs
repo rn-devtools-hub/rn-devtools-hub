@@ -6,8 +6,8 @@
  *   npx rn-devtools-hub init     wire the SDK into this project (codemod)
  *   npx rn-devtools-hub --help
  *
- * The hub itself runs on Bun (native WebSocket server, zero dependencies).
- * `init` runs on plain Node, so it works before Bun is installed.
+ * The hub runs on Bun or on Node: Bun when present, Node otherwise. No
+ * dependency either way. `init` and `mcp` are plain Node.
  */
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -55,21 +55,26 @@ if (command === "mcp") {
   }
 }
 
-// Default: start the hub
-const bunCheck = spawnSync("bun", ["--version"], { stdio: "ignore" });
-if (bunCheck.error) {
+// Default: start the hub.
+//
+// Bun when it is there, because it starts faster, and Node otherwise. The
+// hub itself runs on both: server/runtime.mjs papers over the difference,
+// including the WebSocket server Node does not ship. Requiring a second
+// runtime to try a tool whose whole argument is the absence of friction
+// was a barrier, not a design.
+const hub = join(here, "..", "server", "server.mjs");
+const args = process.argv.slice(2);
+const useBun = !spawnSync("bun", ["--version"], { stdio: "ignore" }).error;
+
+if (!useBun && Number(process.versions.node.split(".")[0]) < 20) {
   console.error("");
-  console.error("  rn-devtools-hub: Bun is required to run the hub.");
-  console.error("  Install: curl -fsSL https://bun.sh/install | bash");
-  console.error("  (or: npm install -g bun)");
-  console.error("");
-  console.error("  Note: `npx rn-devtools-hub init` works without Bun.");
+  console.error(`  rn-devtools-hub: Node 20 or newer is required (found ${process.versions.node}).`);
+  console.error("  Alternatively, install Bun: curl -fsSL https://bun.sh/install | bash");
   console.error("");
   process.exit(1);
 }
 
-const result = spawnSync("bun", [join(here, "..", "server", "server.mjs"), ...process.argv.slice(2)], {
-  stdio: "inherit",
-  cwd: process.cwd(),
-});
+const result = useBun
+  ? spawnSync("bun", [hub, ...args], { stdio: "inherit", cwd: process.cwd() })
+  : spawnSync(process.execPath, [hub, ...args], { stdio: "inherit", cwd: process.cwd() });
 process.exit(result.status ?? 0);

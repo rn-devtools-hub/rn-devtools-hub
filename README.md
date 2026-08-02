@@ -167,7 +167,7 @@ npm install --save-dev rn-devtools-hub
 #    hooks the entry point, adds the `devtools` script):
 npx rn-devtools-hub init
 
-# 3. Start the hub (Bun required)
+# 3. Start the hub (runs on Bun or Node 20+)
 npm run devtools
 # -> Dashboard: http://localhost:8973/?token=... (URL printed at startup)
 ```

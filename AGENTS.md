@@ -49,7 +49,8 @@ Known pitfalls:
     return <View testID="devtools-preview">{element}</View>;
   }
   ```
-- The hub requires Bun. The SDK itself needs nothing.
+- The hub runs on Bun or on Node 20+, whichever is present. The SDK
+  itself needs nothing.
 - `stableId` in init() prevents ghost sessions on every reload:
   use a stable device identifier.
 
@@ -62,7 +63,10 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
 - server/dashboard.html: a single file, no build step, no CDN.
 - Anything requiring native code or a system binary (adb, xcrun, view-shot,
   axe) must be probed and degrade cleanly with an explanatory message.
-- ZERO runtime dependencies, hub included. PNG decoding goes through
+- ZERO runtime dependencies, hub included. That is why server/runtime.mjs
+  implements the WebSocket handshake and framing by hand: Node has a
+  WebSocket client but no server, and adding `ws` would contradict the
+  argument the product is sold on. PNG decoding goes through
   node:zlib rather than pngjs; adding a package to compare two images
   would contradict the argument printed on the box.
 - Sessions and baselines are written under `.rn-devtools/` in the host
@@ -89,6 +93,7 @@ npm run typecheck && npm test && npm run build
 perl -ne 'print if /<script>/../<\/script>/' server/dashboard.html \
   | grep -v "^<script>$" | grep -v "^</script>$" > /tmp/dash.js && node --check /tmp/dash.js
 RN_DEVTOOLS_TOKEN=dev bun server/server.mjs &  # then curl the dashboard and /mcp
+RN_DEVTOOLS_TOKEN=dev node server/server.mjs & # the hub must pass on BOTH runtimes
 ```
 
 ## Driving a running app (MCP)

@@ -260,10 +260,36 @@ export const compareContexts = (declared, runtime) => {
   return divergences;
 };
 
+/**
+ * Capabilities the project has not enabled, with the command that enables
+ * each one.
+ *
+ * An agent already has a shell: it does not need a tool to install a
+ * package, it needs to know that a package is missing and why that limits
+ * it. Owning the mutation would mean owning a change to someone's
+ * package.json, lockfile and native build, which is not this tool's to
+ * make. Naming the gap is.
+ */
+export const missingCapabilities = (declared) => {
+  const installed = (name) => Boolean(declared.packages?.[name]?.installed);
+  const gaps = [];
+  if (!installed("react-native-view-shot")) {
+    gaps.push({
+      capability: "in-app screen capture",
+      missing: "react-native-view-shot",
+      install: "npx expo install react-native-view-shot",
+      affects: ["mirror panel over the network"],
+      note: "Only needed for a device the host cannot reach with adb or simctl. It carries native code, so a runtime that cannot load it will not gain the capability by installing it alone.",
+    });
+  }
+  return gaps;
+};
+
 export const projectContext = (projectRoot, runtime) => {
   const declared = declaredContext(projectRoot);
   return {
     declared,
+    missingCapabilities: missingCapabilities(declared),
     runtime: runtime ?? null,
     divergence: compareContexts(declared, runtime),
     note: runtime

@@ -253,6 +253,31 @@ const KEYEVENTS = {
   recents: "187", enter: "66", delete: "67", tab: "61", escape: "111",
 };
 
+/**
+ * Why there is nothing to mirror.
+ *
+ * The old hint only fired when BOTH binaries were missing, so the common
+ * case said nothing at all: a phone connected over the network, in Expo Go,
+ * with adb installed but no cable. The panel stayed empty and silent, and
+ * there was no way to learn that a device can be attached to the hub and
+ * still be unmirrorable.
+ */
+const mirrorHint = (sources, adbPath, simctlAvailable) => {
+  if (sources.length) return null;
+  if (!adbPath && !simctlAvailable) {
+    return "Install adb (Android) or the Xcode command line tools (iOS simulator) to enable the mirror.";
+  }
+  const connected = Array.from(devices.values()).filter((d) => d.ws.readyState === 1);
+  if (!connected.length) return "No device is attached to this machine, and none is connected to the hub.";
+  const names = connected.map((d) => d.deviceName).join(", ");
+  return (
+    `${names} reached the hub over the network, so its screen cannot be captured from here. ` +
+    "Two ways to get a mirror: attach it with adb (a cable, or `adb connect` over Wi-Fi), " +
+    "or add react-native-view-shot to the app so it can capture itself (`npx expo install react-native-view-shot`). " +
+    "That second path carries native code, so check whether your runtime supports it before relying on it."
+  );
+};
+
 const listMirrorSources = async (quick = false) => {
   const sources = [];
   const adbPath = which("adb");
@@ -307,9 +332,7 @@ const listMirrorSources = async (quick = false) => {
     adbAvailable: !!adbPath,
     simctlAvailable,
     sources,
-    hint: !adbPath && !simctlAvailable
-      ? "Install adb (Android) or the Xcode tools (iOS simulator) to enable the mirror"
-      : null,
+    hint: mirrorHint(sources, adbPath, simctlAvailable),
   };
 };
 
@@ -476,8 +499,8 @@ const MCP_TOOLS = [
   },
   {
     name: "ui_act",
-    description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd. Target by testID, text, label, type or role plus name; scope with within. When several elements match, the result lists the candidates with rects so you can pass index. Hidden navigator screens are skipped unless includeHidden.",
-    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd"] }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd, focus and blur. focus opens the keyboard, which is what makes anything depending on it (KeyboardAvoidingView, insets) verifiable without touching the device. Target by testID, text, label, type or role plus name; scope with within. When several elements match, the result lists the candidates with rects so you can pass index. Hidden navigator screens are skipped unless includeHidden.",
+    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {

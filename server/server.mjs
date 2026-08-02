@@ -17,6 +17,8 @@ import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs, screenshotNative } from "./native.mjs";
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
+import { A11Y_TOOLS, parseAndroidA11y, parseIosA11y, crossCheck } from "./a11y.mjs";
+import { BUILD_TOOL, runBuild } from "./build.mjs";
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
@@ -459,6 +461,8 @@ const MCP_TOOLS = [
   ...SESSION_TOOLS,
   ...FLOW_TOOLS,
   ...VISUAL_TOOLS,
+  ...A11Y_TOOLS,
+  BUILD_TOOL,
   {
     name: "list_previews",
     description: "Lists the components the app registered with devtools.registerPreview, and whether the preview outlet is mounted.",
@@ -535,6 +539,32 @@ const pickDevice = (deviceId) => (deviceId
   : Array.from(devices.entries()).find(([, device]) => device.ws.readyState === 1)
     ?? Array.from(devices.entries())[0]) ?? [];
 
+/** Android exposes uiautomator; iOS needs AXe, and its absence is
+ * reported rather than silently returning an empty tree */
+const captureAccessibilityTree = async (target) => {
+  const { targets } = await listTargets();
+  const chosen = target ?? targets.find((entry) => entry.state === "ready")?.target;
+  if (!chosen) throw new Error("No booted target: pass target from list_targets");
+  const [kind, id] = String(chosen).split(":");
+
+  if (kind === "adb") {
+    const dumped = await runCommand(["adb", "-s", id, "exec-out", "uiautomator", "dump", "/dev/tty"], 20000);
+    const xml = new TextDecoder().decode(dumped.bytes);
+    if (!xml.includes("<node")) {
+      throw new Error(`uiautomator returned no tree: ${dumped.error || "unknown error"}`);
+    }
+    return { platform: "android", via: "uiautomator", nodes: parseAndroidA11y(xml) };
+  }
+  if (!Bun.which("axe")) {
+    throw new Error(
+      "Reading the iOS accessibility tree needs AXe (brew install cameroncooke/axe/axe). On Android it works out of the box through uiautomator."
+    );
+  }
+  const described = await runCommand(["axe", "describe-ui", "--udid", id], 30000);
+  if (!described.ok) throw new Error(`axe describe-ui failed: ${described.error}`);
+  return { platform: "ios", via: "axe", nodes: parseIosA11y(new TextDecoder().decode(described.bytes)) };
+};
+
 const handleMcpTool = async (name, args = {}) => {
   if (name === "list_devices") return Array.from(devices.entries()).map(deviceSummary);
   // Host-side native tools (simctl/adb): no connected JS device needed
@@ -543,6 +573,34 @@ const handleMcpTool = async (name, args = {}) => {
   }
   if (SESSION_TOOLS.some((tool) => tool.name === name)) {
     return handleSessionTool(name, args, PROJECT_ROOT);
+  }
+  if (name === "get_accessibility_tree" || name === "audit_accessibility") {
+    const nodes = await captureAccessibilityTree(args.target);
+    if (name === "get_accessibility_tree") return nodes;
+    const [a11yDeviceId, a11yDevice] = pickDevice(args.deviceId);
+    if (!a11yDevice) throw new Error("audit_accessibility needs a connected app to read the React tree");
+    const tree = await sendDeviceCommand(a11yDeviceId, "ui.tree", { maxNodes: 1500 });
+    if (tree.error) throw new Error(tree.error);
+    const reactNodes = (tree.result?.roots ?? []).flat();
+    return { ...crossCheck(reactNodes, nodes.nodes), platform: nodes.platform, via: nodes.via };
+  }
+  if (name === "build_app") {
+    const [buildDeviceId, buildDevice] = pickDevice(args.deviceId);
+    return runBuild(args, {
+      spawn: (argv) => Bun.spawn(argv, { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }),
+      // Build events join the device's own stream: that shared clock is
+      // the entire reason for delegating the build from here
+      emit: (type, payload) => {
+        const event = { id: 0, type, ts: Date.now(), payload };
+        if (buildDevice) {
+          event.seq = ++buildDevice.lastSeq;
+          buildDevice.history.push(event);
+          appendEvents(buildDevice.sessionFile, [event]);
+          notifyEventWaiters(buildDeviceId, [event]);
+        }
+        broadcastToDashboards({ kind: "events", deviceId: buildDeviceId ?? null, events: [event] });
+      },
+    });
   }
   if (name === "snapshot_baseline") {
     const shot = await screenshotNative({ target: args.target });

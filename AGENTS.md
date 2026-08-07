@@ -198,6 +198,13 @@ ones: `plugins/rn-devtools-hub/skills/` for Claude Code and
 asserts the files are byte-for-byte equal, because a skill that drifts
 between the two silently teaches two different things.
 
+The dashboard's Tools panel measures the MCP traffic itself: calls per
+tool, failures grouped by message, empty answers with the reason the tool
+gave, bytes returned (the context an agent pays to read an answer),
+selector families used, and a timeline putting the calls next to what the
+app did in response. It is fed by `/tools/stats`, held in memory only and
+wiped when the hub restarts.
+
 The dashboard's Overview panel leads with the same project context the
 `get_project_context` tool returns, and with whatever the project and the
 running app disagree on. Check it before debugging anything that behaves

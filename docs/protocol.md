@@ -51,7 +51,9 @@ LLM to integrate any app.
 | `screen.stream.start` | { fps? 1..5 } | { ok, fps } |
 | `screen.stream.stop` | (none) | { ok } |
 | `ui.tree` | { maxDepth?, maxNodes?, includeHidden? } | { generation, truncated, hiddenSubtrees, roots: UiNode[][] } (requires `attachUiAutomation()`) |
-| `ui.query` | { by: testID/text/label/type/role, value, name?, exact?, within?, limit?, includeHidden? } | { generation, count, matches: [{type, testID, label, text, rect}] } |
+| `ui.query` | { by: testID/text/label/type/role, value, name?, exact?, within?, limit?, includeHidden? } | { generation, count, matches: [{type, testID, label, text, rect}], absence? } |
+| `context.runtime` | (none) | the runtime half of `get_project_context` (engine, Fabric, bridgeless, native versions) |
+| `context.instrumentation` | (none) | { network: {instrumented, wraps}, uiAutomation, determinism, originTracking, console, stores, actions, previews } |
 | `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd, by, value, name?, within?, text?, clear?, index?, x?, y?, includeHidden? } | { ok, action, detail, target } or { ok: false, reason: "ambiguous", candidates } |
 
 Selector notes: `by:"role"` matches `role` (precedence) or
@@ -61,6 +63,16 @@ the accessible name (aria-label / accessibilityLabel / alt /
 placeholder, then rendered text); Text hosts carry an implicit `text`
 role; `within` is a nested selector restricting the search to a
 container's subtree.
+
+When `count` is 0, `ui.query` adds `absence` ({reason, exposedBy,
+present, note}). `reason` separates the three ways a query returns
+nothing: `attribute-absent` (the app sets that prop nowhere, so every
+query of this family answers zero and retrying is pointless),
+`value-absent` (the attribute exists, this value does not, and `present`
+samples what does), `name-absent` (the role exists, the accessible name
+missed). `context.instrumentation` plays the same role for the event
+bus: it is what lets the hub answer "nothing is watching" instead of
+returning an empty list that reads as "nothing happened".
 
 Navigators keep previous screens MOUNTED (stack cards, inactive tabs).
 The `ui.*` commands therefore skip hidden subtrees by default, detected

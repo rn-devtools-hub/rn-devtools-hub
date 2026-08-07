@@ -37,6 +37,32 @@ import {
   truncateForWire,
 } from "./types";
 
+/** One wrap attempt on a network client, live or not */
+export interface NetworkWrap {
+  kind: "fetch" | "axios";
+  label: string;
+  /** False when the wrap ran before init(): it returned the client unchanged */
+  active: boolean;
+}
+
+/**
+ * What this app has actually attached.
+ *
+ * Read by the hub when a tool comes back empty, so it can answer
+ * "nothing is watching" instead of "nothing happened". The two look
+ * identical from outside the runtime and only one of them is a bug.
+ */
+export interface InstrumentationReport {
+  network: { instrumented: boolean; wraps: NetworkWrap[] };
+  uiAutomation: boolean;
+  determinism: boolean;
+  originTracking: boolean;
+  console: boolean;
+  stores: Array<{ name: string; kind: string | null; writable: boolean }>;
+  actions: string[];
+  previews: string[];
+}
+
 type AxiosLikeInstance = {
   interceptors: {
     request: { use: (onOk: (config: any) => any) => unknown };
@@ -57,6 +83,18 @@ class Devtools {
   private startedAt = Date.now();
   private trackOrigin = false;
   private determinism: ReturnType<typeof installDeterminism> | null = null;
+
+  /**
+   * Every wrap ever attempted on a network client, live or not.
+   *
+   * wrapFetch returns the client UNCHANGED when the SDK is not
+   * initialized yet, which is exactly what a module-scope
+   * `const api = devtools.wrapFetch(fetch, "api")` hits when its file is
+   * imported before init() runs. The app then works perfectly and the bus
+   * stays empty forever. Recording the attempt is what lets the hub say
+   * so instead of returning an empty list that reads like "no request".
+   */
+  private wraps: NetworkWrap[] = [];
 
   /**
    * Enables the controlled clock and controlled network.
@@ -104,6 +142,9 @@ class Devtools {
     installRuntimeContext({
       onCommand: (command, handler) => this.transport?.onCommand(command, handler),
     });
+    // Also always on, and for the same reason: an agent reading an empty
+    // answer needs to know whether anything was even attached to observe
+    this.transport.onCommand("context.instrumentation", () => this.instrumentation());
     this.emit("app.info", {
       appName: options.appName,
       deviceName: options.deviceName,
@@ -257,6 +298,9 @@ class Devtools {
   // Network: axios
   // ------------------------------------------------------------------
   attachAxios(instance: AxiosLikeInstance, label: string): void {
+    // Recorded before the guard: a wrap that no-opped is the answer to
+    // "why is the network panel empty", and it is invisible otherwise
+    this.wraps.push({ kind: "axios", label, active: this.enabled });
     if (!this.enabled) return;
 
     instance.interceptors.request.use((config: any) => {
@@ -327,6 +371,7 @@ class Devtools {
     fetchImpl: T,
     label: string
   ): T {
+    this.wraps.push({ kind: "fetch", label, active: this.enabled });
     if (!this.enabled) return fetchImpl;
 
     const self = this;
@@ -525,6 +570,29 @@ class Devtools {
     }, sampleEveryMs);
   }
 
+  /**
+   * What is attached right now, so an empty answer can be explained.
+   *
+   * Nothing here is derived from the event history: an app that made no
+   * request and an app whose fetch was never wrapped produce the same
+   * empty history, and only the runtime knows which one it is.
+   */
+  instrumentation(): InstrumentationReport {
+    return {
+      network: {
+        instrumented: this.wraps.some((wrap) => wrap.active),
+        wraps: this.wraps.map((wrap) => ({ ...wrap })),
+      },
+      uiAutomation: this.automationAttached,
+      determinism: this.determinism !== null,
+      originTracking: this.trackOrigin,
+      console: this.consoleAttached,
+      stores: this.stores ? this.stores.names() : [],
+      actions: [...this.actions.keys()],
+      previews: this.previews ? this.previews.names() : [],
+    };
+  }
+
   // Exposed for tests
   get __transport(): DevtoolsTransport | null {
     return this.transport;
@@ -544,7 +612,7 @@ export type { NetworkRule, NetworkCondition } from "./determinism";
 export type { StoreAdapter, ZustandLike, ReduxLike, QueryClientLike } from "./state";
 export type { SourceLocation, SourceVia } from "./source";
 export type { RuntimeContext, RendererInfo } from "./context";
-export type { UiNode, UiSelector, FiberLike } from "./automation";
+export type { UiNode, UiSelector, UiAbsence, FiberLike } from "./automation";
 export type {
   ActionDefinition,
   CommandHandler,

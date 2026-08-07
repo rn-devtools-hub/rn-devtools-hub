@@ -327,6 +327,23 @@
   }
   .action-card .hint { font-size: 11px; color: var(--muted); }
 
+  /* ---------- Tools (MCP usage) ---------- */
+  .tool-loop { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  .tool-loop .pair { display: flex; align-items: baseline; gap: 8px; }
+  .tool-loop .pair .seq { font-family: var(--mono); color: var(--ink-2); }
+  .tool-loop .pair .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .tool-loop .note { color: var(--muted); font-size: 11px; }
+  .tool-err {
+    border-left: 2px solid var(--critical); padding: 8px 10px; margin-bottom: 8px;
+    background: var(--surface-2); border-radius: 0 6px 6px 0;
+  }
+  .tool-err .msg { font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+  .tool-err .meta { margin-top: 3px; font-size: 11px; color: var(--muted); }
+  .tool-reason { display: block; font-size: 10.5px; color: var(--muted); }
+  .tool-legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .tool-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .tool-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
   /* ---------- SQL highlighting (reserved words) ---------- */
   .sql-kw { color: #6da7ec; font-weight: 600; }
   .sql-str { color: #1baf7a; }
@@ -478,6 +495,7 @@
     <button data-tab="sqlite">SQLite</button>
     <button data-tab="endpoints">Endpoints</button>
     <button data-tab="actions">Actions</button>
+    <button data-tab="tools">Tools<span class="count" id="cTools"></span></button>
     <button data-tab="design">Design</button>
     <button data-tab="mirror">Mirror</button>
   </nav>
@@ -645,6 +663,42 @@
     <section class="panel" id="panel-actions">
       <div class="actions-grid" id="actionsGrid"></div>
       <div class="empty" id="actionsEmpty">The app has not declared any actions yet</div>
+    </section>
+
+    <!-- ================= TOOLS (MCP usage) ================= -->
+    <section class="panel" id="panel-tools">
+      <div class="tiles" id="toolTiles"></div>
+      <div class="chart-card">
+        <h3>What the agent did, and what the app did back</h3>
+        <div class="chart-wrap" id="toolTimeline"><div class="empty">No MCP call recorded yet</div></div>
+      </div>
+      <div class="charts">
+        <div class="chart-card">
+          <h3>Calls by tool</h3>
+          <div class="chart-wrap" id="toolBars"><div class="empty">No MCP call recorded yet</div></div>
+        </div>
+        <div class="chart-card">
+          <h3>Selectors used</h3>
+          <div class="chart-wrap" id="toolSelectors"><div class="empty">No selector used yet</div></div>
+        </div>
+        <div class="chart-card">
+          <h3>Loop shape</h3>
+          <div class="chart-wrap" id="toolLoop"><div class="empty">Waiting for two consecutive calls</div></div>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>Tool</th><th>Calls</th><th>Errors</th><th>Empty</th>
+            <th>p50</th><th>p95</th><th>Avg size</th><th>Total size</th>
+          </tr></thead>
+          <tbody id="toolRows"></tbody>
+        </table>
+      </div>
+      <div class="chart-card">
+        <h3>Failures</h3>
+        <div id="toolErrors"><div class="empty">No failure recorded</div></div>
+      </div>
     </section>
 
     <!-- ================= DESIGN ================= -->
@@ -1137,6 +1191,8 @@
     $(`panel-${button.dataset.tab}`).classList.add("active");
     // Mirror: automatic detection and start when the tab opens
     if (button.dataset.tab === "mirror") mirrorAuto();
+    // Tools: the panel is a hub-side poll, not part of the device stream
+    if (button.dataset.tab === "tools") pollToolStats();
     scheduleRender();
   });
 
@@ -1196,6 +1252,11 @@
   const networkEntries = (store) =>
     store.networkOrder.map((id) => store.network.get(id)).filter(Boolean);
 
+  /** One stat, shared by every panel that leads with a row of them */
+  const tile = (label, value, cls = "", sub = "") =>
+    `<div class="tile"><div class="label">${label}</div>
+     <div class="value ${cls}">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+
   const renderOverview = (store) => {
     const entries = networkEntries(store);
     const done = entries.filter((e) => e.response || e.error);
@@ -1208,10 +1269,6 @@
     const lastPerf = store.perf[store.perf.length - 1];
     const stats = store.uploadStats;
     const errorRate = done.length ? Math.round((errors.length / done.length) * 100) : 0;
-
-    const tile = (label, value, cls = "", sub = "") =>
-      `<div class="tile"><div class="label">${label}</div>
-       <div class="value ${cls}">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 
     $("overviewTiles").innerHTML =
       tile("Requests", entries.length, "", `${errors.length} failed`) +
@@ -2526,6 +2583,232 @@
   // Capability badges: lightweight polling, light up as soon as a
   // phone-interaction technology is available
   // ================================================================
+  // ---------- Tools: what the agents actually do with this hub ----------
+  /**
+   * Every MCP call goes through the hub, so this panel needs nothing from
+   * the app. It answers what no other panel can: which tools carry the
+   * work, which fail and with what message, which come back EMPTY (and
+   * why), how much context each one bills the agent, and what the loop
+   * looks like once the calls are put back in order.
+   */
+  const toolStats = { data: null };
+
+  const fmtBytes = (bytes) =>
+    bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB`
+    : bytes >= 1024 ? `${Math.round(bytes / 1024)} kB`
+    : `${bytes} B`;
+
+  const pollToolStats = async () => {
+    try {
+      const response = await fetch(`/tools/stats?token=${encodeURIComponent(hubToken)}`);
+      toolStats.data = await response.json();
+      renderTools();
+    } catch {
+      // hub unreachable: the panel keeps the snapshot it has
+    }
+  };
+
+  const renderToolBars = (tools) => {
+    const host = $("toolBars");
+    const rows = tools.slice(0, 10);
+    const max = Math.max(...rows.map((tool) => tool.calls), 1);
+    const W = Math.max(host.clientWidth - 4, 280);
+    const LABEL_W = Math.min(160, Math.round(W * 0.42)), BAR_H = 16, GAP = 9;
+    const track = Math.max(W - LABEL_W - 46, 40);
+
+    host.innerHTML = `
+      <svg width="${W}" height="${rows.length * (BAR_H + GAP) + 4}">
+        ${rows.map((tool, index) => {
+          const y = index * (BAR_H + GAP);
+          const width = (count) => (track * count) / max;
+          // A failed call is never counted as empty, so the three
+          // segments partition the calls exactly
+          const plain = tool.calls - tool.errors - tool.empty;
+          const segments = [
+            { count: plain, color: "var(--series-1)", label: "answered" },
+            { count: tool.empty, color: "var(--warning)", label: "empty" },
+            { count: tool.errors, color: "var(--critical)", label: "failed" },
+          ].filter((segment) => segment.count > 0);
+          let offset = LABEL_W;
+          return `
+            <text x="0" y="${y + 12}" fill="var(--ink-2)" font-size="11" font-family="var(--mono)">${esc(tool.name)}</text>
+            ${segments.map((segment) => {
+              const barWidth = Math.max(width(segment.count), 2);
+              const x = offset;
+              offset += barWidth;
+              return `<rect x="${x}" y="${y}" width="${barWidth}" height="${BAR_H}" fill="${segment.color}"
+                data-tip="${esc(tool.name)}: ${segment.count} ${segment.label}"/>`;
+            }).join("")}
+            <text x="${offset + 6}" y="${y + 12}" fill="var(--ink)" font-size="11"
+                  font-variant-numeric="tabular-nums">${tool.calls}</text>`;
+        }).join("")}
+      </svg>
+      <div class="tool-legend">
+        <span><i style="background:var(--series-1)"></i>answered</span>
+        <span><i style="background:var(--warning)"></i>empty</span>
+        <span><i style="background:var(--critical)"></i>failed</span>
+      </div>`;
+    attachRectTooltips(host);
+  };
+
+  const renderToolSelectors = (selectors) => {
+    const host = $("toolSelectors");
+    if (!selectors.length) {
+      host.innerHTML = `<div class="empty">No selector used yet</div>`;
+      return;
+    }
+    const max = Math.max(...selectors.map((entry) => entry.calls), 1);
+    const W = Math.max(host.clientWidth - 4, 280);
+    const LABEL_W = 60, BAR_H = 16, GAP = 9;
+    const track = Math.max(W - LABEL_W - 46, 40);
+    host.innerHTML = `
+      <svg width="${W}" height="${selectors.length * (BAR_H + GAP) + 4}">
+        ${selectors.map((entry, index) => {
+          const y = index * (BAR_H + GAP);
+          const found = entry.calls - entry.empty - entry.errors;
+          const barWidth = (count) => Math.max((track * count) / max, count ? 2 : 0);
+          return `
+            <text x="0" y="${y + 12}" fill="var(--ink-2)" font-size="11">${esc(entry.by)}</text>
+            <rect x="${LABEL_W}" y="${y}" width="${barWidth(found)}" height="${BAR_H}" fill="var(--series-1)"
+              data-tip="by:${esc(entry.by)} matched ${found} time(s)"/>
+            <rect x="${LABEL_W + barWidth(found)}" y="${y}" width="${barWidth(entry.empty + entry.errors)}" height="${BAR_H}"
+              fill="var(--warning)" data-tip="by:${esc(entry.by)} found nothing ${entry.empty + entry.errors} time(s)"/>
+            <text x="${LABEL_W + barWidth(found) + barWidth(entry.empty + entry.errors) + 6}" y="${y + 12}"
+                  fill="var(--ink)" font-size="11" font-variant-numeric="tabular-nums">${entry.calls}</text>`;
+        }).join("")}
+      </svg>
+      <div class="tool-legend"><span>Preferred order: role plus name, then testID, then run_action</span></div>`;
+    attachRectTooltips(host);
+  };
+
+  const renderToolLoop = (loop) => {
+    const host = $("toolLoop");
+    if (!loop.pairs.length) {
+      host.innerHTML = `<div class="empty">Waiting for two consecutive calls</div>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="tool-loop">
+        ${loop.pairs.map((entry) => `
+          <div class="pair"><span class="seq">${esc(entry.pair)}</span><span class="n">${entry.count}</span></div>
+        `).join("")}
+        <div class="note">${loop.repeats
+          ? `${loop.repeats} immediate repeat(s) of the same tool: an agent retrying is an agent that did not get what it needed.`
+          : "No immediate repeat: every call moved to a different tool."}</div>
+      </div>`;
+  };
+
+  /**
+   * One strip, two lanes: what the agent asked for, and what the app did.
+   * Both clocks are the hub's, so they line up without correlation.
+   */
+  const renderToolTimeline = (calls) => {
+    const host = $("toolTimeline");
+    if (!calls.length) {
+      host.innerHTML = `<div class="empty">No MCP call recorded yet</div>`;
+      return;
+    }
+    const store = current();
+    const now = Date.now();
+    // Always show at least a minute, so a lone call is not a full-width bar
+    const from = Math.min(calls[0].at, now - 60000);
+    const span = Math.max(now - from, 1000);
+    const W = Math.max(host.clientWidth - 4, 280), H = 108, PAD = 8;
+    const x = (ts) => PAD + ((ts - from) / span) * (W - PAD * 2);
+
+    const appEvents = [
+      ...[...store.network.values()].map((entry) => ({
+        ts: entry.ts, color: "var(--series-1)",
+        label: `${entry.request.method ?? ""} ${String(entry.request.url ?? "").slice(0, 60)}`,
+      })),
+      ...store.screens.map((screen) => ({ ts: screen.ts, color: "var(--good)", label: `screen ${screen.screen ?? screen.name ?? ""}` })),
+      ...store.logs.filter((log) => log.level === "error").map((log) => ({ ts: log.ts, color: "var(--serious)", label: "console error" })),
+      ...store.crashes.map((crash) => ({ ts: crash.ts, color: "var(--critical)", label: `crash: ${String(crash.message ?? "").slice(0, 60)}` })),
+    ].filter((event) => event.ts >= from && event.ts <= now);
+
+    const colorOf = (call) => !call.ok ? "var(--critical)" : call.empty ? "var(--warning)" : "var(--series-1)";
+    host.innerHTML = `
+      <svg width="${W}" height="${H}">
+        <text x="0" y="12" fill="var(--muted)" font-size="10.5">Tool calls</text>
+        ${calls.map((call) => `
+          <rect x="${x(call.at)}" y="20" width="${Math.max((call.durationMs / span) * (W - PAD * 2), 3)}" height="20"
+                rx="2" fill="${colorOf(call)}"
+                data-tip="${esc(call.name)} · ${call.durationMs} ms · ${fmtBytes(call.bytes)}${call.empty ? " · empty" : ""}${call.ok ? "" : " · failed"}"/>
+        `).join("")}
+        <line x1="${PAD}" y1="52" x2="${W - PAD}" y2="52" stroke="var(--baseline)" stroke-width="1"/>
+        <text x="0" y="72" fill="var(--muted)" font-size="10.5">App events</text>
+        ${appEvents.map((event) => `
+          <rect x="${x(event.ts)}" y="78" width="3" height="18" rx="1" fill="${event.color}"
+                data-tip="${esc(event.label)}"/>
+        `).join("")}
+        <text x="${PAD}" y="${H - 2}" fill="var(--muted)" font-size="10">${fmtTime(from).slice(0, 8)}</text>
+        <text x="${W - PAD}" y="${H - 2}" fill="var(--muted)" font-size="10" text-anchor="end">now</text>
+      </svg>`;
+    attachRectTooltips(host);
+  };
+
+  const renderTools = () => {
+    const data = toolStats.data;
+    if (!data) return;
+    $("cTools").textContent = data.totals.calls || "";
+    if (!data.totals.calls) return;
+
+    const totals = data.totals;
+    const rate = (part) => Math.round((part / totals.calls) * 100);
+    const errorRate = rate(totals.errors);
+    const emptyRate = rate(totals.empty);
+    // The client name and the start time ride in a subline: they are text,
+    // and the big tile value is for numbers
+    const provenance = [
+      `${totals.distinctTools} distinct tools`,
+      data.clients.length ? data.clients.join(", ") : "unknown client",
+      `since ${fmtTime(data.since).slice(0, 8)}`,
+    ].join(" · ");
+    $("toolTiles").innerHTML =
+      tile("MCP calls", totals.calls, "", esc(provenance)) +
+      tile("Failure rate", `${errorRate}%`, errorRate > 20 ? "crit" : errorRate > 5 ? "warn" : "good",
+        `${totals.errors} failed`) +
+      tile("Empty answers", `${emptyRate}%`, emptyRate > 40 ? "warn" : "",
+        `${totals.empty} returned nothing`) +
+      tile("Answer time p95", totals.p95Ms === null ? "–" : `${totals.p95Ms} ms`, "",
+        totals.p50Ms === null ? "" : `p50 ${totals.p50Ms} ms`) +
+      tile("Context returned", fmtBytes(totals.bytes), "", "what the agent paid to read this");
+
+    renderToolTimeline(data.timeline);
+    renderToolBars(data.tools);
+    renderToolSelectors(data.selectors);
+    renderToolLoop(data.loop);
+
+    $("toolRows").innerHTML = data.tools.map((tool) => `
+      <tr>
+        <td class="mono">${esc(tool.name)}</td>
+        <td>${tool.calls}</td>
+        <td class="${tool.errors ? "crit" : ""}">${tool.errors || ""}</td>
+        <td>${tool.empty || ""}${tool.emptyReasons.length
+          ? `<span class="tool-reason">${esc(tool.emptyReasons.map((entry) => `${entry.reason} x${entry.count}`).join(", "))}</span>`
+          : ""}</td>
+        <td>${tool.p50Ms === null ? "" : `${tool.p50Ms} ms`}</td>
+        <td>${tool.p95Ms === null ? "" : `${tool.p95Ms} ms`}</td>
+        <td>${fmtBytes(tool.avgBytes)}</td>
+        <td>${fmtBytes(tool.bytes)}</td>
+      </tr>`).join("");
+
+    $("toolErrors").innerHTML = data.errors.length
+      ? data.errors.map((entry) => `
+          <div class="tool-err">
+            <div class="msg">${esc(entry.message)}</div>
+            <div class="meta">${entry.count} time(s) · ${esc(entry.tools.join(", "))}</div>
+          </div>`).join("")
+      : `<div class="empty">No failure recorded</div>`;
+  };
+
+  const toolsPanelOpen = () => $("panel-tools").classList.contains("active");
+  // Fast while the panel is open, slow otherwise: the tab badge stays
+  // honest without polling the hub for a panel nobody is looking at
+  setInterval(() => { if (toolsPanelOpen()) pollToolStats(); }, 3000);
+  setInterval(() => { if (!toolsPanelOpen()) pollToolStats(); }, 15000);
+  pollToolStats();
+
   const renderCapabilityBadges = (data) => {
     const badges = [];
     const androidCount = (data.sources ?? []).filter((s) => s.kind === "android").length;

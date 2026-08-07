@@ -10,6 +10,7 @@ import {
   UiNode,
   accessibleName,
   collectSubtreeText,
+  describeAbsence,
   fiberMatches,
   findHandler,
   findMeasurableInstance,
@@ -324,6 +325,62 @@ describe("role selector and within scoping", () => {
     expect(scoped.count).toBe(1);
     expect(scoped.matches[0].text).toBe("Colis SPX-1");
     delete globalAny.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  });
+});
+
+// ------------------------------------------------------------------
+// Empty answers: nothing observed vs nothing observable
+// ------------------------------------------------------------------
+
+describe("describeAbsence", () => {
+  const screen = () => rootOf({
+    type: "RCTView",
+    props: { testID: "signIn" },
+    children: [
+      { type: "RCTText", text: "Se connecter" },
+      { type: "RCTView", props: { testID: "submit", onPress: () => {} } },
+    ],
+  });
+
+  it("says an app exposing no role will answer zero to every role query", () => {
+    const absence = describeAbsence([screen()], { by: "role", value: "button" });
+    expect(absence.reason).toBe("attribute-absent");
+    expect(absence.note).toMatch(/this app exposes no roles/);
+    // The implicit "text" role of a Text host must not count as a
+    // declared role, or the diagnostic never fires on a real screen
+    expect(absence.note).toMatch(/implicit "text" role/);
+  });
+
+  it("lists the values present when the attribute exists but the value does not", () => {
+    const absence = describeAbsence([screen()], { by: "testID", value: "logout" });
+    expect(absence.reason).toBe("value-absent");
+    expect(absence.present).toContain("submit");
+    expect(absence.present).toContain("signIn");
+  });
+
+  it("separates a missing accessible name from a missing role", () => {
+    const root = rootOf({
+      type: "RCTView",
+      children: [
+        { type: "RCTView", props: { accessibilityRole: "button", accessibilityLabel: "Valider" } },
+      ],
+    });
+    const absence = describeAbsence([root], { by: "role", value: "button", name: "Annuler" });
+    expect(absence.reason).toBe("name-absent");
+    expect(absence.present).toEqual(["Valider"]);
+  });
+
+  it("counts the implicit text role like the selector does once a role is declared", () => {
+    const root = rootOf({
+      type: "RCTView",
+      children: [
+        { type: "RCTView", props: { accessibilityRole: "button" } },
+        { type: "RCTText", text: "Se connecter" },
+      ],
+    });
+    const absence = describeAbsence([root], { by: "role", value: "header" });
+    expect(absence.reason).toBe("value-absent");
+    expect(absence.present).toEqual(expect.arrayContaining(["button", "text"]));
   });
 });
 

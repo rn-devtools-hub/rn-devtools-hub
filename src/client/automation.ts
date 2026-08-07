@@ -57,6 +57,28 @@ export interface UiSelector {
   name?: string;
 }
 
+/**
+ * Why a selector matched nothing.
+ *
+ * "No element carries a role" and "no element carries THIS role" are
+ * different facts, and an empty array states neither: it reads as
+ * "nothing on screen", which sends an agent looking for a regression
+ * that does not exist. An app that never sets accessibilityRole answers
+ * zero to every by:"role" query, forever, and no retry changes that.
+ */
+export interface UiAbsence {
+  by: UiSelector["by"];
+  value: string;
+  reason: "attribute-absent" | "value-absent" | "name-absent";
+  /** How many VISIBLE elements expose the attribute the selector reads */
+  exposedBy: number;
+  /** A sample of the values actually present, to select on instead */
+  present: string[];
+  /** True when the sample was capped, not exhaustive */
+  truncated: boolean;
+  note: string;
+}
+
 export interface SerializeOptions {
   maxDepth?: number;
   maxNodes?: number;
@@ -304,6 +326,13 @@ const ROLE_ALIASES: Record<string, string> = {
 };
 const normalizeRole = (role: string): string => ROLE_ALIASES[role] ?? role;
 
+/** RN 0.71+ ARIA-style role wins over accessibilityRole; Text hosts carry
+ * an implicit "text" role, like in Testing Library */
+const roleOf = (fiber: FiberLike): string | undefined => {
+  const explicit = stringProp(propsOf(fiber), "role", "accessibilityRole");
+  return explicit ?? (isTextType(prettyHostType(String(fiber.type))) ? "text" : undefined);
+};
+
 /** True when the fiber matches the selector. Host fibers only. */
 export const fiberMatches = (fiber: FiberLike, selector: UiSelector): boolean => {
   if (!isHostFiber(fiber)) return false;
@@ -315,11 +344,8 @@ export const fiberMatches = (fiber: FiberLike, selector: UiSelector): boolean =>
     case "label":
       return stringProp(props, "accessibilityLabel", "aria-label") === value;
     case "role": {
-      // RN 0.71+ ARIA-style role wins over accessibilityRole; both
-      // naming families match through the alias table, and Text hosts
-      // carry an implicit "text" role like in Testing Library
-      const explicit = stringProp(props, "role", "accessibilityRole");
-      const role = explicit ?? (isTextType(prettyHostType(String(fiber.type))) ? "text" : undefined);
+      // Both naming families match through the alias table
+      const role = roleOf(fiber);
       if (role === undefined || normalizeRole(role) !== normalizeRole(value)) return false;
       if (selector.name === undefined) return true;
       const name = accessibleName(fiber);
@@ -369,6 +395,160 @@ export const queryFibers = (
   };
   visit(rootFiber.child ?? rootFiber);
   return found;
+};
+
+/** The props each selector family reads, named as the app writes them */
+const SELECTOR_SOURCE: Record<UiSelector["by"], string> = {
+  testID: "testID (or data-testid)",
+  label: "accessibilityLabel (or aria-label)",
+  role: "role or accessibilityRole",
+  text: "rendered text",
+  type: "a host type",
+};
+
+/** The value a fiber exposes for a given selector family, if any */
+const exposedValue = (fiber: FiberLike, by: UiSelector["by"]): string | undefined => {
+  const props = propsOf(fiber);
+  switch (by) {
+    case "testID":
+      return stringProp(props, "testID", "data-testid");
+    case "label":
+      return stringProp(props, "accessibilityLabel", "aria-label");
+    case "role":
+      return roleOf(fiber);
+    case "type":
+      return prettyHostType(String(fiber.type));
+    case "text": {
+      const own = props?.children;
+      const ownText = typeof own === "string" || typeof own === "number" ? String(own) : "";
+      if (!isTextType(prettyHostType(String(fiber.type))) && !ownText) return undefined;
+      return (ownText + collectSubtreeText(fiber, 30)) || undefined;
+    }
+    default:
+      return undefined;
+  }
+};
+
+/** Bounded: this runs on the empty path, where the caller is already
+ * waiting, and a sample is enough to pick another selector */
+const ABSENCE_SCAN_LIMIT = 4000;
+const ABSENCE_SAMPLE = 20;
+const clip = (value: string): string => (value.length > 60 ? `${value.slice(0, 60)}...` : value);
+
+/**
+ * Explains an empty match set: nothing observed, or nothing observable.
+ *
+ * Only called when a query returned zero, so the extra walk costs
+ * nothing on the path that found something.
+ */
+export const describeAbsence = (
+  scopes: FiberLike[],
+  selector: UiSelector,
+  includeHidden = false,
+): UiAbsence => {
+  const present = new Set<string>();
+  const namesForRole = new Set<string>();
+  let exposedBy = 0;
+  let sameRole = 0;
+  /** Roles the app actually WRITES. Every Text host carries an implicit
+   * "text" role, so counting those would report an app that declares no
+   * role at all as role-exposing, which is the mistake this exists to
+   * prevent. */
+  let declaredRoles = 0;
+  let scanned = 0;
+
+  const visit = (node: FiberLike | null | undefined): void => {
+    for (let current = node; current && scanned < ABSENCE_SCAN_LIMIT; current = current.sibling ?? null) {
+      if (!includeHidden && isHiddenSubtree(current)) continue;
+      scanned += 1;
+      if (isHostFiber(current)) {
+        const value = exposedValue(current, selector.by);
+        if (selector.by === "role" && stringProp(propsOf(current), "role", "accessibilityRole")) {
+          declaredRoles += 1;
+        }
+        if (value) {
+          exposedBy += 1;
+          if (present.size < ABSENCE_SAMPLE) present.add(clip(value));
+          if (selector.by === "role" && normalizeRole(value) === normalizeRole(selector.value)) {
+            sameRole += 1;
+            const name = accessibleName(current);
+            if (name && namesForRole.size < ABSENCE_SAMPLE) namesForRole.add(clip(name));
+          }
+        }
+      }
+      visit(current.child ?? null);
+    }
+  };
+  for (const scope of scopes) visit(scope.child ?? scope);
+
+  const truncated = scanned >= ABSENCE_SCAN_LIMIT;
+  const quote = (values: Set<string>): string =>
+    [...values].map((value) => `"${value}"`).join(", ");
+
+  // The role exists, the accessible name is what missed: an agent that
+  // reads "no match" here goes looking for the button on another screen
+  if (selector.by === "role" && selector.name !== undefined && sameRole > 0) {
+    return {
+      by: selector.by,
+      value: selector.value,
+      reason: "name-absent",
+      exposedBy,
+      present: [...namesForRole],
+      truncated,
+      note:
+        `${sameRole} visible element(s) have role "${selector.value}", none named ` +
+        `${selector.exact ? "exactly " : ""}"${selector.name}". Names present: ` +
+        `${quote(namesForRole) || "none, these elements have no accessible name"}.`,
+    };
+  }
+
+  // The case the report of a real run named: role queries answering zero
+  // on an app that simply never sets a role. Retrying will never help.
+  if (selector.by === "role" && declaredRoles === 0 && normalizeRole(selector.value) !== "text") {
+    return {
+      by: selector.by,
+      value: selector.value,
+      reason: "attribute-absent",
+      exposedBy: 0,
+      present: [...present],
+      truncated,
+      note:
+        "No visible element declares role or accessibilityRole: this app exposes no roles, so " +
+        'every by:"role" query answers zero whatever the value, and retrying cannot change that. ' +
+        (present.size ? 'Only Text nodes carry the implicit "text" role. ' : "") +
+        "Select by testID or text, or add accessibilityRole in the source.",
+    };
+  }
+
+  if (exposedBy === 0) {
+    return {
+      by: selector.by,
+      value: selector.value,
+      reason: "attribute-absent",
+      exposedBy: 0,
+      present: [],
+      truncated,
+      note:
+        `No visible element exposes ${SELECTOR_SOURCE[selector.by]}: this app sets it nowhere on ` +
+        `this screen, so every by:"${selector.by}" query answers zero whatever the value. ` +
+        "Nothing is missing from the screen, nothing is observable this way. " +
+        (selector.by === "role" || selector.by === "label"
+          ? "Select by testID or text, or add the accessibility props in the source."
+          : "Select by role plus name, or by text."),
+    };
+  }
+
+  return {
+    by: selector.by,
+    value: selector.value,
+    reason: "value-absent",
+    exposedBy,
+    present: [...present],
+    truncated,
+    note:
+      `${exposedBy} visible element(s) expose ${SELECTOR_SOURCE[selector.by]}, none matching ` +
+      `"${selector.value}". Present: ${quote(present)}${truncated ? ", and more" : ""}.`,
+  };
 };
 
 /**
@@ -940,6 +1120,9 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
       generation: tracker.generation,
       count: matches.length,
       matches: await Promise.all(matches.map(describeMatch)),
+      // An empty array says "nothing matched" and lets the reader hear
+      // "nothing is there". Say which of the two it is.
+      ...(matches.length ? {} : { absence: describeAbsence(scopes, selector, includeHidden) }),
     };
   });
 
@@ -955,7 +1138,10 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
       if (matches.length >= 5) break;
     }
     if (!matches.length) {
-      throw new Error(`No element matches ${selector.by}="${selector.value}"`);
+      const absence = describeAbsence(scopes, selector, includeHidden);
+      throw new Error(
+        `No element matches ${selector.by}="${selector.value}". ${absence.note}`
+      );
     }
     const index = Math.max(0, Number(payload.index) || 0);
     if (matches.length > 1 && payload.index === undefined) {

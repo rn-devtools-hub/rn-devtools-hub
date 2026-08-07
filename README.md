@@ -102,6 +102,11 @@ bridges to the hub and starts it on demand.
   <em>Mirror: the live device screen over adb, click to tap, drag to swipe, wheel to scroll, plus Back/Home/Recents/Dev menu</em>
 </p>
 
+<p align="center">
+  <img src="assets/screenshots/tools.png" alt="Tools panel: MCP calls per tool, failures, empty answers with their reason, and a timeline of the agent loop against the app's events">
+  <em>Tools: what the agent did and what the app did back, calls per tool split into answered / empty / failed, failures grouped by message, empty answers with the reason the tool gave, and the context each answer bills the agent</em>
+</p>
+
 ## Why
 
 The SDK lives **inside the JavaScript runtime of your app**.
@@ -143,6 +148,7 @@ hub. Your data never leaves your machine.
 | SQLite | Read-only SQL console (SELECT/PRAGMA) on your app's database |
 | Endpoints | Map of declared endpoints, calls, latencies |
 | Actions | Buttons driving the app: reload, clear caches, your custom actions |
+| Tools | What the agents do with this hub: calls per tool, failures with their message, empty answers and why, context bytes returned, selectors used, and the loop replayed against the app's own events |
 | Design | Icon, splash, fonts, sounds, identity (read from app.json and the assets) |
 | Mirror | Live app screen (needs react-native-view-shot in the app), full Android via adb (tap, swipe, keyboard, Wi-Fi), iOS simulator via xcrun |
 

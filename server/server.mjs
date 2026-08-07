@@ -26,6 +26,8 @@ import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
+import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
+import { createToolLog, recordToolCall, summarizeTools, readEmptiness } from "./tools.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -116,6 +118,29 @@ const mcpText = (value, isError = false) => ({
   content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
   ...(isError ? { isError: true } : {}),
 });
+
+/** Bounded, in memory, wiped on restart: the interesting window is the
+ * session an agent is driving right now */
+const toolLog = createToolLog();
+
+/**
+ * What this answer bills the agent in context.
+ *
+ * An image counts its base64, which is the whole reason to measure: a
+ * tool that succeeds every time and returns 200 KB is a product problem
+ * that no success rate will ever show.
+ */
+const sizeOfResult = (result) => {
+  try {
+    if (result && typeof result === "object" && result.__mcpImage) {
+      const { __mcpImage, ...rest } = result;
+      return (__mcpImage.data?.length ?? 0) + JSON.stringify(rest).length;
+    }
+    return JSON.stringify(result ?? null)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+};
 
 const isLocalRequest = (request, bunServer) => {
   const address = bunServer.requestIP(request)?.address;
@@ -452,7 +477,7 @@ const MCP_TOOLS = [
   },
   {
     name: "get_recent_network",
-    description: "Returns the recent network events captured by the hub.",
+    description: "Returns the recent network events captured by the hub, as {count, events}. When nothing was captured it also returns capture{instrumented, note}, which states whether anything is watching the network at all: an app that never called wrapFetch answers zero forever, and that is not the same fact as an app that sent no request.",
     inputSchema: { type: "object", properties: { deviceId: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 1000 } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
@@ -464,7 +489,7 @@ const MCP_TOOLS = [
   },
   {
     name: "get_endpoint_stats",
-    description: "Computes calls, errors and p50/p95 latencies per endpoint from the captured requests.",
+    description: "Computes calls, errors and p50/p95 latencies per endpoint from the captured requests. With nothing captured it returns {endpoints: [], capture} instead, where capture says whether the network is instrumented at all.",
     inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
@@ -494,7 +519,7 @@ const MCP_TOOLS = [
   },
   {
     name: "query_ui",
-    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, the current value of an input, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Retries while nothing matches (timeoutMs, default 1000) so a screen transition is not mistaken for a regression. Hidden navigator screens are skipped unless includeHidden.",
+    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, the current value of an input, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Retries while nothing matches (timeoutMs, default 1000) so a screen transition is not mistaken for a regression. An empty answer carries absence{reason, exposedBy, present, note}: it distinguishes an app that exposes no role or testID at all (every such query will answer zero) from a value that is genuinely not on screen, and lists what IS exposed to select on instead. Hidden navigator screens are skipped unless includeHidden.",
     inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, timeoutMs: { type: "integer", minimum: 0, maximum: 30000, description: "Retry while nothing matches, up to this deadline (default 1000). A UI is asynchronous and an empty answer during a transition reads like a regression. Pass 0 for a single immediate look." }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
@@ -617,6 +642,17 @@ const pickDevice = (deviceId) => {
   return connected[0] ?? Array.from(devices.entries())[0] ?? [];
 };
 
+/** Bus position at the time of a tool call, for the Tools timeline. Never
+ * throws: an ambiguous or absent device must not break the call it is
+ * only annotating. */
+const cursorFor = (deviceId) => {
+  try {
+    return pickDevice(deviceId)[1]?.lastSeq ?? null;
+  } catch {
+    return null;
+  }
+};
+
 /** Android exposes uiautomator; iOS needs AXe, and its absence is
  * reported rather than silently returning an empty tree */
 const captureAccessibilityTree = async (target) => {
@@ -715,7 +751,13 @@ const handleMcpTool = async (name, args = {}) => {
     return { device: deviceSummary([deviceId, device]), events: info };
   }
   if (name === "get_recent_network") {
-    return eventsOfType(device, ["network.request", "network.response", "network.error"], args.limit);
+    const events = eventsOfType(device, ["network.request", "network.response", "network.error"], args.limit);
+    // An empty array is the answer an agent misreads: it looks like "the
+    // app sent nothing" when it usually means "nothing was wrapped". The
+    // device is only asked on that path, so a normal call stays one hop.
+    if (events.length) return { count: events.length, events };
+    const state = await readInstrumentation((command, payload) => sendDeviceCommand(deviceId, command, payload));
+    return { count: 0, events, capture: explainEmptyNetwork(state) };
   }
   if (name === "get_crashes") return eventsOfType(device, ["crash"], args.limit);
   if (name === "get_endpoint_stats") {
@@ -746,7 +788,7 @@ const handleMcpTool = async (name, args = {}) => {
       const sorted = values.slice().sort((a, b) => a - b);
       return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1)];
     };
-    return Array.from(groups.entries()).map(([endpoint, calls]) => {
+    const stats = Array.from(groups.entries()).map(([endpoint, calls]) => {
       const durations = calls.map((call) => call.durationMs).filter(Number.isFinite);
       return {
         endpoint,
@@ -756,6 +798,9 @@ const handleMcpTool = async (name, args = {}) => {
         p95Ms: percentile(durations, 0.95),
       };
     }).sort((a, b) => (b.p95Ms ?? 0) - (a.p95Ms ?? 0));
+    if (stats.length) return stats;
+    const state = await readInstrumentation((command, payload) => sendDeviceCommand(deviceId, command, payload));
+    return { endpoints: [], capture: explainEmptyNetwork(state) };
   }
   if (name === "query_sqlite") {
     if (!/^\s*(select|pragma)\b/i.test(String(args.sql ?? ""))) throw new Error("Read-only: SELECT or PRAGMA only");
@@ -771,7 +816,10 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "list_actions") {
     const registrations = eventsOfType(device, ["actions.register"], 1000);
     const latest = registrations[registrations.length - 1];
-    return { actions: latest?.payload?.actions ?? [] };
+    const actions = latest?.payload?.actions ?? [];
+    if (actions.length) return { actions };
+    const state = await readInstrumentation((command, payload) => sendDeviceCommand(deviceId, command, payload));
+    return { actions, note: explainEmptyRegistry(state, "actions") };
   }
   if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
     const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
@@ -852,6 +900,14 @@ const handleMcpTool = async (name, args = {}) => {
     const { deviceId: _unused, ...payload } = args;
     const response = await sendDeviceCommand(deviceId, DEVICE_COMMANDS[name], payload);
     if (response.error) throw new Error(response.error);
+    // Listing an empty registry: same trap as the network. "No store" and
+    // "no registerStore call" read identically and mean opposite things.
+    const registry = name === "get_state" ? "stores" : name === "list_previews" ? "previews" : null;
+    if (registry && Array.isArray(response.result?.[registry]) && !response.result[registry].length) {
+      const state = await readInstrumentation((command, load) => sendDeviceCommand(deviceId, command, load));
+      const note = explainEmptyRegistry(state, registry);
+      if (note) return { ...response.result, note };
+    }
     return response.result;
   }
   if (name === "compare_snapshot") {
@@ -966,6 +1022,10 @@ const handleMcpRequest = async (request, bunServer) => {
   try { message = await request.json(); } catch { return jsonResponse(mcpError(null, -32700, "Invalid JSON"), 400); }
   const { id, method, params } = message;
   if (method === "initialize") {
+    // Which agent is driving: Claude Code, Codex, Cursor. The Tools panel
+    // reads it, and it is the only place the client ever names itself.
+    const client = params?.clientInfo?.name;
+    if (typeof client === "string" && client) toolLog.clients.add(client.slice(0, 60));
     return jsonResponse(mcpResult(id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false } },
@@ -976,8 +1036,23 @@ const handleMcpRequest = async (request, bunServer) => {
   if (method === "ping") return jsonResponse(mcpResult(id, {}));
   if (method === "tools/list") return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...NATIVE_TOOLS] }));
   if (method === "tools/call") {
+    const startedAt = Date.now();
+    const args = params?.arguments ?? {};
+    // Everything an agent does passes here, so this is the one place that
+    // can measure the loop without asking anyone to instrument anything
+    const finish = (outcome) => recordToolCall(toolLog, {
+      name: params?.name,
+      at: startedAt,
+      durationMs: Date.now() - startedAt,
+      client: [...toolLog.clients].slice(-1)[0] ?? null,
+      selector: args.by ? { by: String(args.by), value: String(args.value ?? "") } : null,
+      cursor: cursorFor(args.deviceId),
+      ...outcome,
+    });
     try {
-      const result = await handleMcpTool(params?.name, params?.arguments ?? {});
+      const result = await handleMcpTool(params?.name, args);
+      const emptiness = readEmptiness(result);
+      finish({ ok: true, bytes: sizeOfResult(result), empty: emptiness.empty, emptyReason: emptiness.reason });
       if (result && typeof result === "object" && result.__mcpImage) {
         const { __mcpImage, ...rest } = result;
         return jsonResponse(mcpResult(id, {
@@ -989,7 +1064,9 @@ const handleMcpRequest = async (request, bunServer) => {
       }
       return jsonResponse(mcpResult(id, mcpText(result)));
     } catch (error) {
-      return jsonResponse(mcpResult(id, mcpText(error instanceof Error ? error.message : String(error), true)));
+      const message = error instanceof Error ? error.message : String(error);
+      finish({ ok: false, error: message, bytes: message.length });
+      return jsonResponse(mcpResult(id, mcpText(message, true)));
     }
   }
   return jsonResponse(mcpError(id, -32601, `Unknown method: ${method}`), 404);
@@ -1027,8 +1104,8 @@ const startServer = () => serve({
     const url = new URL(request.url);
     if (url.pathname === "/mcp") return handleMcpRequest(request, bunServer);
 
-    // Design, Mirror and Native endpoints: protected by the hub token
-    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/")) {
+    // Design, Mirror, Native, Project and Tools endpoints: protected by the hub token
+    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/") || url.pathname.startsWith("/tools/")) {
       if (!hasValidToken(url)) return jsonResponse({ error: "Invalid token" }, 401);
 
       if (url.pathname === "/native/targets") return jsonResponse(await listTargets());
@@ -1059,6 +1136,7 @@ const startServer = () => serve({
       }
       if (url.pathname === "/design/manifest") return jsonResponse(designManifest());
       if (url.pathname === "/design/asset") return serveProjectAsset(url.searchParams.get("path"));
+      if (url.pathname === "/tools/stats") return jsonResponse(summarizeTools(toolLog));
       if (url.pathname === "/mirror/sources") {
         return jsonResponse(await listMirrorSources(url.searchParams.get("quick") === "1"));
       }

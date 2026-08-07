@@ -27,6 +27,7 @@ import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessi
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
 import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
+import { createToolLog, recordToolCall, summarizeTools, readEmptiness } from "./tools.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -117,6 +118,29 @@ const mcpText = (value, isError = false) => ({
   content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
   ...(isError ? { isError: true } : {}),
 });
+
+/** Bounded, in memory, wiped on restart: the interesting window is the
+ * session an agent is driving right now */
+const toolLog = createToolLog();
+
+/**
+ * What this answer bills the agent in context.
+ *
+ * An image counts its base64, which is the whole reason to measure: a
+ * tool that succeeds every time and returns 200 KB is a product problem
+ * that no success rate will ever show.
+ */
+const sizeOfResult = (result) => {
+  try {
+    if (result && typeof result === "object" && result.__mcpImage) {
+      const { __mcpImage, ...rest } = result;
+      return (__mcpImage.data?.length ?? 0) + JSON.stringify(rest).length;
+    }
+    return JSON.stringify(result ?? null)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+};
 
 const isLocalRequest = (request, bunServer) => {
   const address = bunServer.requestIP(request)?.address;
@@ -618,6 +642,17 @@ const pickDevice = (deviceId) => {
   return connected[0] ?? Array.from(devices.entries())[0] ?? [];
 };
 
+/** Bus position at the time of a tool call, for the Tools timeline. Never
+ * throws: an ambiguous or absent device must not break the call it is
+ * only annotating. */
+const cursorFor = (deviceId) => {
+  try {
+    return pickDevice(deviceId)[1]?.lastSeq ?? null;
+  } catch {
+    return null;
+  }
+};
+
 /** Android exposes uiautomator; iOS needs AXe, and its absence is
  * reported rather than silently returning an empty tree */
 const captureAccessibilityTree = async (target) => {
@@ -987,6 +1022,10 @@ const handleMcpRequest = async (request, bunServer) => {
   try { message = await request.json(); } catch { return jsonResponse(mcpError(null, -32700, "Invalid JSON"), 400); }
   const { id, method, params } = message;
   if (method === "initialize") {
+    // Which agent is driving: Claude Code, Codex, Cursor. The Tools panel
+    // reads it, and it is the only place the client ever names itself.
+    const client = params?.clientInfo?.name;
+    if (typeof client === "string" && client) toolLog.clients.add(client.slice(0, 60));
     return jsonResponse(mcpResult(id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false } },
@@ -997,8 +1036,23 @@ const handleMcpRequest = async (request, bunServer) => {
   if (method === "ping") return jsonResponse(mcpResult(id, {}));
   if (method === "tools/list") return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...NATIVE_TOOLS] }));
   if (method === "tools/call") {
+    const startedAt = Date.now();
+    const args = params?.arguments ?? {};
+    // Everything an agent does passes here, so this is the one place that
+    // can measure the loop without asking anyone to instrument anything
+    const finish = (outcome) => recordToolCall(toolLog, {
+      name: params?.name,
+      at: startedAt,
+      durationMs: Date.now() - startedAt,
+      client: [...toolLog.clients].slice(-1)[0] ?? null,
+      selector: args.by ? { by: String(args.by), value: String(args.value ?? "") } : null,
+      cursor: cursorFor(args.deviceId),
+      ...outcome,
+    });
     try {
-      const result = await handleMcpTool(params?.name, params?.arguments ?? {});
+      const result = await handleMcpTool(params?.name, args);
+      const emptiness = readEmptiness(result);
+      finish({ ok: true, bytes: sizeOfResult(result), empty: emptiness.empty, emptyReason: emptiness.reason });
       if (result && typeof result === "object" && result.__mcpImage) {
         const { __mcpImage, ...rest } = result;
         return jsonResponse(mcpResult(id, {
@@ -1010,7 +1064,9 @@ const handleMcpRequest = async (request, bunServer) => {
       }
       return jsonResponse(mcpResult(id, mcpText(result)));
     } catch (error) {
-      return jsonResponse(mcpResult(id, mcpText(error instanceof Error ? error.message : String(error), true)));
+      const message = error instanceof Error ? error.message : String(error);
+      finish({ ok: false, error: message, bytes: message.length });
+      return jsonResponse(mcpResult(id, mcpText(message, true)));
     }
   }
   return jsonResponse(mcpError(id, -32601, `Unknown method: ${method}`), 404);
@@ -1048,8 +1104,8 @@ const startServer = () => serve({
     const url = new URL(request.url);
     if (url.pathname === "/mcp") return handleMcpRequest(request, bunServer);
 
-    // Design, Mirror and Native endpoints: protected by the hub token
-    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/")) {
+    // Design, Mirror, Native, Project and Tools endpoints: protected by the hub token
+    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/") || url.pathname.startsWith("/tools/")) {
       if (!hasValidToken(url)) return jsonResponse({ error: "Invalid token" }, 401);
 
       if (url.pathname === "/native/targets") return jsonResponse(await listTargets());
@@ -1080,6 +1136,7 @@ const startServer = () => serve({
       }
       if (url.pathname === "/design/manifest") return jsonResponse(designManifest());
       if (url.pathname === "/design/asset") return serveProjectAsset(url.searchParams.get("path"));
+      if (url.pathname === "/tools/stats") return jsonResponse(summarizeTools(toolLog));
       if (url.pathname === "/mirror/sources") {
         return jsonResponse(await listMirrorSources(url.searchParams.get("quick") === "1"));
       }

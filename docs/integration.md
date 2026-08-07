@@ -175,6 +175,13 @@ export const trackedFetch = devtools.wrapFetch(expoFetch, "uploads");
 Sensitive headers (Authorization, x-api-key, cookies) are redacted before
 leaving the device. Binary bodies are not serialized.
 
+Order matters: `wrapFetch` and `attachAxios` return the client UNCHANGED
+when `init()` has not run yet, so a module-scope wrap in a file imported
+before the devtools setup instruments nothing, and the panel stays empty
+with no error anywhere. The SDK records the attempt either way, and
+`get_recent_network` says so instead of returning an empty list that
+reads like "the app sent no request".
+
 ## Recipe 2: React Query cache (Cache panel)
 
 ```ts

@@ -2,6 +2,13 @@
 
 Generated automatically from conventional commits.
 
+## [0.13.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.12.3...v0.13.0) (2026-08-07)
+
+### Features
+
+* **dashboard:** add a Tools panel measuring what agents do with the hub ([f1b493a](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/f1b493a9d05469cd6534d83f7263570541ada75e))
+* **mcp:** say when nothing is observable, not just that nothing was found ([edc0d53](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/edc0d5375ad5268a989a6199f0ba8600faa69213))
+
 ## [0.12.3](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.12.2...v0.12.3) (2026-08-02)
 
 ### Bug Fixes

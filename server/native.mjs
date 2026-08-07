@@ -86,6 +86,25 @@ const fail = (result, action) => {
   throw new Error(`${action} failed: ${result.error || textOf(result) || "unknown error"}`);
 };
 
+export const BROKEN_IDB_HINT =
+  "idb is installed but cannot run: it needs Python 3.11 or older " +
+  "(3.12 removed the asyncio API it relies on). Install AXe instead, a single " +
+  "binary with no runtime: brew install cameroncooke/axe/axe";
+
+/**
+ * True when idb failed because its Python runtime is unusable, not because the
+ * tap itself went wrong.
+ *
+ * Being on PATH says nothing about whether idb can run: installed under Python
+ * 3.12+ it dies importing asyncio's removed `get_event_loop`, long before it
+ * reaches the simulator. Surfacing the raw traceback sends people debugging
+ * their device when the fault is in their toolchain.
+ */
+export const isBrokenIdb = (output) =>
+  /get_event_loop|no current event loop|ModuleNotFoundError|Traceback \(most recent call last\)/i.test(
+    String(output ?? "")
+  );
+
 // ====================================================================
 // Targets
 // ====================================================================
@@ -392,7 +411,10 @@ export const tapNative = async ({ target, x, y, label }) => {
   }
   if (which("idb") && hasPoint) {
     const result = await runCommand(["idb", "ui", "tap", "--udid", id, String(px), String(py)], 10000);
-    if (!result.ok) fail(result, "idb ui tap");
+    if (!result.ok) {
+      if (isBrokenIdb(textOf(result) || result.error || "")) throw new Error(BROKEN_IDB_HINT);
+      fail(result, "idb ui tap");
+    }
     return { ok: true, target: `sim:${id}`, x: px, y: py, via: "idb" };
   }
   throw new Error(

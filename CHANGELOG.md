@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.13.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.13.0...v0.13.1) (2026-08-08)
+
+### Bug Fixes
+
+* **native:** explain a broken idb instead of surfacing its traceback ([19431a5](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/19431a5403720cdd4f60bdfd5d0f5116b08f3f96))
+
 ## [0.13.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.12.3...v0.13.0) (2026-08-07)
 
 ### Features

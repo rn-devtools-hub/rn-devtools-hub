@@ -82,6 +82,18 @@ cp node_modules/rn-devtools-hub/templates/cursor-rule.mdc \
 It ships with `alwaysApply: false`, so Cursor pulls it in when the task
 matches instead of paying for it on every request.
 
+For any other agent, the skill on its own comes from the
+[skills.sh](https://skills.sh) registry:
+
+```
+npx skills add rn-devtools-hub/rn-devtools-hub
+```
+
+It writes `.agents/skills/rn-devtools-hub` and links it into whichever
+agents it detects, from Gemini CLI and Copilot to Windsurf and Zed. This
+installs the skill only, so register the server as above and start the hub
+to give the agent something to talk to.
+
 Any client that speaks only stdio uses `npx rn-devtools-hub mcp`, which
 bridges to the hub and starts it on demand.
 

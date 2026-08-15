@@ -21,7 +21,8 @@ bin/rn-devtools-hub.mjs   npx launcher (Bun if present, Node otherwise)
 
 Non-negotiable principles:
 
-1. **Zero mandatory dependencies.** That is what kills a debugger. Any feature
+1. **Zero mandatory dependencies.** A tool that requires a native build step
+   dies of it, whatever else it does right. Any feature
    requiring native code or an external lib must be optional, probed via
    `require` with a clean fallback, and grayed out in the dashboard with an
    explanation.

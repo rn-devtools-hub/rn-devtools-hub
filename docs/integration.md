@@ -177,8 +177,18 @@ import { fetch as expoFetch } from "expo/fetch";
 export const trackedFetch = devtools.wrapFetch(expoFetch, "uploads");
 ```
 
-Sensitive headers (Authorization, x-api-key, cookies) are redacted before
-leaving the device. Binary bodies are not serialized.
+Credentials are redacted before leaving the device, headers and BODIES
+alike: a field whose name says it holds one (password, accessToken,
+client_secret, api key...), and a value that looks like one whatever it is
+called (a bearer token, a JWT, a provider secret key, a PEM block). The
+event names the paths it removed, so a field that mattered can be renamed
+rather than leaving you hunting for a value the tool took out. Add your own
+field names with `redactKeys` in `init()`. Binary bodies are not
+serialized.
+
+Redaction is a safety net, not a guarantee: a secret in an unusual field
+name, or a payload built to look ordinary, will get through. Treat the
+dashboard and anything an agent reads as data that left the app.
 
 Order matters: `wrapFetch` and `attachAxios` return the client UNCHANGED
 when `init()` has not run yet, so a module-scope wrap in a file imported

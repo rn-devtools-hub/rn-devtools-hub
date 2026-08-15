@@ -4,7 +4,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { DevtoolsTransport } from "../src/client/transport";
 import { devtools } from "../src/client/index";
-import { truncateForWire, redactHeaders } from "../src/client/types";
+import {
+  truncateForWire,
+  redactHeaders,
+  redactBody,
+  redactSecrets,
+  isSensitiveKey,
+} from "../src/client/types";
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -158,6 +164,55 @@ describe("devtools (singleton)", () => {
   });
 });
 
+/**
+ * The buffer was bounded by a count, so a thousand small events and a
+ * thousand twenty-kilobyte network responses were both "one batch": after
+ * a disconnection the whole backlog was serialized in a single call on
+ * the JS thread.
+ */
+describe("batch size", () => {
+  const big = (bytes: number) => "x".repeat(bytes);
+
+  it("splits a backlog over several sends instead of one burst", () => {
+    const transport = new DevtoolsTransport({
+      serverUrl: "ws://test:1",
+      appName: "test-app",
+      maxBufferSize: 50,
+      flushIntervalMs: 999999,
+      maxBatchBytes: 4096,
+    });
+    transport.start();
+    FakeWebSocket.instances[0].simulateOpen();
+    FakeWebSocket.instances[0].sent.length = 0;
+
+    for (let index = 0; index < 10; index += 1) transport.enqueue("network.response", { body: big(2000) });
+    transport.flush();
+
+    const sent = FakeWebSocket.instances[0].sent;
+    expect(sent).toHaveLength(1);
+    expect(sent[0].length).toBeLessThan(8000);
+    expect(transport.bufferedCount).toBeGreaterThan(0);
+    expect(JSON.parse(sent[0]).events.length).toBeLessThan(10);
+  });
+
+  it("sends a single oversized event rather than stalling on it forever", () => {
+    const transport = new DevtoolsTransport({
+      serverUrl: "ws://test:1",
+      appName: "test-app",
+      maxBufferSize: 50,
+      flushIntervalMs: 999999,
+      maxBatchBytes: 1024,
+    });
+    transport.start();
+    FakeWebSocket.instances[0].simulateOpen();
+    FakeWebSocket.instances[0].sent.length = 0;
+
+    transport.enqueue("screen.frame", { data: big(5000) });
+    transport.flush();
+    expect(JSON.parse(FakeWebSocket.instances[0].sent[0]).events).toHaveLength(1);
+  });
+});
+
 describe("truncateForWire", () => {
   it("truncates long strings", () => {
     const result = truncateForWire("x".repeat(30000)) as string;
@@ -182,6 +237,80 @@ describe("redactHeaders", () => {
     expect(result.Authorization).toBe("•••redacted•••");
     expect(result["x-api-key"]).toBe("•••redacted•••");
     expect(result.Accept).toBe("application/json");
+  });
+});
+
+/**
+ * Only four header names were ever redacted, and the bodies went out
+ * whole: a login response carrying an access token reached the hub, the
+ * dashboard and, through MCP, a model's context window. Truncating a
+ * payload is not redacting it.
+ */
+describe("redacting credentials", () => {
+  it("names a credential by the words in the key, not by substring", () => {
+    for (const key of ["password", "accessToken", "client_secret", "x-api-key", "apiKey", "Cookie"]) {
+      expect(isSensitiveKey(key)).toBe(true);
+    }
+    // The false positives that would blind the network panel
+    for (const key of ["author", "authority", "key", "name", "keyboard", "tokenizer_version"]) {
+      expect(isSensitiveKey(key)).toBe(false);
+    }
+  });
+
+  it("takes a project's own field names on top of the built-in list", () => {
+    expect(isSensitiveKey("kontakCode")).toBe(false);
+    expect(isSensitiveKey("kontakCode", ["kontakCode"])).toBe(true);
+  });
+
+  it("redacts nested credentials and says which paths it took out", () => {
+    const { value, redacted } = redactSecrets({
+      user: { id: 7, name: "Ana", password: "hunter2" },
+      auth: { accessToken: "abc", expiresIn: 3600 },
+      items: [{ label: "ok" }, { apiKey: "sk_live_0123456789" }],
+    });
+    const out = value as any;
+    expect(out.user.name).toBe("Ana");
+    expect(out.user.id).toBe(7);
+    expect(out.user.password).toBe("•••redacted•••");
+    expect(out.auth.accessToken).toBe("•••redacted•••");
+    expect(out.auth.expiresIn).toBe(3600);
+    expect(out.items[1].apiKey).toBe("•••redacted•••");
+    expect(redacted).toContain("user.password");
+    expect(redacted).toContain("items[1].apiKey");
+  });
+
+  it("redacts a token whatever the field is called", () => {
+    const { value } = redactSecrets({
+      data: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature",
+      note: "a plain sentence",
+    });
+    expect((value as any).data).toBe("•••redacted•••");
+    expect((value as any).note).toBe("a plain sentence");
+  });
+
+  it("redacts a JSON body that arrived as a string, and keeps it JSON", () => {
+    const body = JSON.stringify({ email: "a@b.c", password: "hunter2" });
+    const { value, redacted } = redactBody(body);
+    expect(redacted).toEqual(["password"]);
+    const parsed = JSON.parse(value as string);
+    expect(parsed.email).toBe("a@b.c");
+    expect(parsed.password).toBe("•••redacted•••");
+  });
+
+  it("redacts a form-encoded body", () => {
+    const { value } = redactBody("grant_type=password&username=ana&password=hunter2");
+    expect(value).toBe("grant_type=password&username=ana&password=•••redacted•••");
+  });
+
+  it("leaves a body that holds no credential untouched", () => {
+    const body = JSON.stringify({ items: [1, 2, 3] });
+    expect(redactBody(body)).toEqual({ value: body, redacted: [] });
+  });
+
+  it("survives a circular payload", () => {
+    const payload: any = { password: "x" };
+    payload.self = payload;
+    expect(() => redactSecrets(payload)).not.toThrow();
   });
 });
 

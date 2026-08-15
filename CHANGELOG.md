@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.15.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.14.0...v0.15.0) (2026-08-15)
+
+### Features
+
+* **overlay:** hide the dev-menu bubble from the agent, at runtime ([6ada400](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/6ada400cdab3cd60b131ffde308cb8d7ec540739))
+
 ## [0.14.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.13.1...v0.14.0) (2026-08-15)
 
 ### Features

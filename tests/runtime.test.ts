@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error untyped hub module
 import * as runtime from "../server/runtime.mjs";
 
+const { serve } = runtime as {
+  serve: (options: Record<string, unknown>) => Promise<{ port: number; stop: () => void }>;
+};
+
 const { acceptKey, encodeFrame, decodeFrames, which } = runtime as {
   acceptKey: (key: string) => string;
   encodeFrame: (payload: string | Buffer, opcode?: number) => Buffer;
@@ -120,6 +124,29 @@ describe("frame decoding", () => {
   it("round-trips a 16-bit length payload", () => {
     const text = "x".repeat(300);
     expect(decodeFrames(clientFrame(text)).frames[0].payload.toString()).toBe(text);
+  });
+});
+
+/**
+ * The hub is promised on BOTH runtimes, and a busy port is where that
+ * promise used to break: Bun.serve throws synchronously, so the hub's
+ * try/catch printed its help; Node reports the same EADDRINUSE through an
+ * 'error' event, which no try/catch can see, so the user got a raw stack
+ * trace instead. One failure shape is the fix.
+ */
+describe("serve", () => {
+  it("resolves with the port it actually bound", async () => {
+    const server = await serve({ port: 0, fetch: () => new Response("ok"), websocket: {} });
+    expect(server.port).toBeGreaterThan(0);
+    server.stop();
+  });
+
+  it("rejects on a taken port instead of raising an event nobody listens to", async () => {
+    const first = await serve({ port: 0, fetch: () => new Response("ok"), websocket: {} });
+    await expect(
+      serve({ port: first.port, fetch: () => new Response("ok"), websocket: {} })
+    ).rejects.toThrow(/EADDRINUSE|in use/i);
+    first.stop();
   });
 });
 

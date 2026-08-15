@@ -203,7 +203,7 @@ percentage: a diagnosis.
 | `verified: "unverifiable"` after a `type` | The input is uncontrolled (no `value` prop): React has nothing to read back. Bind `value` to state, or confirm with a screenshot |
 | A rect carries `rectFrom` | The element has no measurable instance of its own and a neighbour was measured instead. Treat the box as approximate |
 | `scrollToEnd` stops short | A virtualized list only knows the end of what it has rendered. `result.atEnd` says whether the bottom was reached; call again or use `scrollBy` |
-| A native button is unreachable under a floating bubble | That bubble is the expo-dev-menu FAB, in its own window, so it is not in `get_ui_tree`. `launch_app` hides it with `hideDevMenuFab` |
+| A native button is unreachable under a floating bubble | That bubble is the expo-dev-menu FAB, in its own window, so it is not in `get_ui_tree` and no selector will ever find it. `set_overlay {visible:false}` hides it on the spot; put it back when you are done. Before a launch, `launch_app hideDevMenuFab` |
 | Element in `get_ui_tree` but not in `query_ui` | It is in a hidden navigator screen. Only pass `includeHidden` if you know why |
 | `assert` fails with an empty `evidence` | The window was wrong. Pass `since` from a cursor taken before the action |
 | `source` is `null` everywhere | Production build, or a React version without dev bookkeeping |

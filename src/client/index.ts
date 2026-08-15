@@ -23,6 +23,7 @@
  */
 
 import { installUiAutomation, type AutomationApi } from "./automation";
+import { installOverlayControl } from "./overlay";
 import { installRuntimeContext } from "./context";
 import { installDeterminism } from "./determinism";
 import { installPreviews, type PreviewFactory, type PreviewRegistry } from "./preview";
@@ -145,6 +146,12 @@ class Devtools {
     // Also always on, and for the same reason: an agent reading an empty
     // answer needs to know whether anything was even attached to observe
     this.transport.onCommand("context.instrumentation", () => this.instrumentation());
+    // Always on as well: the dev-menu bubble covers native controls the
+    // agent cannot even see, and asking an app to opt in to being able to
+    // move something it never asked for would be backwards
+    installOverlayControl({
+      onCommand: (command, handler) => this.transport?.onCommand(command, handler),
+    });
     this.emit("app.info", {
       appName: options.appName,
       deviceName: options.deviceName,

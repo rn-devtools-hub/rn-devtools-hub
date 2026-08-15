@@ -153,6 +153,13 @@ only). Tools:
   componentName, via}) when React still knows where it was written.
   `via` states how it was resolved; `via:"stack"` means BUNDLE
   coordinates, which still need symbolication against Metro.
+- Overlays: set_overlay and get_overlay show or hide the expo-dev-menu
+  floating button at runtime, without relaunching. It lives in its own
+  window, so no UI tree shows it and it swallows the taps meant for the
+  native controls underneath, the iOS photo picker button first. Runtime
+  switch on iOS, Expo Go included; on Android the manifest meta-data
+  EXDevMenuShowFloatingActionButton, or launch_app hideDevMenuFab before
+  a dev-build launch.
 - Project truth: get_project_context returns what the project declares
   (installed versions, Expo SDK, New Architecture, JS engine), what the
   app actually runs (engine, Fabric, bridgeless, native React Native

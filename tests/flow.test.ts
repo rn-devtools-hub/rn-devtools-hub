@@ -17,6 +17,7 @@ interface Step {
   action: string;
   selector: Record<string, unknown>;
   text: string | null;
+  index: number | null;
   source: Record<string, unknown> | null;
   consequences: Consequence[];
   failed: boolean;
@@ -189,6 +190,65 @@ describe("renderFlowText", () => {
       event("network.error", { requestId: 1, message: "offline" }, 2),
     ]);
     expect(renderFlowText(flow)).toContain("recorded a failure");
+  });
+});
+
+/**
+ * The index is what disambiguates a selector matching several elements.
+ * A flow that records "the third row" and replays "the first one" is a
+ * different scenario wearing the same script, so it has to survive the
+ * whole round trip: recorded, built, rendered and re-emitted.
+ */
+describe("the index survives the round trip", () => {
+  const indexed = () => {
+    const recorder = createRecorder();
+    startRecording(recorder, { name: "rows", cursor: 0 });
+    recordAct(recorder, {
+      action: "tap",
+      selector: { by: "text", value: "Delete" },
+      index: 2,
+      cursor: 0,
+    });
+    // Zero is an index like any other, and the falsy one that gets dropped
+    recordAct(recorder, {
+      action: "type",
+      selector: { by: "placeholder", value: "Email" },
+      index: 0,
+      text: "a@b.c",
+      cursor: 1,
+    });
+    return recorder;
+  };
+
+  it("records it, including index 0", () => {
+    const recorder = indexed();
+    expect(recorder.acts.map((act: any) => act.index)).toEqual([2, 0]);
+  });
+
+  it("keeps null when no index was given, rather than inventing 0", () => {
+    expect(buildFlow(recorded(), events).steps.map((step) => step.index)).toEqual([null, null]);
+  });
+
+  it("carries it into the built flow", () => {
+    expect(buildFlow(indexed(), []).steps.map((step) => step.index)).toEqual([2, 0]);
+  });
+
+  it("prints it next to the action, so the script says which element", () => {
+    const text = renderFlowText(buildFlow(indexed(), []));
+    expect(text).toContain('tap    text="Delete" index=2');
+    expect(text).toContain('type   placeholder="Email" index=0 text="a@b.c"');
+  });
+
+  it("re-emits it in the replayable calls", () => {
+    const calls = renderFlowMcp(buildFlow(indexed(), []));
+    expect(calls[0].arguments).toMatchObject({ action: "tap", by: "text", value: "Delete", index: 2 });
+    const typing = calls.find((call) => call.arguments.action === "type");
+    expect(typing?.arguments.index).toBe(0);
+  });
+
+  it("omits it entirely when there was none, instead of replaying index 0", () => {
+    const calls = renderFlowMcp(buildFlow(recorded(), events));
+    expect(calls[0].arguments).not.toHaveProperty("index");
   });
 });
 

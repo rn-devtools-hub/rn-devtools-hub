@@ -75,8 +75,23 @@ const detectProject = (root) => {
   };
 };
 
+const DEFAULT_PORT = 8973;
+
+/**
+ * The port to write into the generated glue.
+ *
+ * `init --port` is for the developer who already knows their default port
+ * is busy, typically because a second project's hub is running.
+ */
+export const parseInitPort = (argv = []) => {
+  const index = argv.indexOf("--port");
+  if (index === -1) return DEFAULT_PORT;
+  const value = Number(argv[index + 1]);
+  return Number.isInteger(value) && value > 0 && value < 65536 ? value : DEFAULT_PORT;
+};
+
 /** Generates a glue file containing only what the project can support */
-const generateGlue = (project) => {
+const generateGlue = (project, port = DEFAULT_PORT) => {
   const f = project.features;
   const ts = project.typescript;
   const lines = [];
@@ -112,8 +127,16 @@ const generateGlue = (project) => {
   }
   lines.push("");
 
+  lines.push("// Hub port. Hardcoding it meant editing this file whenever the hub");
+  lines.push("// had to move (a second project already on the default port), and a");
+  lines.push("// hub the app cannot find looks exactly like a broken app. Metro");
+  lines.push("// inlines EXPO_PUBLIC_* at build time, so this needs no dependency;");
+  lines.push("// restart Metro after changing it.");
+  lines.push(`const port = process.env.EXPO_PUBLIC_RN_DEVTOOLS_PORT ?? "${port}";`);
+  lines.push("");
+
   lines.push("devtools.init({");
-  lines.push("  serverUrl: `ws://${host}:8973`,");
+  lines.push("  serverUrl: `ws://${host}:${port}`,");
   lines.push(`  appName: ${JSON.stringify(project.pkg.name ?? "app")},`);
   if (f.device) {
     lines.push("  deviceName: Device.deviceName ?? Device.modelName ?? Platform.OS,");
@@ -361,6 +384,7 @@ if (__DEV__) {
 export const runInit = (argv, root = process.cwd()) => {
   const dryRun = argv.includes("--dry-run");
   const force = argv.includes("--force");
+  const port = parseInitPort(argv);
 
   const project = detectProject(root);
   if (!project) {
@@ -380,6 +404,7 @@ export const runInit = (argv, root = process.cwd()) => {
   console.log(`  Language     : ${project.typescript ? "TypeScript" : "JavaScript"}`);
   console.log(`  Entry point  : ${project.entryFile ?? "not found"}`);
   console.log(`  Integrations : ${detected.length ? detected.join(", ") : "core only"}`);
+  console.log(`  Hub port     : ${port} (override at runtime with EXPO_PUBLIC_RN_DEVTOOLS_PORT)`);
   console.log("");
 
   const glueName = project.typescript ? "devtools.setup.ts" : "devtools.setup.js";
@@ -403,7 +428,7 @@ export const runInit = (argv, root = process.cwd()) => {
   if (existsSync(gluePath) && !force) {
     console.log(`  ${glueName} already exists, keeping it (use --force to regenerate)`);
   } else {
-    writes.push([gluePath, generateGlue(project)]);
+    writes.push([gluePath, generateGlue(project, port)]);
   }
 
   // Wire the entry point

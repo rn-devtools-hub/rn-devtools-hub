@@ -52,8 +52,30 @@ assert               prove the outcome, with evidence on failure
 ```
 
 Selector preference, best first: **role + accessible name**, then `testID`,
-then `text`. If a selector is ambiguous, `ui_act` returns the candidates
-with their rects instead of guessing: pass `index`, or narrow with `within`.
+then `placeholder` for a form field that carries neither, then `text`. If a
+selector is ambiguous, `ui_act` returns the candidates with their rects
+instead of guessing: pass `index`, or narrow with `within`.
+
+Each `query_ui` match carries the `index` that `ui_act` addresses with the
+same selector: the two walk the tree in the same order, so a position read
+from one is valid in the other.
+
+Prefer a selector that matches the input itself over one that matches the
+row or card around it. A selector that matches a container holding several
+inputs is refused, with the placeholders listed, rather than resolved to
+whichever input came first.
+
+Any tool answering `ok: false` comes back as an MCP error with its payload
+intact: a failed `assert`, a `compare_snapshot` over its threshold, an
+ambiguous selector, an index out of range, a value that never landed. The
+status and the body say the same thing, and the body carries the evidence.
+
+Read `verified` after a `type`. `ok: true` means the action ran;
+`verified: "exact"` means the field holds the text. `transformed` means the
+app rewrote it (mask, maxLength), `unverifiable` means the input is
+uncontrolled and React cannot read it back, and an unchanged value comes
+back as `ok: false, reason: "value-unchanged"`. `committed` only says React
+rendered something somewhere, which is not the same claim.
 
 If a UI path is long or fragile, skip it. `list_actions` shows what the app
 registered (`nav:*`, `auth:*`, `seed:*`, `reset:*`) and `run_action` jumps
@@ -176,6 +198,12 @@ percentage: a diagnosis.
 | "React DevTools hook unavailable" | Release bundle, or `attachUiAutomation()` missing. Check `get_project_context` for `dev: false` |
 | "No React root observed yet" | `attachUiAutomation()` runs too late. It belongs at startup, before the first render |
 | `ui_act` returns `ok: false, reason: "ambiguous"` | Several matches, listed with rects. Pass `index` or scope with `within` |
+| `ui_act` returns `ok: false, reason: "index-out-of-range"` | The index asked for does not exist. `count` is the number of matches; valid indexes stop at `count - 1` |
+| `ui_act` returns `ok: false, reason: "value-unchanged"` | The text reached the input's props and the value did not move. Its `onChangeText` does not write back to the value it renders |
+| `verified: "unverifiable"` after a `type` | The input is uncontrolled (no `value` prop): React has nothing to read back. Bind `value` to state, or confirm with a screenshot |
+| A rect carries `rectFrom` | The element has no measurable instance of its own and a neighbour was measured instead. Treat the box as approximate |
+| `scrollToEnd` stops short | A virtualized list only knows the end of what it has rendered. `result.atEnd` says whether the bottom was reached; call again or use `scrollBy` |
+| A native button is unreachable under a floating bubble | That bubble is the expo-dev-menu FAB, in its own window, so it is not in `get_ui_tree`. `launch_app` hides it with `hideDevMenuFab` |
 | Element in `get_ui_tree` but not in `query_ui` | It is in a hidden navigator screen. Only pass `includeHidden` if you know why |
 | `assert` fails with an empty `evidence` | The window was wrong. Pass `since` from a cursor taken before the action |
 | `source` is `null` everywhere | Production build, or a React version without dev bookkeeping |
@@ -195,9 +223,12 @@ for `devtools.emitRaw(type, payload)` directly.
 
 - Do not take a screenshot to check a result. `assert` is faster, cheaper
   and sees what pixels cannot.
-- Do not use `tap_native` unless a native dialog is genuinely in the way.
-  It is coordinate-based and fragile. `set_permission` before launching
-  removes most dialogs entirely.
+- Do not use `tap_native` or `swipe_native` unless a native dialog is
+  genuinely in the way, or unless the gesture itself is what you are
+  testing (a Swipeable, a pan handler): both are coordinate-based and
+  fragile. `set_permission` before launching removes most dialogs
+  entirely, and `ui_act` with `scrollBy` or `scrollToEnd` moves a list
+  without coordinates.
 - Do not poll in a loop. `wait_for_event` blocks properly.
 - Do not pass `includeHidden: true` to make a selector match. It usually
   means you are targeting the screen the user just left.

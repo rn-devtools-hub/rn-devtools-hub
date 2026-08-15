@@ -50,6 +50,17 @@ export const stopRecording = (recorder) => {
   return { ok: true, name: recorder.name, acts: recorder.acts.length };
 };
 
+/**
+ * The index of a recorded action, or null when none was given.
+ *
+ * Zero is a legitimate index and a falsy number, so the usual `|| null`
+ * would drop precisely the case an agent writes most often.
+ */
+const recordedIndex = (raw) => {
+  const index = Number(raw);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+};
+
 /** Called by the hub after every successful ui_act while recording */
 export const recordAct = (recorder, entry) => {
   if (!recorder.active) return;
@@ -57,6 +68,10 @@ export const recordAct = (recorder, entry) => {
     action: entry.action,
     selector: entry.selector,
     text: entry.text ?? null,
+    // A selector matching several elements is disambiguated by the index,
+    // so a flow that forgets it replays on a DIFFERENT element while
+    // reading as the same script
+    index: recordedIndex(entry.index),
     target: entry.target ?? null,
     cursor: Number(entry.cursor) || 0,
     ts: entry.ts ?? Date.now(),
@@ -137,6 +152,7 @@ export const buildFlow = (recorder, events) => {
       action: act.action,
       selector: act.selector,
       text: act.text,
+      index: act.index ?? null,
       // The source is what turns a failing step into an edit
       source: act.target?.source ?? null,
       consequences,
@@ -164,7 +180,10 @@ const selectorText = (selector = {}) => {
 export const renderFlowText = (flow) => {
   const lines = [`# ${flow.name}`, ""];
   for (const step of flow.steps) {
-    lines.push(`${step.action.padEnd(6)} ${selectorText(step.selector)}${step.text ? ` text=${JSON.stringify(step.text)}` : ""}`);
+    // The index belongs on the line: read without it, the script says it
+    // acts on "the button", when it acted on the third one
+    const position = step.index === null || step.index === undefined ? "" : ` index=${step.index}`;
+    lines.push(`${step.action.padEnd(6)} ${selectorText(step.selector)}${position}${step.text ? ` text=${JSON.stringify(step.text)}` : ""}`);
     if (step.source?.file) {
       lines.push(`       # ${step.source.file}${step.source.line ? `:${step.source.line}` : ""}`);
     }
@@ -196,6 +215,7 @@ export const renderFlowMcp = (flow) => {
       arguments: {
         action: step.action,
         ...step.selector,
+        ...(step.index === null || step.index === undefined ? {} : { index: step.index }),
         ...(step.text ? { text: step.text } : {}),
       },
     });

@@ -43,7 +43,11 @@ walking any screen at all.
 - "React DevTools hook unavailable" means a release bundle, or
   `attachUiAutomation()` is missing from the glue file.
 - `ui_act` returning `reason: "ambiguous"` lists the candidates with their
-  rects: pass `index` or scope with `within`.
+  rects: pass `index` or scope with `within`. `index-out-of-range` means
+  the index does not exist: it is refused, never rounded down.
+- After a `type`, read `verified`: `exact` proves the field holds the text,
+  `transformed` means the app rewrote it, and `value-unchanged` comes back
+  as `ok: false`. `committed` only says React rendered something.
 - `source.via` says how far to trust a location. `debugSource` and
   `symbolicated` are exact, `stack` is a bundle position that still needs
   symbolication, `componentOnly` has a name but no file.

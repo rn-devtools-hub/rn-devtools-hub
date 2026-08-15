@@ -31,10 +31,17 @@ Known pitfalls:
   blank panel with no error anywhere. Use `emitRaw` for your own binary
   events.
 - The hub reads app.json and the assets from its cwd: launch it from the
-  host project root. With SEVERAL projects at once, launch one hub per
-  project on distinct ports (`--port`), otherwise the Design panel shows
-  the assets of the project the hub was launched from (the dashboard
-  flags the mismatch).
+  host project root, otherwise the Design panel shows the assets of the
+  project the hub was launched from (the dashboard flags the mismatch).
+  SEVERAL projects can now run at once: with no `--port`, a hub whose
+  default port is taken walks 8974 to 8982, says so loudly in the banner
+  and writes the port it got into `.rn-devtools/hub.json`, which the stdio
+  bridge reads. The app side takes the port from
+  `EXPO_PUBLIC_RN_DEVTOOLS_PORT` (Metro inlines it), so a second project
+  sets one variable, or regenerates its glue with
+  `init --force --port <n>`: an existing glue file keeps the port it was
+  written with. An explicit `--port` still fails hard when it is taken:
+  that port was asked for by name.
 - For AI agents: add `devtools.attachUiAutomation()` to the glue file and
   call `devtools.markScreenReady()` when a screen has its data. This
   enables the get_ui_tree / query_ui / ui_act / wait_for_event MCP tools.
@@ -79,7 +86,26 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
   stateNode is not the instance: it holds `{ node, canonical }` and the
   measurable instance is `canonical.publicInstance`, created lazily, with
   `nativeFabricUIManager` as the fallback. Reading only `stateNode` returns
-  null for every element on any New Architecture app.
+  null for every element on any New Architecture app, and handing
+  `{ node, canonical }` to a caller looking for `setNativeProps` or
+  `scrollToEnd` turns an action into a no-op that still answers ok.
+- Measure the element's OWN box first: its public instance, then its own
+  shadow node, and only then a neighbour. The public instance is created
+  lazily, so walking outward first finds the enclosing ScrollView and
+  returns ITS box for every row, which is why rects appeared not to move
+  after a scroll. When a neighbour did answer, say so (`rectFrom`).
+- No action path may swallow a missing method. A `callNative` that returns
+  void hides both the absent method and the exception; on an action it must
+  report failure, and the command must turn that into an explicit error.
+- A tool that answers `ok:false` is returned as an MCP error (`isError`),
+  payload intact. A declared refusal that arrives looking like a result is
+  invisible to a client that only reads the status, which is the same
+  silence as a no-op reporting success.
+- What is described must be what was acted on. Any gap between the fiber
+  the selector matched, the fiber resolved from it (the input inside a
+  container, the handler on an ancestor) and the fiber described in the
+  answer must appear in the answer, and a target that cannot be resolved
+  must be refused rather than guessed.
 - Source locations on React 19 resolve to owner stacks, which are BUNDLE
   positions. The hub symbolicates them against Metro before an agent sees
   them; one stack is not enough, the owner chain must be walked, or every
@@ -113,10 +139,16 @@ only). Tools:
   deterministic state. This is the fastest way to skip fragile UI paths.
 - Perception and action (the app must call `devtools.attachUiAutomation()`):
   get_ui_tree (semantic tree of the VISIBLE components), query_ui (find by
-  role+name, testID, text, label or type, scoped with `within`, measured
-  rects), ui_act (tap, longPress, type with exact text, clear, submit,
-  scrollTo; ambiguous matches return the candidates with rects).
-  Selector preference: role+accessible name, then testID, then run_action.
+  role+name, testID, placeholder, text, label or type, scoped with
+  `within`, measured rects), ui_act (tap, longPress, type with exact text,
+  clear, submit, scrollTo, scrollBy, scrollToEnd, focus, blur; ambiguous
+  matches return the candidates with rects). ui_act answers for the element
+  it TOUCHED: `actedOn` when the action landed on an input or a handler
+  next to the match, `verified` after a type (exact / transformed /
+  unverifiable), `ok:false` with `value-unchanged` when the field did not
+  move, and `index-out-of-range` rather than acting on the last match.
+  Selector preference: role+accessible name, then testID, then placeholder
+  for an uninstrumented form field, then run_action.
   Every node and match carries `source` ({file, line, column,
   componentName, via}) when React still knows where it was written.
   `via` states how it was resolved; `via:"stack"` means BUNDLE
@@ -159,9 +191,13 @@ only). Tools:
   are `sim:<udid>` / `adb:<serial>`, distinct from the JS deviceId):
   set_permission (pre-grant so popups never appear; iOS cannot pre-grant
   notifications or camera), launch_app (zero-dialog dev-client launch:
-  `--initialUrl` on iOS, explicit component on Android), terminate_app,
-  open_url, screenshot_native (pixels, complements the tree),
-  tap_native (last resort: adb / AXe / idb), boot_device, shutdown_device,
+  `--initialUrl` on iOS, explicit component on Android, and
+  `hideDevMenuFab` so the expo-dev-menu bubble stops covering the native
+  controls in the top corner: it lives in its own window, so no UI tree
+  ever shows it), terminate_app, open_url, screenshot_native (pixels,
+  complements the tree), tap_native and swipe_native (last resort, and the
+  only way to exercise a real gesture: adb / AXe / idb), boot_device,
+  shutdown_device,
   set_location (simulated GPS), set_animations (Android determinism),
   send_push (iOS simulated push), set_appearance (dark mode),
   install_app, uninstall_app, set_orientation and get_orientation

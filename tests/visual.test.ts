@@ -280,4 +280,33 @@ describe("explainDiff", () => {
     expect(result.comparable).toBe(false);
     expect(result.hint).toContain("Re-take the baseline");
   });
+
+  /**
+   * A failing comparison is an MCP failure, and failures are grouped by
+   * their reason. A cause spelled out in prose is a different string on
+   * every device and every percentage, so it produced one bucket per run
+   * instead of one bucket per cause.
+   */
+  describe("the cause is named the same way every time", () => {
+    it("names a comparison over the threshold", async () => {
+      expect((await explainDiff(diff(0.04))).reason).toBe("threshold-exceeded");
+    });
+
+    it("says nothing when the comparison passed", async () => {
+      expect((await explainDiff(diff(0.0005))).reason).toBeNull();
+    });
+
+    it("names a baseline that no longer matches the screen", async () => {
+      const result = await explainDiff({
+        comparable: false,
+        reason: "Different dimensions: baseline 100x200, current 100x300",
+        changedPixels: null,
+        ratio: null,
+        bbox: null,
+      });
+      expect(result.reason).toBe("not-comparable");
+      // The sizes are the actionable part: they must survive the move
+      expect(result.hint).toContain("baseline 100x200, current 100x300");
+    });
+  });
 });

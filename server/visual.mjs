@@ -87,8 +87,16 @@ export const explainDiff = async (diff, context = {}) => {
     return {
       ok: false,
       comparable: false,
-      reason: diff.reason,
-      hint: "The screen size changed between the baseline and now. Re-take the baseline on the same device and orientation.",
+      /**
+       * A stable machine-readable cause, because this answer is now an
+       * MCP error and the Tools panel groups failures by their reason. A
+       * sentence carrying the two sizes is a different string on every
+       * device, so it produced one bucket per screen resolution instead
+       * of one bucket for "the baseline no longer matches the screen".
+       * The sizes are not lost: they lead the hint.
+       */
+      reason: "not-comparable",
+      hint: `${diff.reason}. The screen size changed between the baseline and now. Re-take the baseline on the same device and orientation.`,
     };
   }
 
@@ -108,6 +116,10 @@ export const explainDiff = async (diff, context = {}) => {
 
   return {
     ok: passed,
+    // Same reason a refusal from ui_act carries one: a comparison over
+    // the threshold is a failure, and it has to name itself the same way
+    // every time so the failures group by cause rather than by percentage
+    reason: passed ? null : "threshold-exceeded",
     comparable: true,
     ratio: diff.ratio,
     changedPixels: diff.changedPixels,

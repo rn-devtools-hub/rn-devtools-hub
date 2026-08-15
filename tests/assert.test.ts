@@ -4,6 +4,7 @@ import * as assertModule from "../server/assert.mjs";
 
 interface Verdict {
   ok: boolean;
+  reason: string | null;
   kind: string;
   checked: Record<string, unknown>;
   evidence: Array<Record<string, unknown>>;
@@ -198,6 +199,31 @@ describe("runAssert", () => {
     expect(verdict.ok).toBe(false);
     expect(verdict.hint).toMatch(/query_ui/);
     expect(verdict.elapsedMs).toBeGreaterThanOrEqual(600);
+  });
+
+  /**
+   * A failed assertion is a failed tool call, and the hub groups failures
+   * by their reason. The hint is written for a human and differs per kind,
+   * so without a stable reason one fact turned into as many buckets as
+   * there are kinds of advice.
+   */
+  it("names its failure the same way whatever the kind, and stays quiet on success", async () => {
+    const time = clock();
+    const failed = await runAssert(
+      { kind: "visible", by: "testID", value: "never", timeoutMs: 0 },
+      { now: time.now, sleep: time.sleep, history: () => [], queryUi: async () => ({ matches: [] }) }
+    );
+    const failedEvent = await runAssert(
+      { kind: "no_crash", since: 0 },
+      { now: time.now, sleep: time.sleep, history: () => [event("crash", { message: "boom" }, 1)], queryUi: async () => ({ matches: [] }) }
+    );
+    const passed = await runAssert(
+      { kind: "visible", by: "testID", value: "ok", timeoutMs: 0 },
+      { now: time.now, sleep: time.sleep, history: () => [], queryUi: async () => ({ matches: [{ testID: "ok" }] }) }
+    );
+    expect(failed.reason).toBe("assertion-failed");
+    expect(failedEvent.reason).toBe("assertion-failed");
+    expect(passed.reason).toBeNull();
   });
 
   it("tries an element assertion at least once even with a zero deadline", async () => {

@@ -169,6 +169,14 @@ export const runAssert = async (args = {}, deps = {}) => {
     });
     return {
       ok: verdict.ok,
+      /**
+       * A failed assertion is an MCP failure, and failures are grouped by
+       * this field. The hint is written for a human and differs per kind,
+       * so leaning on it turned one fact ("something did not hold") into
+       * as many buckets as there are kinds of advice. The kind is already
+       * next to it for whoever wants the detail.
+       */
+      reason: verdict.ok ? null : "assertion-failed",
       kind,
       checked: verdict.checked,
       evidence: verdict.ok ? [] : verdict.evidence,
@@ -216,6 +224,7 @@ export const runAssert = async (args = {}, deps = {}) => {
 
   return {
     ok: last.ok,
+    reason: last.ok ? null : "assertion-failed",
     kind,
     checked: { kind, selector: { by: selector.by, value: selector.value, name: selector.name ?? null }, attempts },
     evidence: last.ok ? [] : last.matches.slice(0, EVIDENCE_LIMIT),
@@ -225,14 +234,14 @@ export const runAssert = async (args = {}, deps = {}) => {
 };
 
 const selectorProps = {
-  by: { type: "string", enum: ["testID", "text", "label", "type", "role"] },
+  by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] },
   value: { type: "string" },
   name: { type: "string", description: "Accessible name filter, used with by:role" },
   exact: { type: "boolean" },
   within: {
     type: "object",
     properties: {
-      by: { type: "string", enum: ["testID", "text", "label", "type", "role"] },
+      by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] },
       value: { type: "string" },
       name: { type: "string" },
     },

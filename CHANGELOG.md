@@ -2,6 +2,19 @@
 
 Generated automatically from conventional commits.
 
+## [0.14.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.13.1...v0.14.0) (2026-08-15)
+
+### Features
+
+* **hub:** run several projects at once, and stop dressing refusals as results ([1390a1c](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/1390a1ce7b328a7cbf03845de813f42e45250655))
+* **native:** add swipe_native and hide the dev-menu bubble on launch ([5baecc1](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/5baecc155b1febc35dc591d2941d73b534124039))
+
+### Bug Fixes
+
+* **assert:** name the reason a verdict failed ([2e79610](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/2e796106555e1f17a4a9b60c55ce8065347af1df))
+* **automation:** act on the element ui_act reports ([bf42222](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/bf42222f5f59726b850211313e1825100343c4df))
+* **flow:** keep the index of a recorded ui_act ([a2cd162](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/a2cd162ffdc024809ec164e6a6e34ef628e38a72))
+
 ## [0.13.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.13.0...v0.13.1) (2026-08-08)
 
 ### Bug Fixes

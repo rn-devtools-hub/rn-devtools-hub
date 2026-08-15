@@ -262,7 +262,55 @@ const resolveAndroidActivity = async (serial, appId) => {
   return component && component.includes("/") && SAFE_ID.test(component.replace("/", "")) ? component : null;
 };
 
-export const launchApp = async ({ target, appId, url, coldStart = true, suppressDevMenuIntro = true }) => {
+/**
+ * The app's OWN preferences plist inside the simulator container.
+ *
+ * "defaults write <bundleId>" would hit the DEVICE-level domain, not the
+ * app sandbox, so the write lands somewhere the app never reads. The
+ * container path has to be resolved first, and it does not exist until
+ * the app is installed.
+ */
+export const appContainerArgv = (id, app) => ["xcrun", "simctl", "get_app_container", id, app, "data"];
+
+/** Where the app's preferences live inside a resolved data container */
+export const prefsPlistPath = (containerPath, app) =>
+  `${String(containerPath).trim()}/Library/Preferences/${app}.plist`;
+
+const simulatorPrefsPlist = async (id, app) => {
+  const container = await runCommand(appContainerArgv(id, app));
+  return container.ok ? prefsPlistPath(textOf(container), app) : null;
+};
+
+/**
+ * The argv of a preference write, built by itself so both directions are
+ * verifiable without a simulator. This writes a PERSISTENT file into
+ * someone's app sandbox and does so by default, which is precisely the
+ * kind of change that must not rest on "it looked right": a wrong domain
+ * writes to the device instead of the app, and a value that never flips
+ * back leaves the bubble hidden forever on a machine nobody debugs again.
+ */
+export const simulatorFlagArgv = (id, plist, key, value) =>
+  ["xcrun", "simctl", "spawn", id, "defaults", "write", plist, key, "-bool", value ? "true" : "false"];
+
+const writeSimulatorFlag = (id, plist, key, value) =>
+  runCommand(simulatorFlagArgv(id, plist, key, value));
+
+// Both keys come from the expo-dev-menu source (DevMenuPreferences.swift)
+// and live in the same app plist
+export const DEV_MENU_ONBOARDING_KEY = "EXDevMenuIsOnboardingFinished";
+export const DEV_MENU_FAB_KEY = "EXDevMenuShowFloatingActionButton";
+
+/**
+ * What gets written to the FAB key for a given option.
+ *
+ * The option is stated as "hide", the preference as "show", and the
+ * default is to hide: one inversion, in one place, so the reversal cannot
+ * drift from the request. Getting this backwards would leave the bubble
+ * on by default and put the bug straight back.
+ */
+export const devMenuFabValue = (hideDevMenuFab) => hideDevMenuFab === false;
+
+export const launchApp = async ({ target, appId, url, coldStart = true, suppressDevMenuIntro = true, hideDevMenuFab = true }) => {
   const { kind, id } = await resolveTarget(target);
   requireTool(kind);
   const app = requireAppId(appId);
@@ -274,18 +322,33 @@ export const launchApp = async ({ target, appId, url, coldStart = true, suppress
       await runCommand(["xcrun", "simctl", "terminate", id, app]); // may not be running
       steps.push("terminate");
     }
+    const plist = await simulatorPrefsPlist(id, app);
     if (suppressDevMenuIntro) {
-      // Key verified in expo-dev-menu source (DevMenuPreferences.swift).
-      // "defaults write <bundleId>" would hit the DEVICE-level plist, not
-      // the app sandbox: the app container path must be used instead
-      const container = await runCommand(["xcrun", "simctl", "get_app_container", id, app, "data"]);
-      if (container.ok) {
-        const plist = `${textOf(container)}/Library/Preferences/${app}.plist`;
-        const prefs = await runCommand(["xcrun", "simctl", "spawn", id, "defaults", "write", plist, "EXDevMenuIsOnboardingFinished", "-bool", "true"]);
+      if (plist) {
+        const prefs = await writeSimulatorFlag(id, plist, DEV_MENU_ONBOARDING_KEY, true);
         steps.push(prefs.ok ? "onboarding-skipped" : "onboarding-skip-failed");
       } else {
         steps.push("onboarding-skip-unavailable"); // app not installed yet
       }
+    }
+    /**
+     * The floating bubble expo-dev-menu draws over the app.
+     *
+     * It lives in its OWN UIWindow, above everything, so it appears in no
+     * UI tree the hub can read and get_ui_tree cannot even report that it
+     * is there. What it does show up in is the touch stream: it sits over
+     * the bottom-right corner and swallows the taps meant for whatever is
+     * under it, typically the "Add" button of the iOS photo picker. A tap
+     * that lands on an invisible obstacle looks exactly like an app that
+     * ignores its own button. Hiding it is one preference key, and it is
+     * reversible: pass hideDevMenuFab:false to put the bubble back.
+     */
+    if (plist) {
+      const show = devMenuFabValue(hideDevMenuFab);
+      const written = await writeSimulatorFlag(id, plist, DEV_MENU_FAB_KEY, show);
+      steps.push(written.ok ? (show ? "fab-shown" : "fab-hidden") : "fab-hide-failed");
+    } else {
+      steps.push("fab-hide-unavailable");
     }
     if (link && /^https?:\/\//.test(link)) {
       // expo-dev-launcher --initialUrl: loads the server directly, no
@@ -419,6 +482,107 @@ export const tapNative = async ({ target, x, y, label }) => {
   }
   throw new Error(
     "Native taps on iOS simulators need AXe (brew install cameroncooke/axe/axe) or idb. Prefer ui_act (element-based) or set_permission/launch_app, which remove the dialogs entirely."
+  );
+};
+
+/**
+ * Swipe duration bounds, the same ones the dashboard mirror uses.
+ *
+ * The duration is not cosmetic: a fast swipe hands the list an inertial
+ * fling, a slow one a tracked drag, and a gesture recognizer distinguishes
+ * the two. Below 20 ms nothing tracks the movement at all, and above 3 s
+ * the OS has usually given up on the gesture.
+ */
+const clampSwipeDuration = (raw) => {
+  // `Number(raw) || 200` swallowed a legitimate 0, which then came back as
+  // the default rather than as the documented 20 ms floor: the same falsy
+  // zero trap the flow recorder avoids for index
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return 200;
+  return Math.min(Math.max(Math.round(value), 20), 3000);
+};
+
+/**
+ * The argv of a swipe, built by itself so it can be verified without a
+ * simulator and without any of the three binaries being installed. The
+ * three tools take the same gesture in three different shapes: adb wants
+ * milliseconds and bare coordinates, AXe named flags and seconds, idb the
+ * coordinates positionally and seconds.
+ */
+export const swipeArgv = ({ kind, id, x1, y1, x2, y2, durationMs, tool = "axe" }) => {
+  const durationMsClamped = clampSwipeDuration(durationMs);
+  const seconds = String(durationMsClamped / 1000);
+  const [sx, sy, ex, ey] = [x1, y1, x2, y2].map((value) => String(Math.round(Number(value))));
+  if (kind === "adb") {
+    return ["adb", "-s", id, "shell", "input", "swipe", sx, sy, ex, ey, String(durationMsClamped)];
+  }
+  if (tool === "idb") {
+    return ["idb", "ui", "swipe", sx, sy, ex, ey, "--duration", seconds, "--udid", id];
+  }
+  return [
+    "axe", "swipe",
+    "--start-x", sx, "--start-y", sy,
+    "--end-x", ex, "--end-y", ey,
+    "--duration", seconds,
+    "--udid", id,
+  ];
+};
+
+/**
+ * The gesture ui_act structurally cannot perform.
+ *
+ * ui_act drives the app through its JS props, so it can call onPress and
+ * onChangeText, and it can call scrollTo on a list. It cannot produce a
+ * touch that MOVES: a Swipeable row, a pan handler, a carousel and every
+ * react-native-gesture-handler recognizer read the native touch stream,
+ * which no prop exposes. Scrolling a long form to bring a field into view
+ * is the same story on a plain View. Hence a real drag on the OS.
+ */
+export const swipeNative = async ({ target, x1, y1, x2, y2, durationMs }) => {
+  const { kind, id } = await resolveTarget(target);
+  requireTool(kind);
+  const points = [x1, y1, x2, y2].map((value) => Math.round(Number(value)));
+  if (points.some((value) => !Number.isFinite(value))) {
+    throw new Error("Invalid coordinates: pass x1, y1, x2 and y2");
+  }
+  const duration = clampSwipeDuration(durationMs);
+  const gesture = { kind, id, x1, y1, x2, y2, durationMs: duration };
+
+  if (kind === "adb") {
+    const result = await runCommand(swipeArgv(gesture), Math.max(6000, duration + 5000));
+    if (!result.ok) fail(result, "input swipe");
+    return {
+      ok: true, target: `adb:${id}`,
+      from: { x: points[0], y: points[1] }, to: { x: points[2], y: points[3] },
+      durationMs: duration,
+    };
+  }
+
+  // iOS: simctl cannot touch the screen. AXe (single binary, maintained)
+  // first, then idb (needs companion + Python <= 3.11), else a clear message.
+  if (which("axe")) {
+    const result = await runCommand(swipeArgv({ ...gesture, tool: "axe" }), 15000);
+    if (!result.ok) fail(result, "axe swipe");
+    return {
+      ok: true, target: `sim:${id}`, via: "axe",
+      from: { x: points[0], y: points[1] }, to: { x: points[2], y: points[3] },
+      durationMs: duration,
+    };
+  }
+  if (which("idb")) {
+    const result = await runCommand(swipeArgv({ ...gesture, tool: "idb" }), 15000);
+    if (!result.ok) {
+      if (isBrokenIdb(textOf(result) || result.error || "")) throw new Error(BROKEN_IDB_HINT);
+      fail(result, "idb ui swipe");
+    }
+    return {
+      ok: true, target: `sim:${id}`, via: "idb",
+      from: { x: points[0], y: points[1] }, to: { x: points[2], y: points[3] },
+      durationMs: duration,
+    };
+  }
+  throw new Error(
+    "Native swipes on iOS simulators need AXe (brew install cameroncooke/axe/axe) or idb. For a plain list, ui_act with scrollTo/scrollBy/scrollToEnd needs no binary at all; a swipe is for what scrolling cannot do (Swipeable rows, pan gestures)."
   );
 };
 
@@ -668,7 +832,11 @@ export const sessionStart = async (args, { waitForEvent }) => {
     }
   }
 
-  const launch = await launchApp({ target, appId, url, coldStart: args.coldStart !== false });
+  const launch = await launchApp({
+    target, appId, url,
+    coldStart: args.coldStart !== false,
+    hideDevMenuFab: args.hideDevMenuFab,
+  });
   steps.push({ step: "launch", ok: true, detail: launch.steps });
 
   const waitType = typeof args.waitFor === "string" && args.waitFor.length ? args.waitFor : "app.info";
@@ -845,8 +1013,8 @@ export const NATIVE_TOOLS = [
   },
   {
     name: "launch_app",
-    description: "Launches the app with zero dialogs. iOS: simctl launch with --initialUrl (dev-client loads the given Metro URL directly, no deep link). Android: explicit-component am start with the URL as VIEW data. coldStart terminates first; the expo dev-menu onboarding is skipped automatically.",
-    inputSchema: { type: "object", required: ["appId"], properties: { ...targetProp, appId: { type: "string" }, url: { type: "string", description: "Metro server URL (http://host:8081) or deep link" }, coldStart: { type: "boolean" }, suppressDevMenuIntro: { type: "boolean" } }, additionalProperties: false },
+    description: "Launches the app with zero dialogs and nothing floating over the screen. iOS: simctl launch with --initialUrl (dev-client loads the given Metro URL directly, no deep link). Android: explicit-component am start with the URL as VIEW data. coldStart terminates first; the expo dev-menu onboarding is skipped automatically, and its floating action button is hidden (iOS), because it sits in its own window, is therefore invisible to get_ui_tree, and swallows taps meant for the buttons underneath it.",
+    inputSchema: { type: "object", required: ["appId"], properties: { ...targetProp, appId: { type: "string" }, url: { type: "string", description: "Metro server URL (http://host:8081) or deep link" }, coldStart: { type: "boolean" }, suppressDevMenuIntro: { type: "boolean" }, hideDevMenuFab: { type: "boolean", description: "iOS: hide the expo-dev-menu floating bubble, which covers the bottom-right corner and intercepts taps (default true). Pass false to put it back. On Android the equivalent is a manifest meta-data, so the hub cannot set it." } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
@@ -871,6 +1039,12 @@ export const NATIVE_TOOLS = [
     name: "tap_native",
     description: "LAST-RESORT tap for native dialogs the JS runtime cannot reach. Android: adb input tap (x/y). iOS: AXe if installed (tap by accessibility label, e.g. label='Allow', or x/y in points), else idb. Prefer ui_act and set_permission/launch_app, which make this unnecessary.",
     inputSchema: { type: "object", properties: { ...targetProp, x: { type: "number" }, y: { type: "number" }, label: { type: "string", description: "iOS/AXe only: tap the element with this accessibility label" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: "swipe_native",
+    description: "Drags a real finger across the screen, from x1,y1 to x2,y2 in device coordinates. This is the gesture ui_act cannot perform: it acts through the JS props, so it reaches onPress and scrollTo but never produces a MOVING touch. Use it to scroll a long form that exposes no scrollable instance, and to exercise anything reading the native touch stream: a Swipeable row, a pan handler, a carousel, any react-native-gesture-handler recognizer. durationMs shapes the gesture: short is an inertial fling, long a tracked drag. Android: adb input swipe. iOS: AXe if installed, else idb.",
+    inputSchema: { type: "object", required: ["x1", "y1", "x2", "y2"], properties: { ...targetProp, x1: { type: "number" }, y1: { type: "number" }, x2: { type: "number" }, y2: { type: "number" }, durationMs: { type: "integer", description: "Gesture duration, clamped to 20-3000 ms (default 200). Short flings, long drags." } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
@@ -954,7 +1128,7 @@ export const NATIVE_TOOLS = [
   {
     name: "session_start",
     description: "One-call bootstrap: resolve target, pre-grant permissions, launch the dev build on the given Metro server (cold start, no dialogs, onboarding skipped), then wait until the app connects to the hub (waitFor event, default app.info). Android: pass scheme (e.g. exp+myapp) for a deterministic first connection.",
-    inputSchema: { type: "object", required: ["platform", "appId"], properties: { platform: { type: "string", enum: ["ios", "android"] }, target: { type: "string" }, appId: { type: "string" }, serverUrl: { type: "string" }, scheme: { type: "string" }, permissions: { type: "object", additionalProperties: { type: "boolean" } }, coldStart: { type: "boolean" }, waitFor: { type: "string" }, timeoutMs: { type: "integer", minimum: 5000, maximum: 120000 } }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["platform", "appId"], properties: { platform: { type: "string", enum: ["ios", "android"] }, target: { type: "string" }, appId: { type: "string" }, serverUrl: { type: "string" }, scheme: { type: "string" }, permissions: { type: "object", additionalProperties: { type: "boolean" } }, coldStart: { type: "boolean" }, hideDevMenuFab: { type: "boolean", description: "iOS: hide the expo-dev-menu floating bubble, which intercepts taps meant for the elements under it (default true)" }, waitFor: { type: "string" }, timeoutMs: { type: "integer", minimum: 5000, maximum: 120000 } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
 ];
@@ -968,6 +1142,7 @@ export const handleNativeTool = async (name, args, helpers) => {
     case "open_url": return openUrl(args);
     case "screenshot_native": return screenshotNative(args);
     case "tap_native": return tapNative(args);
+    case "swipe_native": return swipeNative(args);
     case "boot_device": return bootDevice(args);
     case "shutdown_device": return shutdownDevice(args);
     case "set_location": return setLocation(args);

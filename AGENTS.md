@@ -82,6 +82,13 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
   would contradict the argument printed on the box.
 - Sessions and baselines are written under `.rn-devtools/` in the host
   project, which is gitignored and never committed.
+- Credentials are removed BEFORE they leave the device, headers and bodies
+  alike, by name and by shape, and what was removed is named in the event.
+  Anything the hub holds can end up in a model's context window, and
+  truncating a payload is not redacting it.
+- The SDK starts only when development is affirmed (`__DEV__ === true`, or
+  NODE_ENV that is not production where the global does not exist). A tool
+  that reads state and traffic fails closed.
 - Measurement must work on BOTH architectures. On Fabric the host fiber's
   stateNode is not the instance: it holds `{ node, canonical }` and the
   measurable instance is `canonical.publicInstance`, created lazily, with

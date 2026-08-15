@@ -52,6 +52,8 @@ LLM to integrate any app.
 | `screen.stream.stop` | (none) | { ok } |
 | `ui.tree` | { maxDepth?, maxNodes?, includeHidden? } | { generation, truncated, hiddenSubtrees, roots: UiNode[][] } (requires `attachUiAutomation()`) |
 | `ui.query` | { by: testID/text/label/placeholder/type/role, value, name?, exact?, within?, limit?, includeHidden? } | { generation, count, truncated, matches: [{index, type, testID, label, text, rect, rectFrom?}], absence? } |
+| `overlay.get` | (none) | { ok, visible, preferences } or { ok: false, reason: "dev-menu-unavailable", note } |
+| `overlay.set` | { visible } | { ok, visible, verified } or { ok: false, reason: "dev-menu-unavailable" / "unchanged" / "set-failed", note } |
 | `context.runtime` | (none) | the runtime half of `get_project_context` (engine, Fabric, bridgeless, native versions) |
 | `context.instrumentation` | (none) | { network: {instrumented, wraps}, uiAutomation, determinism, originTracking, console, stores, actions, previews } |
 | `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd/scrollBy/focus/blur, by, value, name?, within?, text?, clear?, index?, x?, y?, dx?, dy?, includeHidden? } | { ok, action, detail, target, actedOn?, verified?, note?, result? } or { ok: false, reason: "ambiguous" / "index-out-of-range" / "value-unchanged", candidates? } |

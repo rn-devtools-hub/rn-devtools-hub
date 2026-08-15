@@ -365,7 +365,14 @@ for an agent: it never appears in `get_ui_tree`, and it can cover a native
 control underneath it, typically the button in the top right corner of the
 system photo picker.
 
-On iOS simulators, `launch_app` and `session_start` hide it by default
+The fastest fix while the app is running is the `set_overlay` MCP tool:
+`set_overlay {visible:false}` writes the dev-menu preference through its
+native module and the bubble goes away immediately, no relaunch, Expo Go
+included. `set_overlay {visible:true}` puts it back. This path is iOS only,
+because expo-dev-menu exposes its preferences to JavaScript on iOS and
+keeps them in Kotlin on Android.
+
+On iOS simulators, `launch_app` and `session_start` also hide it by default
 (`hideDevMenuFab`), by writing `EXDevMenuShowFloatingActionButton` into the
 app sandbox exactly like the onboarding key. The result is reported as a
 `fab-hidden` step. The preference persists across launches, including the

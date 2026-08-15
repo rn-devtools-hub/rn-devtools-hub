@@ -210,9 +210,10 @@ scripting gives an agent: `session_start` boots a dev build on the right
 Metro server with zero dialogs (permissions pre-granted, dev-menu
 onboarding skipped), plus `set_permission`, `launch_app`, `open_url`,
 `screenshot_native`, `set_location`, `send_push`, `set_appearance`,
-`set_animations` and the last-resort `tap_native` and `swipe_native`, on iOS
-simulators and Android devices, with every capability probed and degrading
-cleanly.
+`set_animations`, `set_overlay` (the expo-dev-menu bubble covers native
+controls no UI tree can show) and the last-resort `tap_native` and
+`swipe_native`, on iOS simulators and Android devices, with every capability
+probed and degrading cleanly.
 
 ## Quick start
 

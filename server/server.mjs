@@ -664,6 +664,18 @@ const MCP_TOOLS = [
   ...A11Y_TOOLS,
   BUILD_TOOL,
   {
+    name: "set_overlay",
+    description: "Shows or hides the expo-dev-menu floating button, immediately and without relaunching the app. That bubble lives in its own window above everything the app renders, so no UI tree can show it and it swallows the taps meant for whatever is underneath, the button in the top corner of the iOS photo picker being the usual casualty. Hide it before driving a native modal, put it back afterwards. Runtime switch on iOS, Expo Go included; on Android use the EXDevMenuShowFloatingActionButton manifest meta-data, or launch_app hideDevMenuFab on a dev build.",
+    inputSchema: { type: "object", required: ["visible"], properties: { deviceId: { type: "string" }, visible: { type: "boolean" } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "get_overlay",
+    description: "Says whether the expo-dev-menu floating button is currently shown, and returns the dev-menu preferences behind it.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "list_previews",
     description: "Lists the components the app registered with devtools.registerPreview, and whether the preview outlet is mounted.",
     inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
@@ -1031,6 +1043,8 @@ const handleMcpTool = async (name, args = {}) => {
     unmount_component: "preview.unmount",
     get_state: "state.get",
     set_state: "state.set",
+    set_overlay: "overlay.set",
+    get_overlay: "overlay.get",
   };
   if (DEVICE_COMMANDS[name]) {
     const { deviceId: _unused, ...payload } = args;

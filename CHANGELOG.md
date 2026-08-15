@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.15.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.15.0...v0.15.1) (2026-08-15)
+
+### Bug Fixes
+
+* **sdk:** redact credentials in bodies, not just in four headers ([e774945](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/e774945cc3a746b8e0c5053ae7d39122d9502954))
+
 ## [0.15.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.14.0...v0.15.0) (2026-08-15)
 
 ### Features

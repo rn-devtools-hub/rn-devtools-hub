@@ -34,6 +34,7 @@ import {
   ActionDefinition,
   CommandHandler,
   DevtoolsInitOptions,
+  redactBody,
   redactHeaders,
   truncateForWire,
 } from "./types";
@@ -126,15 +127,43 @@ class Devtools {
     return this.trackOrigin ? (captureOrigin() ?? undefined) : undefined;
   }
 
+  /** Extra field names this project considers secret, from init() */
+  private redactKeys: string[] = [];
+
+  /**
+   * A body ready to leave the device: credentials removed, and the paths
+   * that were removed named. Silence would leave a reader hunting for a
+   * value the tool itself took out.
+   */
+  private safeBody(body: unknown): Record<string, unknown> {
+    if (body === undefined) return {};
+    const { value, redacted } = redactBody(body, this.redactKeys);
+    return redacted.length ? { body: value, redacted } : { body: value };
+  }
+
   get enabled(): boolean {
     return this.transport !== null;
   }
 
   init(options: DevtoolsInitOptions): void {
-    // Built-in safeguard: never active in production, even if the host app
-    // forgets its own __DEV__ guard (lesson learned from Rozenite)
-    if (typeof __DEV__ !== "undefined" && !__DEV__) return;
+    /**
+     * Built-in safeguard: never active in production, even if the host app
+     * forgets its own __DEV__ guard.
+     *
+     * The condition used to be "stop when __DEV__ exists and is false",
+     * so a bundle where the global had been stripped ran the SDK anyway.
+     * A tool that reads your state and your network traffic has to fail
+     * closed: it starts when development is affirmed, not when production
+     * fails to announce itself. The NODE_ENV fallback keeps the paths
+     * where __DEV__ genuinely does not exist working, tests and plain
+     * Node among them.
+     */
+    const nodeEnv = (globalThis as Record<string, any>).process?.env?.NODE_ENV;
+    const development =
+      typeof __DEV__ !== "undefined" ? __DEV__ === true : nodeEnv !== "production";
+    if (!development) return;
     if (this.transport) return; // already initialized
+    this.redactKeys = Array.isArray(options.redactKeys) ? options.redactKeys : [];
     this.transport = new DevtoolsTransport(options);
     this.transport.start();
     this.startedAt = Date.now();
@@ -320,8 +349,8 @@ class Devtools {
         source: label,
         method: (config.method ?? "get").toUpperCase(),
         url: `${config.baseURL ?? ""}${config.url ?? ""}`,
-        headers: redactHeaders(this.flattenAxiosHeaders(config.headers)),
-        body: config.data,
+        headers: redactHeaders(this.flattenAxiosHeaders(config.headers), this.redactKeys),
+        ...this.safeBody(config.data),
         origin: this.origin(),
       });
       return config;
@@ -336,8 +365,8 @@ class Devtools {
           durationMs: response.config?.__devtoolsStart
             ? Date.now() - response.config.__devtoolsStart
             : undefined,
-          headers: redactHeaders(response.headers),
-          body: response.data,
+          headers: redactHeaders(response.headers, this.redactKeys),
+          ...this.safeBody(response.data),
         });
         return response;
       },
@@ -350,7 +379,7 @@ class Devtools {
             ? Date.now() - error.config.__devtoolsStart
             : undefined,
           message: error?.message,
-          body: error?.response?.data,
+          ...this.safeBody(error?.response?.data),
         });
         return Promise.reject(error);
       }
@@ -394,14 +423,15 @@ class Devtools {
         source: label,
         method,
         url,
-        headers: redactHeaders(init?.headers),
+        headers: redactHeaders(init?.headers, self.redactKeys),
         // Do not serialize binary bodies (File/Blob from uploads)
-        body:
+        ...self.safeBody(
           typeof init?.body === "string"
             ? init.body
             : init?.body
               ? "[binary]"
-              : undefined,
+              : undefined
+        ),
         origin: self.origin(),
       });
 
@@ -608,7 +638,7 @@ class Devtools {
 
 export const devtools = new Devtools();
 export { DevtoolsTransport } from "./transport";
-export { truncateForWire, redactHeaders } from "./types";
+export { truncateForWire, redactHeaders, redactBody, redactSecrets, isSensitiveKey } from "./types";
 export { collectRuntimeContext } from "./context";
 export { resolveSource, componentNameOf } from "./source";
 export { PREVIEW_OUTLET_TEST_ID } from "./preview";

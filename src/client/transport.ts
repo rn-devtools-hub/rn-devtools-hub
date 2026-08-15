@@ -15,6 +15,9 @@ import {
 } from "./types";
 
 const DEFAULT_MAX_BUFFER = 1000;
+/** 256 KB: large enough for a screen frame, small enough not to freeze
+ * the JS thread when a backlog drains after a reconnection */
+const DEFAULT_MAX_BATCH_BYTES = 262144;
 const DEFAULT_FLUSH_MS = 300;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 10000;
@@ -30,7 +33,10 @@ export class DevtoolsTransport {
   private commandHandlers = new Map<string, CommandHandler>();
 
   private readonly options: Required<
-    Pick<DevtoolsInitOptions, "serverUrl" | "appName" | "maxBufferSize" | "flushIntervalMs">
+    Pick<
+      DevtoolsInitOptions,
+      "serverUrl" | "appName" | "maxBufferSize" | "flushIntervalMs" | "maxBatchBytes"
+    >
   > & { deviceName: string; stableId: string | null };
 
   constructor(options: DevtoolsInitOptions) {
@@ -41,6 +47,7 @@ export class DevtoolsTransport {
       stableId: options.stableId ?? null,
       maxBufferSize: options.maxBufferSize ?? DEFAULT_MAX_BUFFER,
       flushIntervalMs: options.flushIntervalMs ?? DEFAULT_FLUSH_MS,
+      maxBatchBytes: Math.max(1024, options.maxBatchBytes ?? DEFAULT_MAX_BATCH_BYTES),
     };
   }
 
@@ -98,17 +105,53 @@ export class DevtoolsTransport {
     this.commandHandlers.set(command, handler);
   }
 
-  /** Sends the current batch if connected */
+  /**
+   * Sends the current batch if connected.
+   *
+   * The buffer was bounded by a COUNT and drained whole, so a thousand
+   * events of a few bytes and a thousand network responses of twenty
+   * kilobytes produced the same "one batch": after a disconnection, the
+   * reconnect flush serialized the entire backlog in one JSON.stringify
+   * on the JS thread. The batch is now bounded in bytes as well, and what
+   * does not fit stays in the buffer for the next tick, in order.
+   */
   flush(): void {
     if (!this.isConnected || this.buffer.length === 0) return;
 
-    const events = this.buffer.splice(0, this.buffer.length);
+    const limit = this.options.maxBatchBytes;
+    const parts: string[] = [];
+    let size = 0;
+    let taken = 0;
+    for (const event of this.buffer) {
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(event);
+      } catch {
+        taken += 1; // unserializable: drop it rather than block the queue
+        continue;
+      }
+      // Always send at least one event, even one over the limit on its
+      // own: holding it back forever would be a silent stall
+      if (parts.length && size + serialized.length > limit) break;
+      parts.push(serialized);
+      size += serialized.length + 1;
+      taken += 1;
+    }
+    if (!parts.length) {
+      this.buffer.splice(0, taken);
+      return;
+    }
+
+    const events = this.buffer.splice(0, taken);
     try {
-      this.ws!.send(JSON.stringify({ kind: "events", events }));
+      this.ws!.send(`{"kind":"events","events":[${parts.join(",")}]}`);
     } catch {
       // Requeue at the head on send failure (without exceeding capacity)
       this.buffer = [...events, ...this.buffer].slice(-this.options.maxBufferSize);
+      return;
     }
+    // More waiting: drain on the next tick rather than in this one
+    if (this.buffer.length) setTimeout(() => this.flush(), 0);
   }
 
   private connect(): void {

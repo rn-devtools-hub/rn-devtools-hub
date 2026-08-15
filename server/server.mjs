@@ -13,7 +13,7 @@
  * over the difference, including the WebSocket server Node does not have.
  */
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve, spawn, which } from "./runtime.mjs";
@@ -42,10 +42,125 @@ const PROJECT_NAME = (() => {
   }
 })();
 
-const PORT = (() => {
+const DEFAULT_PORT = 8973;
+/** Last port the automatic search will try before giving up */
+const LAST_FALLBACK_PORT = 8982;
+
+/**
+ * An explicit --port is an instruction, not a preference.
+ *
+ * When the user names a port, a hub that quietly moves elsewhere is worse
+ * than one that refuses to start: the app is configured for THAT port. The
+ * two cases are therefore kept apart, and the port actually bound is
+ * announced either way.
+ */
+const EXPLICIT_PORT = (() => {
   const index = process.argv.indexOf("--port");
-  return index > -1 ? Number(process.argv[index + 1]) : 8973;
+  if (index === -1) return null;
+  const raw = process.argv[index + 1];
+  const value = Number(raw);
+  if (Number.isInteger(value) && value > 0 && value < 65536) return value;
+  /**
+   * A malformed --port used to fall back to "no explicit port at all",
+   * which turned an instruction into a preference: the hub took 8973, and
+   * the automatic fallback with it, while the user believed they had
+   * pinned a port and the app was configured for one. Refusing is the only
+   * answer that cannot be misread.
+   */
+  console.error("");
+  console.error(`  rn-devtools-hub: --port needs a number between 1 and 65535 (got ${raw === undefined ? "nothing" : `"${raw}"`}).`);
+  console.error("  Omit --port to take 8973, or the next free port up to 8982.");
+  console.error("");
+  process.exit(1);
 })();
+const PORT = EXPLICIT_PORT ?? DEFAULT_PORT;
+/** The port the hub really bound, which is what every answer must report */
+let activePort = PORT;
+
+/**
+ * Where this project's hub is listening, for whoever comes looking.
+ *
+ * The stdio bridge, and anything else started from the project root, knew
+ * exactly one port: the default. A hub that fell back to another one was
+ * therefore invisible to its own bridge, which would start a SECOND hub,
+ * on a third port, against the same project. A file in the project says
+ * where the hub really is; `.rn-devtools/` is already gitignored and
+ * already holds the sessions.
+ *
+ * The token is deliberately NOT written: it is the only thing protecting
+ * the dashboard, and a file readable by every process on the machine is
+ * not where it belongs.
+ */
+const DISCOVERY_DIR = join(PROJECT_ROOT, ".rn-devtools");
+const DISCOVERY_FILE = join(DISCOVERY_DIR, "hub.json");
+
+/** Signal 0 asks the OS whether a pid exists without touching it. EPERM
+ * means it exists and belongs to someone else, which is still alive. */
+const pidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+};
+
+/** The hub already registered for this project, if it is still running */
+const registeredHub = () => {
+  try {
+    const written = JSON.parse(readFileSync(DISCOVERY_FILE, "utf-8"));
+    return written.pid !== process.pid && pidAlive(written.pid) ? written : null;
+  } catch {
+    return null; // no file, or a half-written one
+  }
+};
+
+const writeDiscoveryFile = (port) => {
+  /**
+   * Two hubs on the SAME project: the second one used to take the file
+   * over, and the stdio bridge then went to the hub the app is not
+   * connected to. The device is attached to one process, not to a
+   * directory, so the first hub keeps the registration until it exits.
+   */
+  const incumbent = registeredHub();
+  if (incumbent) return { written: false, pid: incumbent.pid, port: incumbent.port };
+  try {
+    mkdirSync(DISCOVERY_DIR, { recursive: true });
+    // Same self-ignoring marker the sessions use: the directory must never
+    // reach a commit, with or without the project's cooperation
+    const marker = join(DISCOVERY_DIR, ".gitignore");
+    if (!existsSync(marker)) {
+      writeFileSync(marker, "# Local devtools artifacts, never committed\n*\n");
+    }
+    writeFileSync(
+      DISCOVERY_FILE,
+      `${JSON.stringify({ port, pid: process.pid, project: PROJECT_NAME, startedAt: Date.now() }, null, 2)}\n`
+    );
+    return { written: true, pid: process.pid, port };
+  } catch {
+    // Discovery is a convenience: an unwritable project must not stop the hub
+    return { written: false, pid: null, port: null };
+  }
+};
+
+const removeDiscoveryFile = () => {
+  try {
+    const written = JSON.parse(readFileSync(DISCOVERY_FILE, "utf-8"));
+    // Only remove our own: another hub may have taken the port since
+    if (written.pid === process.pid) unlinkSync(DISCOVERY_FILE);
+  } catch {
+    // already gone, or never written
+  }
+};
+
+process.on("exit", removeDiscoveryFile);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    removeDiscoveryFile();
+    process.exit(0);
+  });
+}
 
 const HISTORY_LIMIT_PER_DEVICE = 3000;
 const MCP_PROTOCOL_VERSION = "2025-11-25";
@@ -519,14 +634,14 @@ const MCP_TOOLS = [
   },
   {
     name: "query_ui",
-    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, type, or role plus accessible name (preferred, Testing Library style). Scope with within to disambiguate. Returns text, the current value of an input, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Retries while nothing matches (timeoutMs, default 1000) so a screen transition is not mistaken for a regression. An empty answer carries absence{reason, exposedBy, present, note}: it distinguishes an app that exposes no role or testID at all (every such query will answer zero) from a value that is genuinely not on screen, and lists what IS exposed to select on instead. Hidden navigator screens are skipped unless includeHidden.",
-    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, timeoutMs: { type: "integer", minimum: 0, maximum: 30000, description: "Retry while nothing matches, up to this deadline (default 1000). A UI is asynchronous and an empty answer during a transition reads like a regression. Pass 0 for a single immediate look." }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, placeholder, type, or role plus accessible name (preferred, Testing Library style). placeholder is the one that reaches an ordinary form field: a TextInput with no testID and no accessibilityLabel is the norm, and selecting it by position is exactly the fragile path. Scope with within to disambiguate. Returns text, the current value of an input, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Retries while nothing matches (timeoutMs, default 1000) so a screen transition is not mistaken for a regression. An empty answer carries absence{reason, exposedBy, present, note}: it distinguishes an app that exposes no role or testID at all (every such query will answer zero) from a value that is genuinely not on screen, and lists what IS exposed to select on instead. truncated says the search stopped at limit rather than at the last match, so count is not read as a total. Hidden navigator screens are skipped unless includeHidden.",
+    inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, timeoutMs: { type: "integer", minimum: 0, maximum: 30000, description: "Retry while nothing matches, up to this deadline (default 1000). A UI is asynchronous and an empty answer during a transition reads like a regression. Pass 0 for a single immediate look." }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: "ui_act",
-    description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd, focus and blur. focus opens the keyboard, which is what makes anything depending on it (KeyboardAvoidingView, insets) verifiable without touching the device. Target by testID, text, label, type or role plus name; scope with within. When several elements match, the result lists the candidates with rects so you can pass index. Hidden navigator screens are skipped unless includeHidden.",
-    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd, scrollBy (dx/dy in points, relative to the current offset), focus and blur. focus opens the keyboard, which is what makes anything depending on it (KeyboardAvoidingView, insets) verifiable without touching the device. Target by testID, text, label, placeholder, type or role plus name; scope with within. placeholder is how a form field with no testID is reached without counting positions. When several elements match, the result lists the candidates with rects so you can pass index; an index beyond the last match is REFUSED (ok:false, reason:\"index-out-of-range\") instead of falling back to the last element, because acting on another element and reporting success is the one failure an automation tool must never produce. A typed value that does not come back is reported the same way (reason:\"value-unchanged\"), and verified/note say whether the text truly reached the field. Hidden navigator screens are skipped unless includeHidden.",
+    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "scrollBy", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number", description: "action:scrollBy, horizontal distance in points from the current offset" }, dy: { type: "number", description: "action:scrollBy, vertical distance in points from the current offset (positive scrolls down)" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
@@ -685,7 +800,7 @@ const handleMcpTool = async (name, args = {}) => {
     // this hub serves. With several apps on several ports, that is the
     // difference between reading the right project and another one.
     return {
-      project: { name: PROJECT_NAME, directory: PROJECT_ROOT, port: PORT },
+      project: { name: PROJECT_NAME, directory: PROJECT_ROOT, port: activePort },
       devices: Array.from(devices.entries()).map(deviceSummary),
     };
   }
@@ -863,14 +978,35 @@ const handleMcpTool = async (name, args = {}) => {
         if (match.source) match.source = await upgradeSource(match.source, metro);
       }
     }
-    if (name === "ui_act" && response.result?.target?.source) {
-      response.result.target.source = await upgradeSource(response.result.target.source, metro);
+    if (name === "ui_act" && response.result) {
+      /**
+       * Every element ui_act names, not just the one the selector matched.
+       *
+       * `actedOn` is the element the action REALLY reached (the input
+       * inside the container, the Pressable above the view), so it is the
+       * location an agent goes to edit, and the candidate lists are what a
+       * refusal is for. Upgrading only `target` shipped those as raw
+       * bundle coordinates, which is the one thing symbolication exists to
+       * prevent, and it was silent about it.
+       */
+      const described = [
+        response.result.target,
+        response.result.actedOn,
+        ...(Array.isArray(response.result.candidates) ? response.result.candidates : []),
+      ];
+      for (const entry of described) {
+        if (entry?.source) entry.source = await upgradeSource(entry.source, metro);
+      }
     }
     if (name === "ui_act" && response.result?.ok) {
       recordAct(recorder, {
         action: payload.action,
         selector: { by: payload.by, value: payload.value, name: payload.name, within: payload.within },
         text: payload.text,
+        // Without the index the replay runs the SAME selector on ANOTHER
+        // element: a flow recorded on the third row of a list came back
+        // as a flow on the first one, and nothing in the export said so
+        index: payload.index,
         target: response.result.target,
         cursor: cursorBefore,
       });
@@ -1051,8 +1187,28 @@ const handleMcpRequest = async (request, bunServer) => {
     });
     try {
       const result = await handleMcpTool(params?.name, args);
-      const emptiness = readEmptiness(result);
-      finish({ ok: true, bytes: sizeOfResult(result), empty: emptiness.empty, emptyReason: emptiness.reason });
+      /**
+       * A tool that says ok:false has failed, and MCP has one field for
+       * that. Returning it as a plain success made every declared refusal
+       * invisible to a client that only reads isError: an ambiguous
+       * selector, an index out of range, a typed value that never landed
+       * and a failed assertion all arrived looking exactly like a result.
+       * The payload is unchanged, only its status is now truthful, and
+       * the telemetry counts it with the other failures instead of
+       * inflating the success rate.
+       */
+      const declaredFailure =
+        result && typeof result === "object" && !Array.isArray(result) && result.ok === false;
+      if (declaredFailure) {
+        finish({
+          ok: false,
+          error: String(result.reason ?? result.hint ?? "the tool reported ok:false"),
+          bytes: sizeOfResult(result),
+        });
+      } else {
+        const emptiness = readEmptiness(result);
+        finish({ ok: true, bytes: sizeOfResult(result), empty: emptiness.empty, emptyReason: emptiness.reason });
+      }
       if (result && typeof result === "object" && result.__mcpImage) {
         const { __mcpImage, ...rest } = result;
         return jsonResponse(mcpResult(id, {
@@ -1060,9 +1216,10 @@ const handleMcpRequest = async (request, bunServer) => {
             { type: "image", data: __mcpImage.data, mimeType: __mcpImage.mimeType },
             { type: "text", text: JSON.stringify(rest) },
           ],
+          ...(declaredFailure ? { isError: true } : {}),
         }));
       }
-      return jsonResponse(mcpResult(id, mcpText(result)));
+      return jsonResponse(mcpResult(id, mcpText(result, declaredFailure)));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       finish({ ok: false, error: message, bytes: message.length });
@@ -1094,8 +1251,8 @@ const deviceListPayload = () =>
     eventCount: device.history.length,
   }));
 
-const startServer = () => serve({
-  port: PORT,
+const startServer = (port) => serve({
+  port,
   allowUpgrade: allowDeviceUpgrade,
   // Bun kills idle requests after 10 s by default: wait_for_event
   // long-polls (up to 120 s) and native log dumps need much more
@@ -1378,30 +1535,77 @@ const startServer = () => serve({
   },
 });
 
-let server;
-try {
-  server = startServer();
-} catch (error) {
-  if (/in use|EADDRINUSE/i.test(String(error))) {
-    console.error("");
-    console.error(`  Port ${PORT} is already taken: another hub is probably running`);
+const isPortTaken = (error) => /in use|EADDRINUSE/i.test(String(error?.message ?? error));
+
+/**
+ * Binds a port, and says which one.
+ *
+ * With one hub per project (which the product asks for as soon as two apps
+ * are open), the second one used to die on the default port and leave the
+ * developer to pick another by hand. Trying the next few is the obvious
+ * fix, and the dangerous one: a hub silently listening somewhere else is a
+ * device that never connects and an agent that reports an app problem. So
+ * the fallback exists, and it is announced loudly, with the line to copy.
+ */
+const listen = async () => {
+  const candidates = EXPLICIT_PORT !== null
+    ? [EXPLICIT_PORT]
+    : Array.from({ length: LAST_FALLBACK_PORT - DEFAULT_PORT + 1 }, (_, step) => DEFAULT_PORT + step);
+
+  for (const candidate of candidates) {
+    try {
+      return await startServer(candidate);
+    } catch (error) {
+      if (!isPortTaken(error)) throw error;
+    }
+  }
+
+  console.error("");
+  if (EXPLICIT_PORT !== null) {
+    console.error(`  Port ${EXPLICIT_PORT} is already taken: another hub is probably running`);
     console.error("  (for example for another project).");
     console.error("");
-    console.error("  Launch this project's hub on its own port:");
-    console.error(`    bun server/server.mjs --port ${PORT + 1}`);
+    console.error("  It was asked for explicitly, so this hub will not move elsewhere:");
+    console.error("  the app is configured for that port. Free it, or pick another:");
+    console.error(`    npx rn-devtools-hub --port ${EXPLICIT_PORT + 1}`);
     console.error("  and point the app's serverUrl at that port.");
+  } else {
+    console.error(`  Ports ${DEFAULT_PORT} to ${LAST_FALLBACK_PORT} are all taken.`);
     console.error("");
-    process.exit(1);
+    console.error("  Stop a hub you are no longer using, or name a free port:");
+    console.error(`    npx rn-devtools-hub --port ${LAST_FALLBACK_PORT + 1}`);
   }
-  throw error;
-}
+  console.error("");
+  process.exit(1);
+};
+
+const server = await listen();
+activePort = server.port ?? PORT;
+const discovery = writeDiscoveryFile(activePort);
 
 console.log("");
 console.log("  rn-devtools-hub");
 console.log("  ---------------");
-console.log(`  Dashboard : http://localhost:${server.port}/?token=${HUB_TOKEN}`);
-console.log(`  WebSocket : ws://<local-ip>:${server.port}`);
-console.log(`  Local MCP : http://127.0.0.1:${server.port}/mcp`);
+if (!discovery.written && discovery.pid) {
+  // Say which hub owns the project, because the stdio bridge follows the
+  // file and an agent would otherwise drive the hub with no device on it
+  console.log(`  Another hub for this project is already running (pid ${discovery.pid} on port ${discovery.port}).`);
+  console.log("  It keeps .rn-devtools/hub.json, so `npx rn-devtools-hub mcp` keeps using it.");
+  console.log("");
+}
+if (EXPLICIT_PORT === null && activePort !== DEFAULT_PORT) {
+  // Loud on purpose: a hub on an unexpected port looks exactly like an app
+  // that fails to connect, and the developer has no reason to suspect it
+  console.log(`  Port ${DEFAULT_PORT} is taken, this hub is on ${activePort}`);
+  console.log("  The app will not find it on the default port. Set this in the app,");
+  console.log("  then restart Metro so it is inlined into the bundle:");
+  console.log(`    EXPO_PUBLIC_RN_DEVTOOLS_PORT=${activePort}`);
+  console.log(`  or point serverUrl at ws://<metro-ip>:${activePort} yourself.`);
+  console.log("");
+}
+console.log(`  Dashboard : http://localhost:${activePort}/?token=${HUB_TOKEN}`);
+console.log(`  WebSocket : ws://<local-ip>:${activePort}`);
+console.log(`  Local MCP : http://127.0.0.1:${activePort}/mcp`);
 console.log("");
 console.log("  The app connects automatically via the Metro server IP.");
 console.log("");

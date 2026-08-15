@@ -208,10 +208,22 @@ const createConnection = (socket, data) => {
  * never reach the request handler, so the shim answers false there and
  * handles them on the http server's own 'upgrade' event instead, with the
  * same initial `data`.
+ *
+ * Returns a PROMISE on both runtimes, and that is the point. Bun.serve
+ * throws synchronously when the port is taken; Node's `listen` reports the
+ * same EADDRINUSE through an 'error' event, which no try/catch can see. The
+ * hub caught the Bun shape only, so the exact same busy port produced a
+ * helpful message on Bun and an unhandled stack trace on Node, on a hub
+ * whose contract is that it runs on both.
  */
 export const serve = ({ port, idleTimeout, fetch: handleRequest, websocket, allowUpgrade }) => {
   if (isBun) {
-    return globalThis.Bun.serve({ port, idleTimeout, fetch: handleRequest, websocket });
+    try {
+      const server = globalThis.Bun.serve({ port, idleTimeout, fetch: handleRequest, websocket });
+      return Promise.resolve(server);
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
 
   const addresses = new WeakMap();
@@ -338,6 +350,26 @@ export const serve = ({ port, idleTimeout, fetch: handleRequest, websocket, allo
   });
 
   if (idleTimeout) server.setTimeout(idleTimeout * 1000);
-  server.listen(port);
-  return { port, stop: () => server.close() };
+
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.removeListener("error", onError);
+      // Port 0 asks the OS to pick, so the bound port is the only truth
+      const bound = server.address();
+      // Errors after the bind must not be thrown at the process: the hub
+      // is serving by then, and one broken socket is not a reason to die
+      server.on("error", (error) => console.error(`[hub] server error: ${error?.message ?? error}`));
+      resolve({
+        port: typeof bound === "object" && bound ? bound.port : port,
+        stop: () => server.close(),
+      });
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port);
+  });
 };

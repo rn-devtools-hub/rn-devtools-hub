@@ -195,9 +195,10 @@ agent sees them.
 For AI agents, the hub also exposes runtime UI automation over MCP:
 `get_ui_tree` (semantic tree of the visible components, read from the React
 runtime, including native views without accessibility like maps), `query_ui`
-(find elements by role and accessible name, testID, text or label, scoped
-with `within`, with measured rects), `ui_act` (tap, type exact text, submit,
-scroll, all by element, never by pixels), typed dev actions
+(find elements by role and accessible name, testID, placeholder, text or
+label, scoped with `within`, with measured rects), `ui_act` (tap, type exact
+text, submit, scroll, all by element, never by pixels, and it reads the
+field back to say whether the text landed), typed dev actions
 (`list_actions`/`run_action`: navigate, seed, login without touching the
 UI), and a correlated event flow (`wait_for_event`, `get_events_since`) that
 replaces sleeps with real signals like `screen.ready`. Works in Expo Go,
@@ -209,8 +210,9 @@ scripting gives an agent: `session_start` boots a dev build on the right
 Metro server with zero dialogs (permissions pre-granted, dev-menu
 onboarding skipped), plus `set_permission`, `launch_app`, `open_url`,
 `screenshot_native`, `set_location`, `send_push`, `set_appearance`,
-`set_animations` and a last-resort `tap_native`, on iOS simulators and
-Android devices, with every capability probed and degrading cleanly.
+`set_animations` and the last-resort `tap_native` and `swipe_native`, on iOS
+simulators and Android devices, with every capability probed and degrading
+cleanly.
 
 ## Quick start
 

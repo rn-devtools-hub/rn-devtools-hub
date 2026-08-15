@@ -51,18 +51,52 @@ LLM to integrate any app.
 | `screen.stream.start` | { fps? 1..5 } | { ok, fps } |
 | `screen.stream.stop` | (none) | { ok } |
 | `ui.tree` | { maxDepth?, maxNodes?, includeHidden? } | { generation, truncated, hiddenSubtrees, roots: UiNode[][] } (requires `attachUiAutomation()`) |
-| `ui.query` | { by: testID/text/label/type/role, value, name?, exact?, within?, limit?, includeHidden? } | { generation, count, matches: [{type, testID, label, text, rect}], absence? } |
+| `ui.query` | { by: testID/text/label/placeholder/type/role, value, name?, exact?, within?, limit?, includeHidden? } | { generation, count, truncated, matches: [{index, type, testID, label, text, rect, rectFrom?}], absence? } |
 | `context.runtime` | (none) | the runtime half of `get_project_context` (engine, Fabric, bridgeless, native versions) |
 | `context.instrumentation` | (none) | { network: {instrumented, wraps}, uiAutomation, determinism, originTracking, console, stores, actions, previews } |
-| `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd, by, value, name?, within?, text?, clear?, index?, x?, y?, includeHidden? } | { ok, action, detail, target } or { ok: false, reason: "ambiguous", candidates } |
+| `ui.act` | { action: tap/longPress/type/clear/submit/scrollTo/scrollToEnd/scrollBy/focus/blur, by, value, name?, within?, text?, clear?, index?, x?, y?, dx?, dy?, includeHidden? } | { ok, action, detail, target, actedOn?, verified?, note?, result? } or { ok: false, reason: "ambiguous" / "index-out-of-range" / "value-unchanged", candidates? } |
 
 Selector notes: `by:"role"` matches `role` (precedence) or
 `accessibilityRole`, bridging both naming families (img/image,
 heading/header, searchbox/search, slider/adjustable); `name` filters on
 the accessible name (aria-label / accessibilityLabel / alt /
 placeholder, then rendered text); Text hosts carry an implicit `text`
-role; `within` is a nested selector restricting the search to a
-container's subtree.
+role; `by:"placeholder"` matches on substring unless `exact`, and is the
+stable way to address a TextInput that carries neither testID nor
+accessibilityLabel, which is the common case in a form; `within` is a
+nested selector restricting the search to a container's subtree.
+
+`ui.query` and `ui.act` walk the same tree in the same order, so each
+match carries the `index` that addresses it in `ui.act` for the same
+selector. Read a position from one, pass it to the other.
+
+`ui.act` answers for the element it TOUCHED, not only for the one the
+selector matched:
+
+- `target` is the match, re-read after the commit for `type` and `clear`.
+- `actedOn` appears when the action landed somewhere else: the input
+  inside the container that matched, the Pressable above the view. It
+  carries `relation: "descendant" | "ancestor"`.
+- `verified` is returned for `type` and `clear`: `exact` (the input holds
+  the text), `transformed` (the app rewrote it: mask, maxLength, trim) or
+  `unverifiable` (uncontrolled input, or the element left the screen).
+  When the value did not move at all, the answer is `ok: false` with
+  `reason: "value-unchanged"` rather than a success.
+- `result` carries what the action measured: scroll offsets, the number
+  of `scrollToEnd` passes, whether the end was reached.
+- `index` beyond the number of matches is refused with
+  `reason: "index-out-of-range"` and the candidates. It is never rounded
+  down to the last match.
+- `committed` only says React rendered something, anywhere. It is not a
+  proof that the action reached its target; `verified` is.
+
+`rect` is the element's own box when `rectFrom` is absent. When the
+element has no measurable instance of its own, the closest measurable
+neighbour answers and `rectFrom` states whether it was a `descendant` or
+an `ancestor`, which makes the value an approximation. On the New
+Architecture a position comes from the shadow tree, and a ScrollView's
+content offset only reaches it through an asynchronous state update: a
+measurement taken while a scroll is still settling can lag by a frame.
 
 When `count` is 0, `ui.query` adds `absence` ({reason, exposedBy,
 present, note}). `reason` separates the three ways a query returns

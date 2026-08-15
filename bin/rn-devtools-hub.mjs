@@ -27,12 +27,21 @@ if (command === "--help" || command === "-h" || command === "help") {
     npx rn-devtools-hub init       Wire the SDK into this project
       --dry-run                    Show what would change, write nothing
       --force                      Regenerate the glue file if it exists
+      --port <number>              Hub port to write into the glue (default 8973)
 
   Options for the hub:
-    --port <number>                Listen on another port (default 8973)
+    --port <number>                Listen on this port, and fail if it is taken.
+                                   Without it the hub takes 8973, or the next
+                                   free port up to 8982, and says which loudly.
 
   Environment:
     RN_DEVTOOLS_TOKEN              Pin the dashboard token (default: random)
+    EXPO_PUBLIC_RN_DEVTOOLS_PORT   Read by the app: the port it connects to.
+                                   Set it when the hub is not on 8973, and
+                                   restart Metro so it is inlined.
+
+  The hub writes .rn-devtools/hub.json in the project (port and pid, never
+  the token), so \`mcp\` finds this project's hub wherever it landed.
 
   Docs: https://rn-devtools-hub.github.io/rn-devtools-hub/
 `);

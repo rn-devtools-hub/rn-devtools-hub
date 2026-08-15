@@ -129,8 +129,13 @@ import Constants from "expo-constants";
 const host = Constants.expoConfig?.hostUri?.split(":")[0] ?? "localhost";
 // Without Expo: hardcode your dev machine's IP or use an env var.
 
+// The hub listens on 8973, and moves to the next free port when that one
+// is taken by another project. Metro inlines EXPO_PUBLIC_* variables, so
+// pointing a second project at its own hub is one line in its .env.
+const port = process.env.EXPO_PUBLIC_RN_DEVTOOLS_PORT ?? "8973";
+
 devtools.init({
-  serverUrl: `ws://${host}:8973`,
+  serverUrl: `ws://${host}:${port}`,
   appName: "my-app",
   deviceName: "device",     // ideally the real model (expo-device)
   stableId: "a-stable-id",  // prevents ghost sessions on every reload
@@ -352,6 +357,34 @@ claude mcp add rn-devtools --transport http http://127.0.0.1:8973/mcp
 Tools: `list_devices`, `get_app_info`, `get_recent_network`, `get_crashes`,
 `get_endpoint_stats`, `query_sqlite`, `run_action`.
 
+### The dev-menu bubble covering the app
+
+`expo-dev-menu` draws a floating action button over the app. On iOS it
+lives in its own `UIWindow`, above everything, which has two consequences
+for an agent: it never appears in `get_ui_tree`, and it can cover a native
+control underneath it, typically the button in the top right corner of the
+system photo picker.
+
+On iOS simulators, `launch_app` and `session_start` hide it by default
+(`hideDevMenuFab`), by writing `EXDevMenuShowFloatingActionButton` into the
+app sandbox exactly like the onboarding key. The result is reported as a
+`fab-hidden` step. The preference persists across launches, including the
+ones you start by hand, so to get the bubble back either pass
+`hideDevMenuFab: false` on the next `launch_app`, or write it yourself:
+
+```bash
+PLIST="$(xcrun simctl get_app_container <udid> <bundleId> data)/Library/Preferences/<bundleId>.plist"
+xcrun simctl spawn <udid> defaults write "$PLIST" EXDevMenuShowFloatingActionButton -bool true
+```
+
+On Android the switch is the `EXDevMenuShowFloatingActionButton` meta-data
+of the application manifest, so it belongs to the app rather than to the
+hub: set it to `false` in `AndroidManifest.xml` on a bare project, or
+through a config plugin using `withAndroidManifest` on a managed one.
+
+The bubble is also draggable on both platforms, so moving it out of the way
+by hand works for a one-off run.
+
 ## Final check
 
 1. `npx rn-devtools-hub` from the project root: the URL with token is printed
@@ -361,3 +394,20 @@ Tools: `list_devices`, `get_app_info`, `get_recent_network`, `get_crashes`,
 
 If the device does not appear: same Wi-Fi network as the dev machine,
 port 8973 reachable, and check the IP resolved in the glue file.
+
+### Several projects at once
+
+Run one hub per project, from each project root. With no `--port`, a hub
+whose default port is taken walks up to 8982, prints the port it got, and
+records it in `.rn-devtools/hub.json` (which the `mcp` stdio bridge reads,
+so it always talks to its own project's hub). Point the app at it with
+`EXPO_PUBLIC_RN_DEVTOOLS_PORT=8974` in that project's `.env`, or write the
+port into the glue with `npx rn-devtools-hub init --force --port 8974`. A
+glue file generated before this existed hardcodes 8973, and `init` leaves
+an existing one alone unless you pass `--force`. An explicit `--port`
+still fails when it is taken, rather than moving somewhere you did not ask
+for. For an HTTP MCP client, register the second hub on its own URL:
+
+```bash
+claude mcp add rn-devtools-other --transport http http://127.0.0.1:8974/mcp
+```

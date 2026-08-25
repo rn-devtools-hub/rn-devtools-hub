@@ -14,6 +14,8 @@ src/client/        SDK embedded in the app (TypeScript, ZERO dependencies)
 server/
   server.mjs       Hub: WebSocket, per-device history, command relay,
                    MCP, Design and Mirror endpoints (adb/xcrun)
+  plugins.mjs      Plugin registry: discovery, config resolution, dispatch
+  plugins/         The plugins themselves (App Store Connect, Google Play)
   dashboard.html   Single-page dashboard (vanilla JS, NO build step)
 
 bin/rn-devtools-hub.mjs   npx launcher (Bun if present, Node otherwise)
@@ -84,6 +86,15 @@ Hotfix: branch from `main`, PR back to `main`, then merge `main` into
    a `renderX` function called by `renderAll`, tab in `nav`
 3. SDK side: nothing if `emit` is enough; otherwise a documented generic primitive
 4. Document the integration recipe in docs/integration.md
+
+## Adding a plugin
+
+A plugin reaches a service around the app (a store API, a crash backend)
+rather than the app itself. It lives in `server/plugins/`, declares the
+hosts it contacts, exposes no tool until it is configured, and never
+returns a credential. The contract, the rules the loader enforces and the
+helpers in `server/plugins/_api.mjs` are in
+[docs/plugins.md](docs/plugins.md).
 
 ## Release (maintainers)
 

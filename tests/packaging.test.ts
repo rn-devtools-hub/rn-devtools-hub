@@ -9,7 +9,7 @@
  * user whose typecheck breaks.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -170,13 +170,32 @@ describe("Cursor rule template", () => {
 });
 
 describe("Codex plugin", () => {
-  it("carries the same skill as the Claude Code plugin, byte for byte", () => {
-    const claude = readFileSync(
-      join(root, "plugins/rn-devtools-hub/skills/rn-devtools-hub/SKILL.md"),
-      "utf-8"
-    );
-    const codex = readFileSync(join(root, ".agents/skills/rn-devtools-hub/SKILL.md"), "utf-8");
-    expect(codex).toBe(claude);
+  const claudeSkills = join(root, "plugins/rn-devtools-hub/skills");
+  const skills = readdirSync(claudeSkills).sort();
+
+  it("ships the skills that teach both halves of the job", () => {
+    // The release skill is why installing the hub is enough: the agent
+    // that drives App Store Connect and Play is the one that already
+    // knows the app from the inside, with no second thing to install
+    expect(skills).toContain("rn-devtools-hub");
+    expect(skills).toContain("rn-devtools-release");
+  });
+
+  it("carries every skill of the Claude Code plugin, byte for byte", () => {
+    for (const skill of skills) {
+      const claude = readFileSync(join(claudeSkills, skill, "SKILL.md"), "utf-8");
+      const codex = readFileSync(join(root, ".agents/skills", skill, "SKILL.md"), "utf-8");
+      expect(codex).toBe(claude);
+    }
+  });
+
+  it("licenses each skill the way the package is licensed", () => {
+    for (const skill of skills) {
+      const source = readFileSync(join(claudeSkills, skill, "SKILL.md"), "utf-8");
+      expect(source).toMatch(/^license: MIT$/m);
+      expect(source).toMatch(/^name: /m);
+      expect(source).toMatch(/^description: .{80,}/m);
+    }
   });
 
   it("declares a plugin Codex can read", () => {

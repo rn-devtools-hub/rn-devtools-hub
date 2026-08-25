@@ -190,6 +190,9 @@
   tr.row:hover td { background: var(--surface); }
   tr.row.selected td { background: var(--surface-2); color: var(--ink); }
   td.mono, .mono { font-family: var(--mono); font-size: 11.5px; }
+  .muted { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+  td.wrap { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
+  table.fixed { table-layout: fixed; }
   td.crit { color: var(--critical); }
 
   /* ---------- HTTP method badges (visual distinction GET/POST/...) ---------- */
@@ -496,6 +499,7 @@
     <button data-tab="endpoints">Endpoints</button>
     <button data-tab="actions">Actions</button>
     <button data-tab="tools">Tools<span class="count" id="cTools"></span></button>
+    <button data-tab="plugins">Plugins</button>
     <button data-tab="design">Design</button>
     <button data-tab="mirror">Mirror</button>
   </nav>
@@ -699,6 +703,15 @@
         <h3>Failures</h3>
         <div id="toolErrors"><div class="empty">No failure recorded</div></div>
       </div>
+    </section>
+
+    <!-- ================= PLUGINS ================= -->
+    <section class="panel" id="panel-plugins">
+      <div class="toolbar">
+        <button id="pluginRefresh">Reload</button>
+        <span class="muted" id="pluginConfigFile"></span>
+      </div>
+      <div id="pluginList"><div class="empty">Loading plugins</div></div>
     </section>
 
     <!-- ================= DESIGN ================= -->
@@ -1193,6 +1206,8 @@
     if (button.dataset.tab === "mirror") mirrorAuto();
     // Tools: the panel is a hub-side poll, not part of the device stream
     if (button.dataset.tab === "tools") pollToolStats();
+    // Plugins: read once per visit, they are resolved at hub startup
+    if (button.dataset.tab === "plugins") pollPlugins();
     scheduleRender();
   });
 
@@ -2578,6 +2593,94 @@
       boostFrames();
     });
   });
+
+  // ---------- Plugins: the services around the app ----------
+  /**
+   * The one panel about something that is not on the machine.
+   *
+   * A plugin with no credentials is not broken and not hidden: it is
+   * shown with exactly what it is waiting for and where to put it, the
+   * same way a missing adb greys out Mirror instead of disappearing. The
+   * hosts a configured plugin will contact are printed next to it,
+   * because this hub is otherwise entirely local and that deserves to be
+   * read rather than discovered.
+   */
+  const renderPlugins = (data) => {
+    const host = $("pluginList");
+    const file = $("pluginConfigFile");
+    if (!data) {
+      host.innerHTML = `<div class="empty">Plugins could not be read from the hub</div>`;
+      file.textContent = "";
+      return;
+    }
+    file.textContent = data.configFile.error
+      ? data.configFile.error
+      : `${data.configFile.exists ? "Reading" : "No"} ${data.configFile.path.split("/").slice(-2).join("/")}`;
+
+    // What is still missing is named by the variables that would fill it,
+    // path variables included: a key file is set by pointing at it
+    const wantedFrom = (plugin, key) => {
+      const missing = (plugin.missing ?? []).find((entry) => entry.key === key);
+      return [...(missing?.env ?? []), ...(missing?.pathEnv ?? [])].join(" or ");
+    };
+
+    const badge = (plugin) => plugin.ready
+      ? `<span class="status-badge s2">configured</span>`
+      : `<span class="status-badge s0">not configured</span>`;
+
+    // A hub that can submit a build to Apple or widen a rollout says so
+    // where someone reads it, next to the plugin that can do it
+    const writeBadge = (plugin) => {
+      if (!plugin.writeTools?.length) return "";
+      return plugin.writes?.enabled
+        ? `<span class="status-badge s4">can change releases</span>`
+        : `<span class="status-badge s3">read only</span>`;
+    };
+
+    const cards = (data.plugins ?? []).map((plugin) => `
+      <div class="chart-card">
+        <h3>${esc(plugin.title)} ${badge(plugin)} ${writeBadge(plugin)}</h3>
+        <div class="muted" style="margin-bottom:10px">${esc(plugin.summary)}</div>
+        ${plugin.ready ? "" : `<div class="muted" style="margin-bottom:10px">${esc(plugin.setupHint)}</div>`}
+        <table class="fixed">
+          <thead><tr><th style="width:26%">Setting</th><th style="width:12%">State</th><th>Read from</th></tr></thead>
+          <tbody>${(plugin.config ?? []).map((entry) => `
+            <tr>
+              <td class="mono" title="${esc(entry.description)}">${esc(entry.key)}${entry.required ? "" : " (optional)"}</td>
+              <td>${entry.set ? `<span class="status-badge s2">set</span>` : `<span class="status-badge ${entry.required ? "s5" : "s0"}">absent</span>`}</td>
+              <td class="mono wrap">${esc(entry.source ?? wantedFrom(plugin, entry.key))}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+        <div class="muted" style="margin-top:10px">
+          ${plugin.ready ? "Reads" : "Would read"}:
+          <span class="mono">${plugin.tools.map(esc).join(", ")}</span>
+        </div>
+        ${plugin.writeTools?.length ? `
+        <div class="muted" style="margin-top:6px">
+          ${plugin.writes?.enabled ? "Changes" : `Would change (off, ${esc(plugin.writes?.disabledBy ?? "")})`}:
+          <span class="mono">${plugin.writeTools.map(esc).join(", ")}</span>
+        </div>` : ""}
+        <div class="muted" style="margin-top:6px">Contacts: <span class="mono">${plugin.hosts.map(esc).join(", ") || "nothing"}</span>${plugin.license ? ` &middot; ${esc(plugin.license)}` : ""}</div>
+      </div>`).join("");
+
+    const failures = (data.failures ?? []).length
+      ? `<div class="chart-card"><h3>Refused</h3>${data.failures.map((line) => `<div class="mono">${esc(line)}</div>`).join("")}</div>`
+      : "";
+
+    host.innerHTML = (cards + failures) || `<div class="empty">No plugin installed</div>`;
+  };
+
+  const pollPlugins = async () => {
+    try {
+      const response = await fetch(`/plugins/list?token=${encodeURIComponent(hubToken)}`);
+      renderPlugins(await response.json());
+    } catch {
+      renderPlugins(null);
+    }
+  };
+
+  $("pluginRefresh").addEventListener("click", pollPlugins);
 
   // ================================================================
   // Capability badges: lightweight polling, light up as soon as a

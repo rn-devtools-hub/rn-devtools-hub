@@ -28,6 +28,7 @@ import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, 
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
 import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
 import { createToolLog, recordToolCall, summarizeTools, readEmptiness } from "./tools.mjs";
+import { createPluginHost, LIST_PLUGINS_TOOL } from "./plugins.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -729,7 +730,24 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", required: ["store"], properties: { deviceId: { type: "string" }, store: { type: "string" }, path: { type: "string" }, value: {} }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
+  LIST_PLUGINS_TOOL,
 ];
+
+/**
+ * Plugins: the services around the app, not the app.
+ *
+ * Built once, at startup, and never rebuilt: an MCP client is told
+ * listChanged:false, so a tool list that grew mid-session would be a tool
+ * the client never learns about, and one that shrank would be a tool it
+ * still calls. Configure the credentials, restart the hub, read the
+ * banner. Only configured plugins contribute tools; the others are
+ * visible through list_plugins with what they are waiting for.
+ */
+const pluginHost = await createPluginHost({
+  projectRoot: PROJECT_ROOT,
+  env: process.env,
+  reserved: new Set([...MCP_TOOLS, ...NATIVE_TOOLS].map((tool) => tool.name)),
+});
 
 // Waits for an event from ANY device: session_start launches the app
 // and needs its first hello/app.info without knowing its deviceId yet
@@ -816,6 +834,10 @@ const handleMcpTool = async (name, args = {}) => {
       devices: Array.from(devices.entries()).map(deviceSummary),
     };
   }
+  if (name === "list_plugins") return pluginHost.describe();
+  // Plugins reach the services around the app (stores, release APIs), so
+  // like the native tools they need no connected JS device
+  if (pluginHost.owns(name)) return pluginHost.handle(name, args);
   // Host-side native tools (simctl/adb): no connected JS device needed
   if (NATIVE_TOOLS.some((tool) => tool.name === name)) {
     return handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
@@ -1184,7 +1206,7 @@ const handleMcpRequest = async (request, bunServer) => {
   }
   if (method === "notifications/initialized") return new Response(null, { status: 202 });
   if (method === "ping") return jsonResponse(mcpResult(id, {}));
-  if (method === "tools/list") return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...NATIVE_TOOLS] }));
+  if (method === "tools/list") return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...NATIVE_TOOLS, ...pluginHost.tools()] }));
   if (method === "tools/call") {
     const startedAt = Date.now();
     const args = params?.arguments ?? {};
@@ -1275,8 +1297,8 @@ const startServer = (port) => serve({
     const url = new URL(request.url);
     if (url.pathname === "/mcp") return handleMcpRequest(request, bunServer);
 
-    // Design, Mirror, Native, Project and Tools endpoints: protected by the hub token
-    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/") || url.pathname.startsWith("/tools/")) {
+    // Design, Mirror, Native, Project, Tools and Plugin endpoints: protected by the hub token
+    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/") || url.pathname.startsWith("/tools/") || url.pathname.startsWith("/plugins/")) {
       if (!hasValidToken(url)) return jsonResponse({ error: "Invalid token" }, 401);
 
       if (url.pathname === "/native/targets") return jsonResponse(await listTargets());
@@ -1308,6 +1330,7 @@ const startServer = (port) => serve({
       if (url.pathname === "/design/manifest") return jsonResponse(designManifest());
       if (url.pathname === "/design/asset") return serveProjectAsset(url.searchParams.get("path"));
       if (url.pathname === "/tools/stats") return jsonResponse(summarizeTools(toolLog));
+      if (url.pathname === "/plugins/list") return jsonResponse(pluginHost.describe());
       if (url.pathname === "/mirror/sources") {
         return jsonResponse(await listMirrorSources(url.searchParams.get("quick") === "1"));
       }
@@ -1620,6 +1643,9 @@ if (EXPLICIT_PORT === null && activePort !== DEFAULT_PORT) {
 console.log(`  Dashboard : http://localhost:${activePort}/?token=${HUB_TOKEN}`);
 console.log(`  WebSocket : ws://<local-ip>:${activePort}`);
 console.log(`  Local MCP : http://127.0.0.1:${activePort}/mcp`);
+// A plugin is the one thing here that talks to the outside, so what it
+// will contact is printed with it rather than left to be discovered
+for (const line of pluginHost.banner()) console.log(line);
 console.log("");
 console.log("  The app connects automatically via the Metro server IP.");
 console.log("");

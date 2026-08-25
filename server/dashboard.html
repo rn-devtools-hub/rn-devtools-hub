@@ -2875,7 +2875,15 @@
         `${totals.empty} returned nothing`) +
       tile("Answer time p95", totals.p95Ms === null ? "–" : `${totals.p95Ms} ms`, "",
         totals.p50Ms === null ? "" : `p50 ${totals.p50Ms} ms`) +
-      tile("Context returned", fmtBytes(totals.bytes), "", "what the agent paid to read this");
+      tile("Context returned", fmtBytes(totals.bytes), "", "what the agent paid to read this") +
+      // Pixels separately: a session where most of the context bought was
+      // images is a session verifying with screenshots, which is both the
+      // most expensive answer and the weakest proof available here
+      tile("Pixels", totals.pixelCalls ? fmtBytes(totals.pixelBytes) : "–",
+        totals.bytes && totals.pixelBytes / totals.bytes > 0.5 ? "warn" : "",
+        totals.pixelCalls
+          ? `${totals.pixelCalls} screenshot${totals.pixelCalls > 1 ? "s" : ""}, ${Math.round((100 * totals.pixelBytes) / Math.max(totals.bytes, 1))}% of the context`
+          : "no screenshot taken");
 
     renderToolTimeline(data.timeline);
     renderToolBars(data.tools);

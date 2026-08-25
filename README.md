@@ -160,7 +160,7 @@ hub. Your data never leaves your machine.
 | SQLite | Read-only SQL console (SELECT/PRAGMA) on your app's database |
 | Endpoints | Map of declared endpoints, calls, latencies |
 | Actions | Buttons driving the app: reload, clear caches, your custom actions |
-| Tools | What the agents do with this hub: calls per tool, failures with their message, empty answers and why, context bytes returned, selectors used, and the loop replayed against the app's own events |
+| Tools | What the agents do with this hub: calls per tool, failures with their message, empty answers and why, context bytes returned (pixels counted separately, because a session spending most of its context on screenshots is a session verifying the expensive way), selectors used, and the loop replayed against the app's own events |
 | Plugins | The services around the app: App Store Connect and Google Play, what each one is configured with, whether it may change a release, and every host it will contact |
 | Design | Icon, splash, fonts, sounds, identity (read from app.json and the assets) |
 | Mirror | Live app screen (needs react-native-view-shot in the app), full Android via adb (tap, swipe, keyboard, Wi-Fi), iOS simulator via xcrun |
@@ -304,6 +304,8 @@ project:
 - Every plugin tool that changes something is declared as such, is
   annotated so MCP clients confirm it, and can be removed entirely with
   `RN_DEVTOOLS_PLUGIN_WRITES=off`
+- `RN_DEVTOOLS_SCREENSHOTS=off` (or a number) removes or budgets pixel
+  captures, for teams who do not want an agent verifying with screenshots
 
 ## Contributing
 

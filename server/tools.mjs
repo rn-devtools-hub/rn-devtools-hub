@@ -14,6 +14,72 @@
 
 const RING = 500;
 
+/**
+ * The tools whose answer is pixels.
+ *
+ * A screenshot is the most expensive thing an agent can put in its
+ * context and the weakest proof it can get back: it cannot show a request
+ * that failed silently, a promise that rejected, or a value that never
+ * reached the field. The hub has `assert` for all three, and a visual
+ * diff (compare_snapshot) for the one question pixels genuinely answer.
+ *
+ * So the pixels are counted separately, on purpose. "Half the context
+ * this session bought was images, and none of it was followed by an
+ * assertion" is a fact about how the agent works, and no other panel can
+ * state it.
+ */
+export const PIXEL_TOOLS = new Set(["screenshot_native"]);
+
+const OFF = new Set(["off", "0", "false", "no", "none"]);
+
+/**
+ * How many pixel captures this hub will serve.
+ *
+ * Advice in a skill file is advice: an agent that ignores it screenshots
+ * every step and bills the context for it. This is the switch, and it
+ * follows the same rule as the plugin writes switch: off REMOVES the
+ * tool rather than making it refuse, because an agent never plans a step
+ * that does not exist. A budget keeps it for the cases pixels are the
+ * only answer (a native dialog, an OEM rendering bug) while making the
+ * loop impossible.
+ */
+export const readScreenshotPolicy = (env = {}) => {
+  const raw = String(env.RN_DEVTOOLS_SCREENSHOTS ?? "").trim().toLowerCase();
+  if (!raw) return { mode: "on", budget: null, raw: null, warning: null };
+  if (OFF.has(raw)) return { mode: "off", budget: 0, raw, warning: null };
+  const match = /^(?:budget:)?(\d+)$/.exec(raw);
+  if (match) return { mode: "budget", budget: Number(match[1]), raw, warning: null };
+  // An unreadable value must not silently take a capability away
+  return {
+    mode: "on",
+    budget: null,
+    raw,
+    warning: `RN_DEVTOOLS_SCREENSHOTS="${raw}" is not off or a number, so screenshots stay enabled`,
+  };
+};
+
+/**
+ * Whether the agent is using pixels as proof.
+ *
+ * The signal is not "it took a screenshot", it is "it took another one
+ * without asserting anything in between". One capture is a look; the
+ * second one with no assertion between them is a verification loop, and
+ * that is the moment to say assert answers it cheaper.
+ */
+export const screenshotAdvice = (log) => {
+  let sinceProof = 0;
+  let bytes = 0;
+  for (let index = log.calls.length - 1; index >= 0; index -= 1) {
+    const call = log.calls[index];
+    if (call.name === "assert") break;
+    if (PIXEL_TOOLS.has(call.name)) {
+      sinceProof += 1;
+      bytes += call.bytes;
+    }
+  }
+  return { sinceProof, bytes };
+};
+
 /** Fields a tool uses to return "here is what I found" */
 const LIST_FIELDS = [
   "events", "matches", "actions", "stores", "previews", "rows", "endpoints",
@@ -60,6 +126,10 @@ export const createToolLog = (limit = RING) => ({
   seq: 0,
   startedAt: Date.now(),
   calls: [],
+  /** Counted outside the ring, because a budget must survive the window
+   * scrolling past the calls it is counting */
+  pixelCalls: 0,
+  pixelBytes: 0,
   /** Client names seen at initialize: Claude Code, Codex, Cursor... */
   clients: new Set(),
 });
@@ -82,6 +152,10 @@ export const recordToolCall = (log, entry) => {
      * what the app did in response */
     cursor: entry.cursor ?? null,
   };
+  if (PIXEL_TOOLS.has(call.name)) {
+    log.pixelCalls += 1;
+    log.pixelBytes += call.bytes;
+  }
   log.calls.push(call);
   if (log.calls.length > log.limit) log.calls.splice(0, log.calls.length - log.limit);
   return call;
@@ -173,6 +247,10 @@ export const summarizeTools = (log) => {
       p50Ms: percentile(allDurations, 0.5),
       p95Ms: percentile(allDurations, 0.95),
       distinctTools: perTool.size,
+      // Pixels, separately: the panel shows what share of the context an
+      // agent bought was images rather than answers
+      pixelCalls: log.pixelCalls ?? 0,
+      pixelBytes: log.pixelBytes ?? 0,
     },
     tools,
     errors: [...errors.values()]

@@ -19,7 +19,10 @@ Three habits follow, and they are the difference between an agent that
 guesses and one that knows.
 
 1. **Never verify with a screenshot.** Use `assert`. A screenshot cannot
-   show a request that failed silently or a promise that rejected.
+   show a request that failed silently or a promise that rejected, and it
+   bills about a megabyte of context to not show them. The hub counts
+   those bytes, says so on the second capture taken with nothing asserted
+   in between, and can have `screenshot_native` switched off entirely.
 2. **Never sleep.** Use `wait_for_event`. Sleeping is a race you lose on
    a slow machine and waste time on a fast one.
 3. **Never grep the repo for a component you can see.** Every node carries
@@ -229,6 +232,7 @@ one: read it before shipping anything.
 | `assert` fails with an empty `evidence` | The window was wrong. Pass `since` from a cursor taken before the action |
 | `source` is `null` everywhere | Production build, or a React version without dev bookkeeping |
 | `audit_accessibility` returns `conclusive: false` | One of the two trees came back empty; the report is not a clean bill of health |
+| A screenshot answers with a `note` about assert | This is the second capture with nothing asserted between them. The note is not decoration: the step being checked has an `assert` kind that proves it |
 | An `asc_*` or `gplay_*` tool is nowhere in the tool list | Its plugin has no credentials, so it exposes nothing. `list_plugins` names the keys it wants; the hub reads them once, at startup, so it must be restarted afterwards |
 | The `asc_*` reads exist but nothing writes | Writes are switched off for this hub (`RN_DEVTOOLS_PLUGIN_WRITES`). Say so instead of looking for another way in |
 
@@ -245,7 +249,11 @@ for `devtools.emitRaw(type, payload)` directly.
 ## What not to do
 
 - Do not take a screenshot to check a result. `assert` is faster, cheaper
-  and sees what pixels cannot.
+  and sees what pixels cannot. Pixels are for a question that is genuinely
+  visual, and `compare_snapshot` answers that one with a diagnosis rather
+  than an image. If `screenshot_native` does not exist in this session, it
+  was switched off deliberately (`RN_DEVTOOLS_SCREENSHOTS`): prove the step
+  another way rather than looking for a route around it.
 - Do not use `tap_native` or `swipe_native` unless a native dialog is
   genuinely in the way, or unless the gesture itself is what you are
   testing (a Swipeable, a pan handler): both are coordinate-based and

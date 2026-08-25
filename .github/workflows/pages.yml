@@ -33,7 +33,7 @@ jobs:
           cp assets/logo.svg _site/assets/logo.svg
           cp -r assets/screenshots _site/assets/screenshots
           npm install --no-save marked
-          for page in integration protocol; do
+          for page in integration protocol plugins; do
             {
               echo '<!doctype html><html lang="en"><head><meta charset="utf-8">'
               echo '<meta name="viewport" content="width=device-width, initial-scale=1">'

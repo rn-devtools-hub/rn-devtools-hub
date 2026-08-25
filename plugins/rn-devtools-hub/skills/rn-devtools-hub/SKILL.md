@@ -99,6 +99,8 @@ without walking any screen at all.
 | Make this repeatable | `freeze_time`, `mock_network`, `set_state` |
 | Turn what I just did into a test | `start_recording`, `export_flow` |
 | Is it usable with a screen reader? | `audit_accessibility` |
+| Did the build I uploaded finish processing? | `asc_list_builds` |
+| Where is the version in review, what is production serving? | `asc_list_versions`, `gplay_list_tracks` |
 
 ## Chains that matter
 
@@ -191,6 +193,25 @@ The answer names the component that owns the changed region, with its
 source file, and what the bus recorded since the baseline. Not a
 percentage: a diagnosis.
 
+### Check where a release stands
+
+```
+asc_list_builds                     is the build usable yet
+asc_list_versions                   where the submission stands
+gplay_list_tracks                   what production is actually serving
+```
+
+These read the stores, not the app, so they need no device and answer
+things the runtime cannot know: a build stuck in `PROCESSING`, a version
+still `WAITING_FOR_REVIEW`, a staged rollout parked at 10%. They exist only
+when their plugin is configured; `list_plugins` says which ones are, what
+the others are missing, and every host they contact.
+
+The same plugins also DRIVE a release (`asc_distribute_build`,
+`asc_submit_for_review`, `gplay_promote_release`, `gplay_update_track`).
+That is a separate skill, `rn-devtools-release`, installed alongside this
+one: read it before shipping anything.
+
 ## Reading failures
 
 | Symptom | What it actually means |
@@ -208,6 +229,8 @@ percentage: a diagnosis.
 | `assert` fails with an empty `evidence` | The window was wrong. Pass `since` from a cursor taken before the action |
 | `source` is `null` everywhere | Production build, or a React version without dev bookkeeping |
 | `audit_accessibility` returns `conclusive: false` | One of the two trees came back empty; the report is not a clean bill of health |
+| An `asc_*` or `gplay_*` tool is nowhere in the tool list | Its plugin has no credentials, so it exposes nothing. `list_plugins` names the keys it wants; the hub reads them once, at startup, so it must be restarted afterwards |
+| The `asc_*` reads exist but nothing writes | Writes are switched off for this hub (`RN_DEVTOOLS_PLUGIN_WRITES`). Say so instead of looking for another way in |
 
 ## Writing or editing the glue file
 

@@ -82,6 +82,19 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
   would contradict the argument printed on the box.
 - Sessions and baselines are written under `.rn-devtools/` in the host
   project, which is gitignored and never committed.
+- Plugins are the only code here that talks to anything off the machine.
+  A plugin declares the hosts it will contact, they are printed in the
+  banner and returned by list_plugins, and a plugin with no credentials
+  exposes NO tool: an agent does not pay context for a tool it cannot call.
+  Secrets resolve at startup and stay in the process; what is reported is
+  that a value is set and where it came from, never the value.
+- A plugin tool that CHANGES something lives in writeTools and must carry
+  {readOnlyHint:false, destructiveHint:true}, or the plugin is refused
+  whole. Those flags are what an MCP client reads to decide whether to ask
+  the human. Writes ship enabled, and the switch removes the tools rather
+  than making them refuse: an agent never plans a step that does not exist.
+- The skill lives in TWO trees and a packaging test asserts every skill is
+  byte-identical between them. Adding one means adding it to both.
 - Credentials are removed BEFORE they leave the device, headers and bodies
   alike, by name and by shape, and what was removed is named in the event.
   Anything the hub holds can end up in a model's context window, and
@@ -197,6 +210,23 @@ only). Tools:
   between what React renders and what accessibility exposes).
 - Build: build_app delegates to expo run / eas build and streams the
   failures onto the same bus as the crashes.
+- Plugins (the services around the app, not the app): list_plugins says
+  which ones exist, whether they are configured, which tools CHANGE
+  something, whether writes are enabled, and every host they will contact.
+  Configured ones add their tools, unconfigured ones add none. App Store
+  Connect reads (asc_list_builds, asc_list_versions, asc_list_beta_groups,
+  asc_list_apps, asc_request) and drives (asc_set_whats_new,
+  asc_distribute_build, asc_expire_build, asc_prepare_version,
+  asc_submit_for_review, asc_release_version, asc_phased_release,
+  asc_write_request). Google Play reads (gplay_list_tracks, gplay_get_track,
+  gplay_list_artifacts, gplay_list_reviews, gplay_request) and drives
+  (gplay_update_track, gplay_promote_release, gplay_reply_review,
+  gplay_write_request). Every mutating tool carries destructiveHint and
+  disappears entirely under RN_DEVTOOLS_PLUGIN_WRITES=off (or
+  RN_DEVTOOLS_<ID>_WRITES). Credentials come from env vars or
+  .rn-devtools/plugins.json, are read once at startup (configure, then
+  RESTART the hub) and are never returned. The rn-devtools-release skill
+  ships with the plugin and teaches the release loop. See docs/plugins.md.
 - Event flow: get_events_since (cursor-based polling without missing
   events), wait_for_event (blocks until a matching event, e.g.
   `screen.ready` after `devtools.markScreenReady()` or a

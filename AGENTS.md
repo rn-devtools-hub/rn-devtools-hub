@@ -117,6 +117,15 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
 - No action path may swallow a missing method. A `callNative` that returns
   void hides both the absent method and the exception; on an action it must
   report failure, and the command must turn that into an explicit error.
+- A screenshot is the weakest proof available here and the most expensive
+  answer to read. `assert` exists for the three things pixels cannot show
+  (a request that failed silently, a rejected promise, a value that never
+  reached the field) and compare_snapshot answers the visual question with
+  a diagnosis. The hub counts pixel bytes separately, says so on the
+  SECOND capture taken with no assertion in between, and
+  RN_DEVTOOLS_SCREENSHOTS=off or =<n> removes or budgets screenshot_native
+  outright. Off REMOVES the tool: a switched-off capability must not be
+  something an agent discovers halfway through a plan.
 - A tool that answers `ok:false` is returned as an MCP error (`isError`),
   payload intact. A declared refusal that arrives looking like a result is
   invisible to a client that only reads the status, which is the same
@@ -239,7 +248,8 @@ only). Tools:
   `hideDevMenuFab` so the expo-dev-menu bubble stops covering the native
   controls in the top corner: it lives in its own window, so no UI tree
   ever shows it), terminate_app, open_url, screenshot_native (pixels,
-  complements the tree), tap_native and swipe_native (last resort, and the
+  complements the tree, and the answer says what it cost: use assert to
+  VERIFY, not this), tap_native and swipe_native (last resort, and the
   only way to exercise a real gesture: adb / AXe / idb), boot_device,
   shutdown_device,
   set_location (simulated GPS), set_animations (Android determinism),

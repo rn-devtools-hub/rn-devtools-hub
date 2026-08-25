@@ -27,7 +27,7 @@ import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessi
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
 import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
-import { createToolLog, recordToolCall, summarizeTools, readEmptiness } from "./tools.mjs";
+import { createToolLog, recordToolCall, summarizeTools, readEmptiness, readScreenshotPolicy, screenshotAdvice, PIXEL_TOOLS } from "./tools.mjs";
 import { createPluginHost, LIST_PLUGINS_TOOL } from "./plugins.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -238,6 +238,53 @@ const mcpText = (value, isError = false) => ({
 /** Bounded, in memory, wiped on restart: the interesting window is the
  * session an agent is driving right now */
 const toolLog = createToolLog();
+
+/**
+ * How many pixel captures this hub will serve.
+ *
+ * A screenshot is the weakest proof an agent can get and the most
+ * expensive one to read: it cannot show a request that failed silently, a
+ * promise that rejected or a value that never reached the field, and it
+ * bills a megabyte of context to not show them. The skill has said "never
+ * verify with a screenshot" since the beginning, and a skill is advice.
+ * This is the switch:
+ *
+ *   RN_DEVTOOLS_SCREENSHOTS=off    screenshot_native is not exposed
+ *   RN_DEVTOOLS_SCREENSHOTS=5      five per hub run, then refused
+ *
+ * Off removes the tool rather than making it refuse, for the same reason
+ * the plugin writes switch does: an agent never plans a step that does
+ * not exist. Left unset, nothing changes, and the second capture with no
+ * assertion between them says so in its own answer.
+ */
+const SCREENSHOT_POLICY = readScreenshotPolicy(process.env);
+
+const screenshotRefusal = () => {
+  if (SCREENSHOT_POLICY.mode === "off") {
+    return "screenshot_native is switched off by RN_DEVTOOLS_SCREENSHOTS. Prove the step with assert (kinds visible, absent, text, network_ok, no_console_error, no_crash), or compare_snapshot for a real visual regression.";
+  }
+  if (SCREENSHOT_POLICY.mode === "budget" && toolLog.pixelCalls >= SCREENSHOT_POLICY.budget) {
+    return `The screenshot budget for this hub is spent (${SCREENSHOT_POLICY.budget} set by RN_DEVTOOLS_SCREENSHOTS, ${toolLog.pixelCalls} taken). assert proves a step without pixels, and compare_snapshot answers a visual question with a diagnosis rather than an image.`;
+  }
+  return null;
+};
+
+/**
+ * What this capture cost, and whether it is being used as proof.
+ *
+ * One screenshot is a look. A second one with no assertion in between is
+ * a verification loop, and that is the only moment worth saying so: a
+ * note on every capture is noise an agent learns to skip.
+ */
+const pixelNote = (image) => {
+  const contextBytes = Math.round((image?.data?.length ?? 0) * 0.75);
+  const advice = screenshotAdvice(toolLog);
+  if (advice.sinceProof < 1) return { contextBytes };
+  return {
+    contextBytes,
+    note: `${advice.sinceProof + 1} screenshots with no assert between them, ${Math.round((advice.bytes + contextBytes) / 1024)} kB of context. A screenshot cannot show a request that failed silently or a promise that rejected: assert can, and compare_snapshot answers a visual question with a diagnosis instead of an image.`,
+  };
+};
 
 /**
  * What this answer bills the agent in context.
@@ -840,7 +887,15 @@ const handleMcpTool = async (name, args = {}) => {
   if (pluginHost.owns(name)) return pluginHost.handle(name, args);
   // Host-side native tools (simctl/adb): no connected JS device needed
   if (NATIVE_TOOLS.some((tool) => tool.name === name)) {
-    return handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
+    if (PIXEL_TOOLS.has(name)) {
+      const refusal = screenshotRefusal();
+      if (refusal) throw new Error(refusal);
+    }
+    const nativeResult = await handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
+    if (PIXEL_TOOLS.has(name) && nativeResult?.__mcpImage) {
+      return { ...nativeResult, ...pixelNote(nativeResult.__mcpImage) };
+    }
+    return nativeResult;
   }
   if (SESSION_TOOLS.some((tool) => tool.name === name)) {
     return handleSessionTool(name, args, PROJECT_ROOT);
@@ -1206,7 +1261,13 @@ const handleMcpRequest = async (request, bunServer) => {
   }
   if (method === "notifications/initialized") return new Response(null, { status: 202 });
   if (method === "ping") return jsonResponse(mcpResult(id, {}));
-  if (method === "tools/list") return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...NATIVE_TOOLS, ...pluginHost.tools()] }));
+  if (method === "tools/list") {
+    // A tool that is switched off is absent, not present and refusing
+    const native = SCREENSHOT_POLICY.mode === "off"
+      ? NATIVE_TOOLS.filter((tool) => !PIXEL_TOOLS.has(tool.name))
+      : NATIVE_TOOLS;
+    return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...native, ...pluginHost.tools()] }));
+  }
   if (method === "tools/call") {
     const startedAt = Date.now();
     const args = params?.arguments ?? {};
@@ -1646,6 +1707,13 @@ console.log(`  Local MCP : http://127.0.0.1:${activePort}/mcp`);
 // A plugin is the one thing here that talks to the outside, so what it
 // will contact is printed with it rather than left to be discovered
 for (const line of pluginHost.banner()) console.log(line);
+if (SCREENSHOT_POLICY.mode === "off") {
+  console.log("  Screenshots: off (RN_DEVTOOLS_SCREENSHOTS). Agents prove steps with assert instead.");
+} else if (SCREENSHOT_POLICY.mode === "budget") {
+  console.log(`  Screenshots: ${SCREENSHOT_POLICY.budget} for this run (RN_DEVTOOLS_SCREENSHOTS)`);
+} else if (SCREENSHOT_POLICY.warning) {
+  console.log(`  Screenshots: ${SCREENSHOT_POLICY.warning}`);
+}
 console.log("");
 console.log("  The app connects automatically via the Metro server IP.");
 console.log("");

@@ -27,6 +27,7 @@ import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessi
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
 import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
+import { STORE_SHOT_TOOL, captureStoreScreenshots } from "./storeshots.mjs";
 import { createToolLog, recordToolCall, summarizeTools, readEmptiness, readScreenshotPolicy, screenshotAdvice, PIXEL_TOOLS } from "./tools.mjs";
 import { createPluginHost, LIST_PLUGINS_TOOL } from "./plugins.mjs";
 
@@ -778,6 +779,7 @@ const MCP_TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   LIST_PLUGINS_TOOL,
+  STORE_SHOT_TOOL,
 ];
 
 /**
@@ -1011,6 +1013,49 @@ const handleMcpTool = async (name, args = {}) => {
     const response = await sendDeviceCommand(deviceId, "sqlite.query", { sql: args.sql });
     if (response.error) throw new Error(response.error);
     return response.result;
+  }
+  if (name === "capture_store_screenshots") {
+    /**
+     * The one place pixels are captured without an agent paying to look
+     * at them: the files go to disk and the answer is a list of paths.
+     * That is also why it does not go through screenshot_native and its
+     * budget, which exists to stop an agent VERIFYING with images.
+     */
+    return captureStoreScreenshots(args, {
+      projectRoot: PROJECT_ROOT,
+      decodePng,
+      screenshot: (options) => screenshotNative(options),
+      runAction: async (actionName, actionArgs) => {
+        const response = await sendDeviceCommand(deviceId, "action.run", { name: actionName, args: actionArgs });
+        if (response.error) throw new Error(`action ${actionName}: ${response.error}`);
+        return response.result;
+      },
+      queryUi: async (selector) => {
+        const response = await sendDeviceCommand(deviceId, "ui.query", selector);
+        if (response.error) throw new Error(response.error);
+        return response.result;
+      },
+      waitForEvent: ({ type, payloadContains, timeoutMs }) => new Promise((resolve) => {
+        const waiter = {
+          deviceId,
+          match: (event) => {
+            if (type && !String(event.type).includes(String(type))) return false;
+            if (payloadContains) {
+              try {
+                if (!JSON.stringify(event.payload ?? "").includes(String(payloadContains))) return false;
+              } catch { return false; }
+            }
+            return true;
+          },
+          resolve: (event) => resolve({ timedOut: false, event }),
+          timer: setTimeout(() => {
+            eventWaiters.delete(waiter);
+            resolve({ timedOut: true, event: null });
+          }, timeoutMs),
+        };
+        eventWaiters.add(waiter);
+      }),
+    });
   }
   if (name === "run_action") {
     const response = await sendDeviceCommand(deviceId, "action.run", { name: args.name, args: args.args });

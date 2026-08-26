@@ -21,7 +21,10 @@
  * by anything.
  */
 
-import { apiJson, project, query, signJwt } from "./_api.mjs";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { apiJson, oneLine, project, query, signJwt } from "./_api.mjs";
+import { readIndex } from "../storeshots.mjs";
 
 const BASE = "https://api.appstoreconnect.apple.com";
 const LABEL = "App Store Connect";
@@ -198,6 +201,68 @@ const upsertLocalization = async (ctx, { list, path, type, parent, locale, attri
   return { locale, action: "created", id: created?.data?.id ?? null };
 };
 
+/**
+ * One screenshot, all the way to Apple.
+ *
+ * The asset upload is not a PUT: App Store Connect reserves the asset and
+ * answers with the operations to perform, each with its own URL, method,
+ * byte range and headers. Following them is the only supported path, and
+ * the final PATCH with the MD5 is what makes the asset real. Skipping it
+ * leaves a screenshot stuck in UPLOAD_COMPLETE that never appears on the
+ * listing, with no error anywhere.
+ */
+const uploadScreenshot = async (ctx, { setId, file, fileName }) => {
+  const bytes = readFileSync(file);
+  const reserved = await call(ctx, "POST", "/v1/appScreenshots", {
+    body: {
+      data: {
+        type: "appScreenshots",
+        attributes: { fileSize: bytes.length, fileName },
+        relationships: { appScreenshotSet: ref("appScreenshotSets", setId) },
+      },
+    },
+  });
+
+  const id = reserved?.data?.id;
+  const operations = reserved?.data?.attributes?.uploadOperations ?? [];
+  if (!id || operations.length === 0) {
+    throw new Error(`App Store Connect reserved no upload for ${fileName}`);
+  }
+
+  const hosts = new Set();
+  for (const operation of operations) {
+    const headers = {};
+    for (const header of operation.requestHeaders ?? []) headers[header.name] = header.value;
+    hosts.add(new URL(operation.url).host);
+    const response = await fetch(operation.url, {
+      method: operation.method ?? "PUT",
+      headers,
+      body: bytes.subarray(operation.offset ?? 0, (operation.offset ?? 0) + (operation.length ?? bytes.length)),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!response.ok) {
+      throw new Error(`Uploading ${fileName} failed at ${new URL(operation.url).host}: ${response.status} ${oneLine(await response.text(), 120)}`);
+    }
+  }
+
+  const committed = await call(ctx, "PATCH", `/v1/appScreenshots/${id}`, {
+    body: {
+      data: {
+        type: "appScreenshots",
+        id,
+        attributes: { uploaded: true, sourceFileChecksum: createHash("md5").update(bytes).digest("hex") },
+      },
+    },
+  });
+  return {
+    id,
+    fileName,
+    bytes: bytes.length,
+    uploadedTo: [...hosts],
+    state: committed?.data?.attributes?.assetDeliveryState?.state ?? null,
+  };
+};
+
 const requirePath = (path) => {
   if (!/^\/v\d+\/[A-Za-z0-9]/.test(path) || path.includes("..")) {
     throw new Error(`Invalid path ${JSON.stringify(path)}: expected an absolute API path such as /v1/apps`);
@@ -253,6 +318,12 @@ export const CONTRACT = {
     { method: "POST", path: "/v1/appStoreVersionPhasedReleases", why: "asc_phased_release start" },
     { method: "PATCH", path: "/v1/appStoreVersionPhasedReleases/{id}", why: "asc_phased_release pause, resume, complete" },
     { method: "DELETE", path: "/v1/appStoreVersionPhasedReleases/{id}", why: "asc_phased_release cancel" },
+    { method: "GET", path: "/v1/appStoreVersionLocalizations/{id}/appScreenshotSets", why: "asc_upload_screenshots finds the set for a display type" },
+    { method: "POST", path: "/v1/appScreenshotSets", why: "asc_upload_screenshots creates it the first time" },
+    { method: "GET", path: "/v1/appScreenshotSets/{id}/appScreenshots", why: "asc_upload_screenshots lists what replace would remove" },
+    { method: "POST", path: "/v1/appScreenshots", why: "asc_upload_screenshots reserves the asset and gets its upload operations" },
+    { method: "PATCH", path: "/v1/appScreenshots/{id}", why: "asc_upload_screenshots commits the upload with its checksum" },
+    { method: "DELETE", path: "/v1/appScreenshots/{id}", why: "asc_upload_screenshots replace" },
   ],
   fields: [
     { schema: "App", read: ["name", "bundleId", "sku", "primaryLocale"] },
@@ -267,6 +338,9 @@ export const CONTRACT = {
     },
     { schema: "BetaGroup", read: ["name", "isInternalGroup", "publicLinkEnabled", "publicLink", "publicLinkLimit", "createdDate"] },
     { schema: "AppStoreVersionPhasedRelease", read: ["phasedReleaseState", "startDate", "currentDayNumber", "totalPauseDuration"] },
+    { schema: "AppScreenshotSet", read: ["screenshotDisplayType"] },
+    { schema: "AppScreenshot", read: ["fileName", "fileSize", "assetDeliveryState", "uploadOperations", "sourceFileChecksum"] },
+    { schema: "AppStoreVersionLocalization", read: ["locale"] },
   ],
 };
 
@@ -275,7 +349,9 @@ export default {
   title: "App Store Connect",
   summary: "TestFlight and App Store releases for the iOS app this project declares: read them, and drive them.",
   license: "MIT",
-  hosts: ["api.appstoreconnect.apple.com"],
+  // The second one is not a fixed host: Apple names an upload URL per
+  // asset in uploadOperations, and the answer reports the one it used
+  hosts: ["api.appstoreconnect.apple.com", "the upload URL App Store Connect returns for each screenshot"],
   docs: "docs/plugins.md",
   setupHint:
     'Create an API key in App Store Connect (Users and Access, Integrations), then set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_PATH (the .p8 file), or fill "asc" in .rn-devtools/plugins.json. Restart the hub afterwards.',
@@ -494,6 +570,26 @@ export default {
           version: { type: "string" },
           platform: { type: "string", enum: ["IOS", "MAC_OS", "TV_OS", "VISION_OS"], description: "Default IOS" },
           action: { type: "string", enum: ["start", "pause", "resume", "complete", "cancel", "state"] },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    {
+      name: "asc_upload_screenshots",
+      description:
+        "Uploads the screenshots capture_store_screenshots wrote to an App Store version, grouped by locale and by device class. The display type is read from each capture's pixel size and a size the table does not recognise is refused rather than uploaded as the wrong class; pass displayType to override. replace clears the existing set first, which is what a new release usually wants. Nothing is resized. Only the iOS captures in the index are considered.",
+      inputSchema: {
+        type: "object",
+        required: ["version"],
+        properties: {
+          bundleId: { type: "string" },
+          version: { type: "string", description: "Marketing version whose listing receives them, e.g. 1.4.0" },
+          platform: { type: "string", enum: ["IOS", "MAC_OS", "TV_OS", "VISION_OS"], description: "Default IOS" },
+          from: { type: "string", description: "Directory or index.json written by capture_store_screenshots (default .rn-devtools/store-screenshots)" },
+          locale: { type: "string", description: "Only this locale from the capture" },
+          displayType: { type: "string", description: "Force the App Store display type instead of reading it from the pixel size" },
+          replace: { type: "boolean", description: "Delete the screenshots already in each set before uploading (default false)" },
         },
         additionalProperties: false,
       },
@@ -858,6 +954,106 @@ export default {
           id: response?.data?.id ?? existing?.id ?? null,
           ...project(response?.data?.attributes ?? {}, ["phasedReleaseState", "startDate", "currentDayNumber"]),
         },
+      };
+    }
+
+    if (name === "asc_upload_screenshots") {
+      const app = await resolveApp(ctx, args.bundleId);
+      const platform = String(args.platform ?? "IOS");
+      const version = await resolveVersion(ctx, app, args.version, platform);
+      const index = readIndex(ctx.projectRoot, args.from);
+
+      // Android captures live in the same index; they belong to Play
+      const wanted = index.shots
+        .filter((shot) => !/^adb:/.test(String(shot.target ?? "")))
+        .filter((shot) => !args.locale || shot.locale === args.locale)
+        .sort((left, right) => String(left.file).localeCompare(String(right.file)));
+      if (wanted.length === 0) {
+        throw new Error(`No iOS capture in ${index.path}${args.locale ? ` for locale ${args.locale}` : ""}`);
+      }
+
+      const unrecognised = wanted.filter((shot) => !(args.displayType ?? shot.appleDisplayType));
+      if (unrecognised.length) {
+        return {
+          ok: false,
+          reason: "unknown-display-type",
+          files: unrecognised.map((shot) => ({ file: shot.file, size: `${shot.width}x${shot.height}` })),
+          hint: "Capture on a simulator of a device class the App Store accepts, or pass displayType to force one. Uploading a screenshot as the wrong class is accepted and then rejected in review.",
+        };
+      }
+
+      const localizations = await get(ctx, `/v1/appStoreVersions/${version.id}/appStoreVersionLocalizations`, { limit: 200 });
+      const byLocale = new Map((localizations?.data ?? []).map((entry) => [entry.attributes?.locale, entry.id]));
+
+      const groups = new Map();
+      for (const shot of wanted) {
+        const displayType = args.displayType ?? shot.appleDisplayType;
+        const key = `${shot.locale}|${displayType}`;
+        if (!groups.has(key)) groups.set(key, { locale: shot.locale, displayType, shots: [] });
+        groups.get(key).shots.push(shot);
+      }
+
+      const uploaded = [];
+      const skipped = [];
+      for (const group of groups.values()) {
+        const localizationId = byLocale.get(group.locale);
+        if (!localizationId) {
+          // A locale the listing does not have is a fact worth naming: it
+          // is created in App Store Connect, not by an upload
+          skipped.push({
+            locale: group.locale,
+            reason: "no-localization",
+            hint: `Version ${version.versionString} has no ${group.locale} listing. Locales on it: ${[...byLocale.keys()].join(", ") || "none"}`,
+          });
+          continue;
+        }
+
+        const sets = await get(ctx, `/v1/appStoreVersionLocalizations/${localizationId}/appScreenshotSets`, { limit: 50 });
+        let setId = (sets?.data ?? []).find(
+          (entry) => entry.attributes?.screenshotDisplayType === group.displayType,
+        )?.id ?? null;
+        if (!setId) {
+          const created = await call(ctx, "POST", "/v1/appScreenshotSets", {
+            body: {
+              data: {
+                type: "appScreenshotSets",
+                attributes: { screenshotDisplayType: group.displayType },
+                relationships: { appStoreVersionLocalization: ref("appStoreVersionLocalizations", localizationId) },
+              },
+            },
+          });
+          setId = created?.data?.id;
+        }
+        if (!setId) throw new Error(`Could not open a ${group.displayType} screenshot set for ${group.locale}`);
+
+        let removed = 0;
+        if (args.replace) {
+          const existing = await get(ctx, `/v1/appScreenshotSets/${setId}/appScreenshots`, { limit: 50 });
+          for (const screenshot of existing?.data ?? []) {
+            await call(ctx, "DELETE", `/v1/appScreenshots/${screenshot.id}`);
+            removed += 1;
+          }
+        }
+
+        const results = [];
+        for (const shot of group.shots) {
+          results.push(await uploadScreenshot(ctx, {
+            setId,
+            file: shot.file,
+            fileName: `${shot.device}-${shot.locale}-${shot.screen}.png`,
+          }));
+        }
+        uploaded.push({ locale: group.locale, displayType: group.displayType, setId, removed, screenshots: results });
+      }
+
+      return {
+        ok: skipped.length === 0,
+        app,
+        version: { id: version.id, versionString: version.versionString, platform },
+        from: index.path,
+        count: uploaded.reduce((total, group) => total + group.screenshots.length, 0),
+        uploaded,
+        skipped,
       };
     }
 

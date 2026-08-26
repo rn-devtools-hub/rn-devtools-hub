@@ -19,6 +19,7 @@ Key points to integrate the package into an app:
 - Claude Code: `/plugin marketplace add rn-devtools-hub/rn-devtools-hub` installs the server plus a skill that teaches an agent to chain the tools
 - The events/commands contract of each panel is in docs/protocol.md: implementing it is enough to feed the dashboard
 - Hub plugins reach the services around the app (App Store Connect, Google Play): they read a release and drive one (TestFlight distribution, submit for review, track promotion, staged rollout), stay inert without credentials, declare every host they contact, and every mutating tool disappears under RN_DEVTOOLS_PLUGIN_WRITES=off. The rn-devtools-release skill ships with the plugin. See docs/plugins.md
+- Store screenshots: capture_store_screenshots regenerates the App Store and Play sets from the running app (manifest of devices, locales and screens, reached with dev actions and waited on with events), then asc_upload_screenshots and gplay_upload_screenshots publish them. Captures are written to disk, never into the agent's context
 - Security: dashboard token, secret redaction, read-only SQLite, MCP on localhost only
 
 ## Documentation

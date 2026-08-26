@@ -189,6 +189,7 @@ drive everything from Claude, Cursor or any MCP client.
 | `export_session`, `export_flow` | One correlated timeline, and actions paired with the consequences they caused |
 | `audit_accessibility` | What React renders but the accessibility tree does not expose |
 | `list_plugins`, `asc_*`, `gplay_*` | The release around the app: has the build finished processing, where is the version in review, what is production serving, what do the store reviews say. And driving it: distribute to TestFlight, submit for review, promote a track, widen or halt a staged rollout |
+| `capture_store_screenshots` | Regenerate the App Store and Play screenshots from the running app: devices, locales and screens from a manifest, each reached with the app's own dev actions, captured at native resolution and uploaded. The pixels never enter the agent's context |
 
 Source locations survive React 19, where the location lives in owner stacks
 pointing into the bundle: the hub symbolicates them against Metro before the

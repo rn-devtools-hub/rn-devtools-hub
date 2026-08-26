@@ -996,3 +996,218 @@ describe("upstream contracts", () => {
     }
   });
 });
+
+/**
+ * Uploading a captured screenshot set.
+ *
+ * Both stores make this a multi-step affair, and both fail quietly when a
+ * step is skipped: an App Store asset never committed with its checksum
+ * sits in the set and never appears on the listing, and a Play edit that
+ * is not committed changes nothing at all. So what is asserted here is
+ * the shape of the sequence, not just its result.
+ */
+const captureFixture = (shots: Array<Record<string, unknown>>) => {
+  const output = join(root, "shots");
+  const written = shots.map((shot, index) => {
+    const file = join(output, `${index}.png`);
+    mkdirSync(output, { recursive: true });
+    writeFileSync(file, `PNG-${index}`);
+    return { device: "d", locale: "en-US", screen: `s${index}`, target: "sim:UDID", width: 1290, height: 2796, appleDisplayType: "APP_IPHONE_67", playImageType: "phoneScreenshots", ...shot, file };
+  });
+  writeFileSync(join(output, "index.json"), JSON.stringify({ takenAt: 1, output, shots: written }));
+  return output;
+};
+
+describe("App Store Connect screenshot upload", () => {
+  const ec = generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const ctx = () => ({
+    config: { keyId: "KEY", issuerId: "ISSUER", privateKey: ec.privateKey, bundleId: "com.acme.app" },
+    projectRoot: root,
+    state: {} as Record<string, unknown>,
+  });
+  const base = [
+    { match: /\/v1\/apps\?/, body: { data: [{ id: "42", attributes: { bundleId: "com.acme.app" } }] } },
+    { match: /appStoreVersions\?filter/, body: { data: [{ id: "v1", attributes: { versionString: "1.4.0" } }] } },
+  ];
+  const localizations = { match: /appStoreVersions\/v1\/appStoreVersionLocalizations/, body: { data: [{ id: "l1", attributes: { locale: "en-US" } }] } };
+
+  it("reserves the asset, follows Apple's upload operations, then commits it with its checksum", async () => {
+    const from = captureFixture([{}]);
+    const stub = stubFetch([
+      ...base,
+      localizations,
+      { match: /appStoreVersionLocalizations\/l1\/appScreenshotSets/, method: "GET", body: { data: [] } },
+      { match: /\/v1\/appScreenshotSets$/, method: "POST", body: { data: { id: "set1" } } },
+      {
+        match: /\/v1\/appScreenshots$/,
+        method: "POST",
+        body: { data: { id: "sc1", attributes: { uploadOperations: [{ method: "PUT", url: "https://upload.example/part1", offset: 0, length: 5, requestHeaders: [{ name: "x-apple", value: "token" }] }] } } },
+      },
+      { match: /upload\.example/, method: "PUT", body: {} },
+      { match: /appScreenshots\/sc1$/, method: "PATCH", body: { data: { attributes: { assetDeliveryState: { state: "COMPLETE" } } } } },
+    ]);
+    try {
+      const result: any = await asc.handle("asc_upload_screenshots", { version: "1.4.0", from }, ctx());
+      expect(result).toMatchObject({ ok: true, count: 1 });
+      expect(result.uploaded[0]).toMatchObject({ locale: "en-US", displayType: "APP_IPHONE_67", setId: "set1" });
+
+      const put = stub.calls.find((call) => call.method === "PUT");
+      expect(put?.headers["x-apple"]).toBe("token");
+      // The byte range Apple asked for, not the whole file by luck
+      expect(String(put?.body).length).toBe(5);
+
+      const patch = stub.calls.find((call) => call.method === "PATCH");
+      const attributes = JSON.parse(String(patch?.body)).data.attributes;
+      expect(attributes.uploaded).toBe(true);
+      expect(attributes.sourceFileChecksum).toMatch(/^[0-9a-f]{32}$/);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("refuses a size no display type matches instead of uploading it as another device", async () => {
+    const from = captureFixture([{ width: 640, height: 480, appleDisplayType: null }]);
+    const stub = stubFetch([...base, localizations]);
+    try {
+      const result: any = await asc.handle("asc_upload_screenshots", { version: "1.4.0", from }, ctx());
+      expect(result).toMatchObject({ ok: false, reason: "unknown-display-type" });
+      expect(result.files[0].size).toBe("640x480");
+      expect(stub.calls.some((call) => call.method === "POST")).toBe(false);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("names a locale the listing does not have rather than inventing it", async () => {
+    const from = captureFixture([{ locale: "de-DE" }]);
+    const stub = stubFetch([...base, localizations]);
+    try {
+      const result: any = await asc.handle("asc_upload_screenshots", { version: "1.4.0", from }, ctx());
+      expect(result.ok).toBe(false);
+      expect(result.skipped[0]).toMatchObject({ locale: "de-DE", reason: "no-localization" });
+      expect(result.skipped[0].hint).toMatch(/en-US/);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("clears the existing set first when asked to replace", async () => {
+    const from = captureFixture([{}]);
+    const stub = stubFetch([
+      ...base,
+      localizations,
+      { match: /appStoreVersionLocalizations\/l1\/appScreenshotSets/, method: "GET", body: { data: [{ id: "set1", attributes: { screenshotDisplayType: "APP_IPHONE_67" } }] } },
+      { match: /appScreenshotSets\/set1\/appScreenshots/, method: "GET", body: { data: [{ id: "old1" }, { id: "old2" }] } },
+      { match: /appScreenshots\/old\d$/, method: "DELETE", body: {} },
+      { match: /\/v1\/appScreenshots$/, method: "POST", body: { data: { id: "sc1", attributes: { uploadOperations: [{ method: "PUT", url: "https://upload.example/p", offset: 0, length: 5, requestHeaders: [] }] } } } },
+      { match: /upload\.example/, method: "PUT", body: {} },
+      { match: /appScreenshots\/sc1$/, method: "PATCH", body: { data: {} } },
+    ]);
+    try {
+      const result: any = await asc.handle("asc_upload_screenshots", { version: "1.4.0", from, replace: true }, ctx());
+      expect(result.uploaded[0].removed).toBe(2);
+      // The existing set was reused, not duplicated
+      expect(stub.calls.some((call) => call.method === "POST" && /appScreenshotSets$/.test(call.url))).toBe(false);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("leaves the Android captures of the same index alone", async () => {
+    const from = captureFixture([{ target: "adb:emulator-5554" }]);
+    const stub = stubFetch([...base, localizations]);
+    try {
+      await expect(asc.handle("asc_upload_screenshots", { version: "1.4.0", from }, ctx()))
+        .rejects.toThrow(/No iOS capture/);
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
+describe("Google Play screenshot upload", () => {
+  const rsa = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const account = JSON.stringify({ client_email: "bot@acme.iam.gserviceaccount.com", private_key_id: "k1", private_key: rsa.privateKey });
+  const ctx = () => ({
+    config: { serviceAccount: account, packageName: "com.acme.app" },
+    projectRoot: root,
+    state: {} as Record<string, unknown>,
+  });
+  const token = { match: /oauth2\.googleapis\.com/, body: { access_token: "ya29.token", expires_in: 3600 } };
+
+  it("uploads through the media endpoint and commits the edit", async () => {
+    const from = captureFixture([{ target: "adb:emulator-5554" }, { target: "adb:emulator-5554" }]);
+    const stub = stubFetch([
+      token,
+      { match: /\/edits$/, method: "POST", body: { id: "e1" } },
+      { match: /:commit/, method: "POST", body: { id: "e1" } },
+      { match: /upload\/androidpublisher/, method: "POST", body: { image: { id: "img1", sha256: "abc", url: "https://play/img1" } } },
+      { match: /listings\/en-US\/phoneScreenshots$/, method: "GET", body: { images: [{ id: "img1" }, { id: "img2" }] } },
+    ]);
+    try {
+      const result: any = await gplay.handle("gplay_upload_screenshots", { from }, ctx());
+      expect(result).toMatchObject({ ok: true, count: 2 });
+      expect(result.edit).toEqual({ id: "e1", committed: true });
+      expect(result.listings[0]).toMatchObject({ language: "en-US", imageType: "phoneScreenshots", onListing: 2 });
+
+      const uploads = stub.calls.filter((call) => call.url.includes("/upload/androidpublisher"));
+      expect(uploads.length).toBe(2);
+      expect(uploads[0].url).toContain("uploadType=media");
+      expect(uploads[0].url).toContain("/listings/en-US/phoneScreenshots");
+      expect(uploads[0].headers["content-type"]).toBe("image/png");
+      expect(stub.calls.some((call) => call.method === "DELETE")).toBe(false);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("clears the form factor first when asked to replace", async () => {
+    const from = captureFixture([{ target: "adb:emulator-5554" }]);
+    const stub = stubFetch([
+      token,
+      { match: /\/edits$/, method: "POST", body: { id: "e1" } },
+      { match: /:commit/, method: "POST", body: { id: "e1" } },
+      { match: /listings\/en-US\/phoneScreenshots$/, method: "DELETE", body: {} },
+      { match: /upload\/androidpublisher/, method: "POST", body: { image: { id: "img1" } } },
+      { match: /listings\/en-US\/phoneScreenshots$/, method: "GET", body: { images: [{ id: "img1" }] } },
+    ]);
+    try {
+      const result: any = await gplay.handle("gplay_upload_screenshots", { from, replace: true }, ctx());
+      expect(result.listings[0].replaced).toBe(true);
+      const deletion = stub.calls.find((call) => call.method === "DELETE");
+      expect(deletion?.url).toContain("/listings/en-US/phoneScreenshots");
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("throws the edit away when an upload fails, so no half-updated listing is committed", async () => {
+    const from = captureFixture([{ target: "adb:emulator-5554" }]);
+    const stub = stubFetch([
+      token,
+      { match: /\/edits$/, method: "POST", body: { id: "e1" } },
+      { match: /upload\/androidpublisher/, method: "POST", status: 400, body: { error: { message: "Image is too small" } } },
+      { match: /\/edits\/e1$/, method: "DELETE", body: {} },
+    ]);
+    try {
+      await expect(gplay.handle("gplay_upload_screenshots", { from }, ctx())).rejects.toThrow(/Image is too small/);
+      expect(stub.calls.some((call) => call.method === "DELETE" && call.url.endsWith("/edits/e1"))).toBe(true);
+      expect(stub.calls.some((call) => /:commit/.test(call.url))).toBe(false);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("leaves the iOS captures of the same index alone", async () => {
+    const from = captureFixture([{ target: "sim:UDID" }]);
+    await expect(gplay.handle("gplay_upload_screenshots", { from }, ctx())).rejects.toThrow(/No Android capture/);
+  });
+});

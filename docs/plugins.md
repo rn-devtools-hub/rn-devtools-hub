@@ -267,6 +267,75 @@ That is a service account that exists and signed correctly but was never
 granted access in Play Console. An `401 (the credentials were rejected)` is
 the opposite: the key itself is wrong, or expired.
 
+## Store screenshots
+
+The hard part of store screenshots is not taking the picture. It is
+putting the app in the **same state twice**: the same account, the same
+cart, the same date on the receipt, on four device sizes and in three
+languages, again next release. Doing that by hand is why most store
+listings are two versions behind.
+
+Everything needed is already in this hub, so the capture is a manifest and
+a loop. Write `.rn-devtools/store-screenshots.json`:
+
+```json
+{
+  "output": ".rn-devtools/store-screenshots",
+  "devices": [
+    { "target": "sim:6C3F...", "label": "iphone-67" },
+    { "target": "adb:emulator-5554", "label": "pixel" }
+  ],
+  "locales": [
+    { "code": "en-US", "action": "locale:set", "args": { "code": "en-US" } },
+    { "code": "fr-FR", "action": "locale:set", "args": { "code": "fr-FR" } }
+  ],
+  "before": [{ "name": "auth:demo" }, { "name": "seed:catalog" }],
+  "screens": [
+    { "name": "01-home", "action": "nav:home", "waitFor": "screen.ready" },
+    { "name": "02-cart", "actions": [{ "name": "seed:cart" }, { "name": "nav:cart" }], "waitFor": "screen.ready" }
+  ]
+}
+```
+
+Then:
+
+```
+capture_store_screenshots
+asc_upload_screenshots   version: "1.4.0", replace: true
+gplay_upload_screenshots replace: true
+```
+
+`targets` come from `list_targets`. The screens are reached with the app's
+own dev actions rather than by tapping through the UI, so the set does not
+break because a button moved, and `waitFor` is an **event**, not a
+duration: a sleep long enough for a slow machine is wasted on every fast
+one, and a sleep short enough is a blank screenshot. Locale switching goes
+through an action the app registers, because neither simctl nor adb can
+change an app's language at runtime and pretending otherwise would produce
+a set that is silently all in English.
+
+Four things worth knowing:
+
+- **The pixels never enter the agent's context.** Files go to disk and the
+  answer is a manifest of paths and sizes, so a full set costs nothing to
+  produce. It is also why this does not count against
+  `RN_DEVTOOLS_SCREENSHOTS`: that budget exists to stop an agent
+  *verifying* with images.
+- **Nothing is resized.** A capture taken on the right simulator is
+  already the size the store accepts. Resizing one that is not is how an
+  asset passes the upload and gets rejected in review, so an unrecognised
+  size is reported instead, with the sizes the table knows.
+- **A screen that fails does not take the others down.** The report names
+  the missing shot and why; losing eleven good captures to one broken
+  screen is worse than a report with a hole in it.
+- **The uploads are grouped for you.** App Store display type comes from
+  each capture's pixel size, Play form factor from its shortest side, and
+  the iOS and Android captures of the same run are routed to the right
+  store. `replace: true` clears the existing set first, which is what a
+  new release usually wants. The Play side does the whole thing inside one
+  edit that is committed at the end, so a listing is never left half
+  updated.
+
 ## Writing a plugin
 
 Point `RN_DEVTOOLS_PLUGINS` at a file or a directory (comma separated,

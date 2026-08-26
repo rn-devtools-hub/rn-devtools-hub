@@ -23,9 +23,14 @@
  * locally, exchanged for an access token cached until it expires.
  */
 
-import { apiJson, project, query, signJwt } from "./_api.mjs";
+import { readFileSync } from "node:fs";
+import { apiJson, oneLine, project, query, signJwt } from "./_api.mjs";
+import { readIndex } from "../storeshots.mjs";
 
 const BASE = "https://androidpublisher.googleapis.com/androidpublisher/v3";
+// Media goes to the same host under a different prefix, which is why the
+// declared hosts do not change when screenshots are uploaded
+const UPLOAD_BASE = "https://androidpublisher.googleapis.com/upload/androidpublisher/v3";
 const SCOPE = "https://www.googleapis.com/auth/androidpublisher";
 const DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const LABEL = "Google Play";
@@ -152,6 +157,34 @@ const withEdit = async (ctx, pkg, run, { commit = false, changesNotSentForReview
   }
 };
 
+/**
+ * One image, into a listing.
+ *
+ * A media upload does not go through the JSON endpoint: same host,
+ * /upload prefix, uploadType=media, and the bytes as the body. The edit
+ * it happens in is committed by the caller, so nothing is live until the
+ * whole set landed.
+ */
+const uploadImage = async (ctx, { pkg, editId, language, imageType, file }) => {
+  const bytes = readFileSync(file);
+  const url = `${UPLOAD_BASE}/applications/${pkg}/edits/${editId}/listings/${encodeURIComponent(language)}/${imageType}?uploadType=media`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { authorization: `Bearer ${await accessToken(ctx)}`, "content-type": "image/png" },
+    body: bytes,
+    signal: AbortSignal.timeout(120000),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let detail = oneLine(text, 200);
+    try { detail = explain(JSON.parse(text)) ?? detail; } catch { /* the body was not JSON */ }
+    throw new Error(`${LABEL} refused ${file.split("/").pop()} (${response.status}): ${detail}`);
+  }
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { parsed = null; }
+  return { file, bytes: bytes.length, ...project(parsed?.image ?? {}, ["id", "sha256", "url"]) };
+};
+
 const RELEASE_KEYS = ["name", "versionCodes", "status", "userFraction", "countryTargeting", "inAppUpdatePriority"];
 
 const readTrack = (track) => ({
@@ -231,6 +264,9 @@ export const CONTRACT = {
     { id: "androidpublisher.edits.apks.list", why: "gplay_list_artifacts" },
     { id: "androidpublisher.reviews.list", why: "gplay_list_reviews" },
     { id: "androidpublisher.reviews.reply", why: "gplay_reply_review" },
+    { id: "androidpublisher.edits.images.upload", why: "gplay_upload_screenshots" },
+    { id: "androidpublisher.edits.images.deleteall", why: "gplay_upload_screenshots replace" },
+    { id: "androidpublisher.edits.images.list", why: "gplay_upload_screenshots reports what the listing holds after" },
   ],
   fields: [
     { schema: "TrackRelease", read: ["name", "versionCodes", "status", "userFraction", "countryTargeting", "inAppUpdatePriority", "releaseNotes"] },
@@ -239,6 +275,7 @@ export const CONTRACT = {
     { schema: "UserComment", read: ["text", "starRating", "lastModified", "appVersionName", "appVersionCode", "androidOsVersion", "deviceMetadata"], tolerated: ["device"] },
     { schema: "Bundle", read: ["versionCode", "sha256", "sha1"] },
     { schema: "Apk", read: ["versionCode", "binary"] },
+    { schema: "Image", read: ["id", "url", "sha256"] },
   ],
 };
 
@@ -400,6 +437,24 @@ export default {
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
     {
+      name: "gplay_upload_screenshots",
+      description:
+        "Uploads the screenshots capture_store_screenshots wrote to the Play listing, grouped by language and by form factor (phone, seven inch, ten inch, read from the shortest side of each capture). replace clears the existing images of that form factor first, which is what a new release usually wants. Everything happens in one Play edit that is committed at the end, so a listing is never left half updated. Only the Android captures in the index are considered.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          packageName: { type: "string" },
+          from: { type: "string", description: "Directory or index.json written by capture_store_screenshots (default .rn-devtools/store-screenshots)" },
+          language: { type: "string", description: "Only this language from the capture, e.g. en-US" },
+          imageType: { type: "string", enum: ["phoneScreenshots", "sevenInchScreenshots", "tenInchScreenshots", "tvScreenshots", "wearScreenshots"], description: "Force the form factor instead of reading it from the capture size" },
+          replace: { type: "boolean", description: "Delete the images already on the listing for each form factor before uploading (default false)" },
+          changesNotSentForReview: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    {
       name: "gplay_write_request",
       description:
         "Authenticated POST, PUT, PATCH or DELETE against any Play Developer API v3 endpoint, for the parts of the console this file does not model (in-app products, subscriptions, testers). Paths under /edits stay refused even here: an edit opened outside gplay_update_track is a lock nobody closes.",
@@ -555,6 +610,59 @@ export default {
         reviewId,
         published: true,
         lastEdited: replied?.result?.lastEdited?.seconds ? Number(replied.result.lastEdited.seconds) * 1000 : null,
+      };
+    }
+
+    if (name === "gplay_upload_screenshots") {
+      const pkg = packageName(ctx, args.packageName);
+      const index = readIndex(ctx.projectRoot, args.from);
+
+      // iOS captures live in the same index; they belong to App Store Connect
+      const wanted = index.shots
+        .filter((shot) => !/^sim:/.test(String(shot.target ?? "")))
+        .filter((shot) => !args.language || shot.locale === args.language)
+        .sort((left, right) => String(left.file).localeCompare(String(right.file)));
+      if (wanted.length === 0) {
+        throw new Error(`No Android capture in ${index.path}${args.language ? ` for language ${args.language}` : ""}`);
+      }
+
+      const groups = new Map();
+      for (const shot of wanted) {
+        const imageType = args.imageType ?? shot.playImageType ?? "phoneScreenshots";
+        const key = `${shot.locale}|${imageType}`;
+        if (!groups.has(key)) groups.set(key, { language: shot.locale, imageType, shots: [] });
+        groups.get(key).shots.push(shot);
+      }
+
+      const { result, edit } = await withEdit(ctx, pkg, async (editId) => {
+        const done = [];
+        for (const group of groups.values()) {
+          if (args.replace) {
+            await call(ctx, "DELETE", `/applications/${pkg}/edits/${editId}/listings/${encodeURIComponent(group.language)}/${group.imageType}`);
+          }
+          const images = [];
+          for (const shot of group.shots) {
+            images.push(await uploadImage(ctx, { pkg, editId, language: group.language, imageType: group.imageType, file: shot.file }));
+          }
+          const listing = await get(ctx, `/applications/${pkg}/edits/${editId}/listings/${encodeURIComponent(group.language)}/${group.imageType}`);
+          done.push({
+            language: group.language,
+            imageType: group.imageType,
+            replaced: args.replace === true,
+            uploaded: images,
+            onListing: (listing?.images ?? []).length,
+          });
+        }
+        return done;
+      }, { commit: true, changesNotSentForReview: args.changesNotSentForReview === true });
+
+      return {
+        ok: true,
+        packageName: pkg,
+        from: index.path,
+        edit,
+        count: result.reduce((total, group) => total + group.uploaded.length, 0),
+        listings: result,
       };
     }
 

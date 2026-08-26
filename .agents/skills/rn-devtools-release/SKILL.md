@@ -89,6 +89,32 @@ is what makes widening and halting one call. `completed` reaches every
 user and refuses a `userFraction`; `inProgress` and `halted` require one.
 Every one of these commits a Play edit, which is what makes it live.
 
+## Refresh the store screenshots
+
+```
+list_targets                              the simulators and devices available
+capture_store_screenshots                 devices x locales x screens, to disk
+asc_upload_screenshots   version: "1.4.0", replace: true
+gplay_upload_screenshots replace: true
+```
+
+The manifest is `.rn-devtools/store-screenshots.json` (devices, locales,
+screens). Each screen is reached with the app's own dev actions and waited
+on with `screen.ready`, never with a sleep, which is what makes the set
+reproducible next release rather than a morning of manual work.
+
+Three things not to get wrong:
+
+- The captures go **to disk**, and the answer is a list of paths. Never
+  ask to see them: a full set in context costs more than the release.
+- **Nothing is resized, ever.** If the answer reports an unrecognised
+  size, the capture was taken on a device class the store does not
+  accept. Capture on the right simulator; do not pass `displayType` to
+  force it through unless you know the size is right.
+- Run `capture_store_screenshots` with `screen` or `locale` while
+  iterating on one shot. Capturing the whole set to check one screen is
+  slow and changes nothing.
+
 ## Prove before you widen
 
 The reason to do this from the hub rather than from two consoles: the
@@ -119,6 +145,8 @@ naming a screen is a reproduction: `query_ui` that screen, read the
 | `No TestFlight group "X"` | The answer lists the real group names. Use one of those |
 | A rollout status is refused | `completed` reaches everyone and takes no fraction; `inProgress` and `halted` need one strictly between 0 and 1 |
 | Play returns no review at all | Play only exposes about a week of reviews, and none for an app never published. That is a fact about Play, not about the app |
+| A capture is reported with an unrecognised size | It was taken on a device class the store does not accept. Change the simulator in the manifest, do not force a display type |
+| `asc_upload_screenshots` skips a locale | The version has no listing in that language. It is created in App Store Connect, not by an upload |
 
 ## What not to do
 
@@ -135,3 +163,5 @@ naming a screen is a reproduction: `query_ui` that screen, read the
   as the developer, and it replaces any previous reply.
 - Do not report a release as done because a call returned. Read the state
   back: `asc_list_versions`, `gplay_list_tracks`.
+- Do not ask to see a captured screenshot. The point of writing them to
+  disk is that they cost nothing; reading one back undoes that.

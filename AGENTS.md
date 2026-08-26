@@ -229,6 +229,14 @@ only). Tools:
   between what React renders and what accessibility exposes).
 - Build: build_app delegates to expo run / eas build and streams the
   failures onto the same bus as the crashes.
+- Store assets: capture_store_screenshots drives the app through a
+  manifest (devices from list_targets, locales via a dev action, screens
+  via nav:*) and writes the captures to disk at native resolution. The
+  images NEVER enter the answer, so it costs no context and does not touch
+  the RN_DEVTOOLS_SCREENSHOTS budget, which is about verifying. Nothing is
+  resized: an unrecognised size is reported rather than uploaded as the
+  wrong device class. asc_upload_screenshots and gplay_upload_screenshots
+  read the index it writes.
 - Plugins (the services around the app, not the app): list_plugins says
   which ones exist, whether they are configured, which tools CHANGE
   something, whether writes are enabled, and every host they will contact.

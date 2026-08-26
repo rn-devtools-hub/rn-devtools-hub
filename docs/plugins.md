@@ -28,6 +28,67 @@ this hub stops being local-only, so the design says so out loud:
   something**, and the registry knows which is which. Writes ship enabled:
   a release tool that can only look at a release is half a tool.
 
+## Not a reimplementation
+
+These plugins do not rebuild App Store Connect or Play Console, and they
+do not wrap a CLI that does. Every call is the vendor's **own REST API**,
+with the vendor's **own authentication**: an ES256 token signed with the
+`.p8` Apple issued, a service-account assertion exchanged for a Google
+access token. No scraping, no vendored client, no fork of anyone's
+tooling, nothing to keep in step with a third-party wrapper's release
+cycle.
+
+What this hub adds is the other half, the one the vendors cannot have:
+the app seen from inside its own runtime. The coupling is by **extension**
+rather than by replacement, and it shows in two places.
+
+- **Nothing is fenced off.** `asc_request` and `gplay_request` (and their
+  `*_write_request` counterparts) reach any endpoint of either API, so
+  the parts these plugins do not model are still one call away. The
+  named tools exist because they resolve the app from `app.json`,
+  validate the combinations the vendor rejects with an unhelpful message,
+  and clean up the Play edit they open, not to be the only way in.
+- **The vendor keeps owning their API.** When Apple adds an endpoint it
+  is usable here the day it ships, without a release of this package.
+
+### The price of that, and what pays it
+
+Drift. Apple renames an attribute between API versions, Google moves a
+method, and the failure would otherwise surface as a 400 in the middle of
+someone's release.
+
+So each plugin **declares** what it depends on, next to the code that
+depends on it:
+
+```js
+export const CONTRACT = {
+  spec: { kind: "openapi", url: "https://developer.apple.com/..." },
+  endpoints: [{ method: "POST", path: "/v1/reviewSubmissions", why: "asc_submit_for_review opens one" }],
+  fields: [{ schema: "Build", read: ["version", "processingState", "uploadedDate"] }],
+};
+```
+
+And a check verifies that declaration against the machine-readable
+specification each vendor publishes: Apple's OpenAPI document and
+Google's discovery document.
+
+```bash
+npm run check:store-apis
+```
+
+It runs weekly in CI and on any pull request touching `server/plugins/`.
+A specification that cannot be downloaded is reported as **skipped**, not
+as drift: a check that goes red because `developer.apple.com` was slow is
+a check people learn to ignore. Every endpoint and every field a plugin
+reads is covered, `why` included, so an entry nobody can justify is an
+entry that can be deleted.
+
+`read` fields must exist. `tolerated` ones may or may not: those are the
+names a vendor has already renamed once, which the code projects
+defensively, keeping whichever the account's API actually returns.
+`appStoreState` and `appVersionState` are the same field on either side of
+one of those renames, and the check only complains when they all vanish.
+
 ## Turning writes off
 
 Every mutating tool carries `destructiveHint`, so an MCP client asks before

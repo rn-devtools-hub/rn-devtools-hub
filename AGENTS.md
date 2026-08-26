@@ -88,6 +88,15 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
   exposes NO tool: an agent does not pay context for a tool it cannot call.
   Secrets resolve at startup and stay in the process; what is reported is
   that a value is set and where it came from, never the value.
+- A plugin does not reimplement a vendor API and does not wrap a CLI that
+  does: it calls the vendor's own REST endpoints with the vendor's own
+  auth, and the generic *_request tools keep everything else one call
+  away. The price is drift, so a plugin DECLARES what it depends on in an
+  exported CONTRACT (endpoints, fields, and why for each) and
+  `npm run check:store-apis` verifies it against the specifications the
+  vendors publish (Apple's OpenAPI document, Google's discovery
+  document). Weekly in CI and on any PR touching server/plugins. A spec
+  that cannot be downloaded is skipped, not reported as drift.
 - A plugin tool that CHANGES something lives in writeTools and must carry
   {readOnlyHint:false, destructiveHint:true}, or the plugin is refused
   whole. Those flags are what an MCP client reads to decide whether to ask
@@ -149,6 +158,7 @@ Full validation commands:
 
 ```bash
 npm run typecheck && npm test && npm run build
+npm run check:store-apis   # plugins only: are Apple's and Google's APIs still what the contracts say
 perl -ne 'print if /<script>/../<\/script>/' server/dashboard.html \
   | grep -v "^<script>$" | grep -v "^</script>$" > /tmp/dash.js && node --check /tmp/dash.js
 RN_DEVTOOLS_TOKEN=dev bun server/server.mjs &  # then curl the dashboard and /mcp

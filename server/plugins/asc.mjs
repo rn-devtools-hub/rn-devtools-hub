@@ -174,6 +174,12 @@ const BUILD_KEYS = ["processingState", "uploadedDate", "expired", "minOsVersion"
 const VERSION_KEYS = ["versionString", "appStoreState", "state", "appVersionState", "platform", "releaseType", "createdDate", "downloadable"];
 const GROUP_KEYS = ["name", "isInternalGroup", "publicLinkEnabled", "publicLink", "publicLinkLimit", "createdDate"];
 
+/**
+ * Apple spells pre-release versions two different ways, and both are
+ * load-bearing: the OpenAPI schema is `PrereleaseVersion`, the JSON:API
+ * type inside a payload is `preReleaseVersions`. Aligning them would
+ * break whichever lookup was "corrected".
+ */
 const included = (data, type, id) =>
   (data?.included ?? []).find((entry) => entry.type === type && entry.id === id) ?? null;
 
@@ -197,6 +203,71 @@ const requirePath = (path) => {
     throw new Error(`Invalid path ${JSON.stringify(path)}: expected an absolute API path such as /v1/apps`);
   }
   return path;
+};
+
+/**
+ * What this plugin depends on, upstream.
+ *
+ * Nothing here reimplements App Store Connect: every call is Apple's own
+ * REST API, with Apple's own auth. The risk of that choice is drift, so
+ * the dependency is DECLARED rather than left implicit in the code, and
+ * scripts/check-store-apis.mjs verifies every line of it against the
+ * OpenAPI specification Apple publishes. A renamed attribute becomes a
+ * failing check instead of a 400 in someone's release.
+ *
+ * `read` must exist. `tolerated` may or may not: those are the fields
+ * Apple has renamed across API versions and that the code projects
+ * defensively, keeping whichever one the account's API actually returns.
+ */
+export const CONTRACT = {
+  spec: {
+    kind: "openapi",
+    url: "https://developer.apple.com/sample-code/app-store-connect/app-store-connect-openapi-specification.zip",
+    name: "App Store Connect OpenAPI specification",
+  },
+  endpoints: [
+    { method: "GET", path: "/v1/apps", why: "asc_list_apps, and resolving a bundle id" },
+    { method: "GET", path: "/v1/builds", why: "asc_list_builds, and resolving a build number" },
+    { method: "PATCH", path: "/v1/builds/{id}", why: "asc_expire_build" },
+    { method: "GET", path: "/v1/apps/{id}/appStoreVersions", why: "asc_list_versions" },
+    { method: "GET", path: "/v1/apps/{id}/betaGroups", why: "asc_list_beta_groups, and resolving a group name" },
+    { method: "GET", path: "/v1/builds/{id}/betaBuildLocalizations", why: "asc_set_whats_new reads before it writes" },
+    { method: "POST", path: "/v1/betaBuildLocalizations", why: "asc_set_whats_new, first time for a locale" },
+    { method: "PATCH", path: "/v1/betaBuildLocalizations/{id}", why: "asc_set_whats_new, locale already there" },
+    { method: "POST", path: "/v1/betaGroups/{id}/relationships/builds", why: "asc_distribute_build add" },
+    { method: "DELETE", path: "/v1/betaGroups/{id}/relationships/builds", why: "asc_distribute_build remove" },
+    { method: "POST", path: "/v1/betaAppReviewSubmissions", why: "asc_distribute_build submitForReview" },
+    { method: "POST", path: "/v1/appStoreVersions", why: "asc_prepare_version creates the version" },
+    { method: "PATCH", path: "/v1/appStoreVersions/{id}", why: "asc_prepare_version sets the release type" },
+    { method: "PATCH", path: "/v1/appStoreVersions/{id}/relationships/build", why: "asc_prepare_version attaches the build" },
+    { method: "GET", path: "/v1/appStoreVersions/{id}/appStoreVersionLocalizations", why: "asc_prepare_version reads before it writes" },
+    { method: "POST", path: "/v1/appStoreVersionLocalizations", why: "asc_prepare_version, first release notes for a locale" },
+    { method: "PATCH", path: "/v1/appStoreVersionLocalizations/{id}", why: "asc_prepare_version, locale already there" },
+    { method: "GET", path: "/v1/apps/{id}/reviewSubmissions", why: "asc_submit_for_review reuses an open submission" },
+    { method: "POST", path: "/v1/reviewSubmissions", why: "asc_submit_for_review opens one" },
+    { method: "GET", path: "/v1/reviewSubmissions/{id}/items", why: "asc_submit_for_review checks the version is in it" },
+    { method: "POST", path: "/v1/reviewSubmissionItems", why: "asc_submit_for_review adds the version" },
+    { method: "PATCH", path: "/v1/reviewSubmissions/{id}", why: "asc_submit_for_review submits" },
+    { method: "POST", path: "/v1/appStoreVersionReleaseRequests", why: "asc_release_version" },
+    { method: "GET", path: "/v1/appStoreVersions/{id}/appStoreVersionPhasedRelease", why: "asc_phased_release reads the current state" },
+    { method: "POST", path: "/v1/appStoreVersionPhasedReleases", why: "asc_phased_release start" },
+    { method: "PATCH", path: "/v1/appStoreVersionPhasedReleases/{id}", why: "asc_phased_release pause, resume, complete" },
+    { method: "DELETE", path: "/v1/appStoreVersionPhasedReleases/{id}", why: "asc_phased_release cancel" },
+  ],
+  fields: [
+    { schema: "App", read: ["name", "bundleId", "sku", "primaryLocale"] },
+    { schema: "Build", read: ["version", "processingState", "uploadedDate", "expired", "minOsVersion", "usesNonExemptEncryption"] },
+    { schema: "PrereleaseVersion", read: ["version", "platform"] },
+    {
+      schema: "AppStoreVersion",
+      read: ["versionString", "platform", "releaseType", "createdDate", "downloadable"],
+      // appStoreState is the old name, appVersionState the new one, and
+      // "state" is what a future rename would most likely be called
+      tolerated: ["appStoreState", "appVersionState", "state"],
+    },
+    { schema: "BetaGroup", read: ["name", "isInternalGroup", "publicLinkEnabled", "publicLink", "publicLinkLimit", "createdDate"] },
+    { schema: "AppStoreVersionPhasedRelease", read: ["phasedReleaseState", "startDate", "currentDayNumber", "totalPauseDuration"] },
+  ],
 };
 
 export default {

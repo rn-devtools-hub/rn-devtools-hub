@@ -204,6 +204,44 @@ const buildRelease = ({ versionCodes, status, userFraction, releaseNotes, name }
   };
 };
 
+/**
+ * What this plugin depends on, upstream.
+ *
+ * Google publishes a discovery document for this API, which names every
+ * method by id and every schema by field. So the dependency is declared
+ * here as those ids rather than as URLs, and
+ * scripts/check-store-apis.mjs verifies it against the live document. A
+ * method Google moves becomes a failing check instead of a 404 during a
+ * rollout.
+ */
+export const CONTRACT = {
+  spec: {
+    kind: "discovery",
+    url: "https://androidpublisher.googleapis.com/$discovery/rest?version=v3",
+    name: "Google Play Android Developer API discovery document",
+  },
+  endpoints: [
+    { id: "androidpublisher.edits.insert", why: "every track read and write opens an edit" },
+    { id: "androidpublisher.edits.delete", why: "a read throws its edit away, and so does a failed write" },
+    { id: "androidpublisher.edits.commit", why: "gplay_update_track and gplay_promote_release make it live" },
+    { id: "androidpublisher.edits.tracks.list", why: "gplay_list_tracks" },
+    { id: "androidpublisher.edits.tracks.get", why: "gplay_get_track, and reading before a write" },
+    { id: "androidpublisher.edits.tracks.update", why: "gplay_update_track, gplay_promote_release" },
+    { id: "androidpublisher.edits.bundles.list", why: "gplay_list_artifacts" },
+    { id: "androidpublisher.edits.apks.list", why: "gplay_list_artifacts" },
+    { id: "androidpublisher.reviews.list", why: "gplay_list_reviews" },
+    { id: "androidpublisher.reviews.reply", why: "gplay_reply_review" },
+  ],
+  fields: [
+    { schema: "TrackRelease", read: ["name", "versionCodes", "status", "userFraction", "countryTargeting", "inAppUpdatePriority", "releaseNotes"] },
+    { schema: "Track", read: ["track", "releases"] },
+    { schema: "Review", read: ["reviewId", "authorName", "comments"] },
+    { schema: "UserComment", read: ["text", "starRating", "lastModified", "appVersionName", "appVersionCode", "androidOsVersion", "deviceMetadata"], tolerated: ["device"] },
+    { schema: "Bundle", read: ["versionCode", "sha256", "sha1"] },
+    { schema: "Apk", read: ["versionCode", "binary"] },
+  ],
+};
+
 export default {
   id: "gplay",
   title: "Google Play",

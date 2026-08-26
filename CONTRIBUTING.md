@@ -92,9 +92,16 @@ Hotfix: branch from `main`, PR back to `main`, then merge `main` into
 A plugin reaches a service around the app (a store API, a crash backend)
 rather than the app itself. It lives in `server/plugins/`, declares the
 hosts it contacts, exposes no tool until it is configured, and never
-returns a credential. The contract, the rules the loader enforces and the
-helpers in `server/plugins/_api.mjs` are in
-[docs/plugins.md](docs/plugins.md).
+returns a credential.
+
+It also does not reimplement the service: it calls the vendor's own API
+with the vendor's own auth, and declares what it depends on in an exported
+`CONTRACT` that `npm run check:store-apis` verifies against the
+specification the vendor publishes. That check runs weekly and on any pull
+request touching `server/plugins/`.
+
+The full contract, the rules the loader enforces and the helpers in
+`server/plugins/_api.mjs` are in [docs/plugins.md](docs/plugins.md).
 
 ## Release (maintainers)
 

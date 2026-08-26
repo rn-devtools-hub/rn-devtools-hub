@@ -10,9 +10,10 @@
  * also the only way to assert what was sent to them.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { Buffer } from "node:buffer";
 // @ts-expect-error plain JS module, no types
@@ -20,9 +21,9 @@ import { createPluginHost, resolveConfig, validatePlugin } from "../server/plugi
 // @ts-expect-error plain JS module, no types
 import { base64url, derToJose, signJwt } from "../server/plugins/_api.mjs";
 // @ts-expect-error plain JS module, no types
-import asc from "../server/plugins/asc.mjs";
+import asc, { CONTRACT as ASC_CONTRACT } from "../server/plugins/asc.mjs";
 // @ts-expect-error plain JS module, no types
-import gplay from "../server/plugins/gplay.mjs";
+import gplay, { CONTRACT as GPLAY_CONTRACT } from "../server/plugins/gplay.mjs";
 
 const tool = (name: string) => ({
   name,
@@ -935,5 +936,63 @@ describe("Google Play writes", () => {
       .rejects.toThrow(/lock nobody closes/);
     await expect(gplay.handle("gplay_write_request", { method: "GET", path: "/applications/x/reviews" }, ctx()))
       .rejects.toThrow(/Unsupported method/);
+  });
+});
+
+/**
+ * The contract with the vendors.
+ *
+ * Neither plugin reimplements a store: every call is Apple's or Google's
+ * own API. The risk of that choice is drift, so each plugin declares what
+ * it depends on and scripts/check-store-apis.mjs verifies the declaration
+ * against the specification the vendor publishes. That check is only
+ * worth anything if the declaration still describes the code, which is
+ * what is asserted here: upstream is checked in CI, the coupling between
+ * the contract and the source is checked offline.
+ */
+describe("upstream contracts", () => {
+  const source = (file: string) =>
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server", "plugins", file), "utf-8");
+
+  for (const [name, contract] of [["asc", ASC_CONTRACT], ["gplay", GPLAY_CONTRACT]] as Array<[string, any]>) {
+    it(`${name} declares a specification that can be fetched and read`, () => {
+      expect(contract.spec.url).toMatch(/^https:\/\//);
+      expect(["openapi", "discovery"]).toContain(contract.spec.kind);
+      expect(contract.spec.name).toBeTruthy();
+    });
+
+    it(`${name} says why it depends on each endpoint`, () => {
+      // A contract entry with no reason is one nobody can safely delete
+      expect(contract.endpoints.length).toBeGreaterThan(0);
+      for (const endpoint of contract.endpoints) {
+        expect(endpoint.why, JSON.stringify(endpoint)).toBeTruthy();
+      }
+    });
+
+    it(`${name} declares the fields it reads`, () => {
+      for (const group of contract.fields ?? []) {
+        expect(group.schema).toBeTruthy();
+        expect(group.read.length).toBeGreaterThan(0);
+      }
+    });
+  }
+
+  it("names every App Store Connect endpoint the way the code calls it", () => {
+    // The paths are checked against Apple's spec in CI; here they are
+    // checked against the file, so a contract cannot quietly describe an
+    // endpoint the plugin stopped using or never called
+    const code = source("asc.mjs");
+    for (const endpoint of ASC_CONTRACT.endpoints as Array<{ method: string; path: string }>) {
+      const statics = endpoint.path.split(/\{[^}]+\}/).filter(Boolean).map((part) =>
+        part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      const skeleton = new RegExp(statics.join("[^\"'`]*"));
+      expect(skeleton.test(code), `${endpoint.method} ${endpoint.path} is declared but not called`).toBe(true);
+    }
+  });
+
+  it("names every Play method under the API the code talks to", () => {
+    for (const endpoint of GPLAY_CONTRACT.endpoints as Array<{ id: string }>) {
+      expect(endpoint.id.startsWith("androidpublisher.")).toBe(true);
+    }
   });
 });

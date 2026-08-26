@@ -1,0 +1,31 @@
+name: Store API drift
+
+# The asc and gplay plugins call Apple's and Google's own APIs rather than
+# reimplementing them. The price of that is drift: an attribute renamed
+# between API versions surfaces as a 400 in the middle of someone's
+# release. This checks the contract each plugin declares against the
+# specifications the vendors publish, so the news arrives here instead.
+#
+# Not strict on purpose: a specification that cannot be downloaded is
+# reported as skipped, not as drift. A check that goes red because
+# developer.apple.com was slow is a check people learn to ignore.
+
+on:
+  schedule:
+    # Monday morning, so a rename is found before the week's releases
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "server/plugins/**"
+      - "scripts/check-store-apis.mjs"
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm run check:store-apis

@@ -19,7 +19,10 @@ Three habits follow, and they are the difference between an agent that
 guesses and one that knows.
 
 1. **Never verify with a screenshot.** Use `assert`. A screenshot cannot
-   show a request that failed silently or a promise that rejected.
+   show a request that failed silently or a promise that rejected, and it
+   bills about a megabyte of context to not show them. The hub counts
+   those bytes, says so on the second capture taken with nothing asserted
+   in between, and can have `screenshot_native` switched off entirely.
 2. **Never sleep.** Use `wait_for_event`. Sleeping is a race you lose on
    a slow machine and waste time on a fast one.
 3. **Never grep the repo for a component you can see.** Every node carries
@@ -99,6 +102,8 @@ without walking any screen at all.
 | Make this repeatable | `freeze_time`, `mock_network`, `set_state` |
 | Turn what I just did into a test | `start_recording`, `export_flow` |
 | Is it usable with a screen reader? | `audit_accessibility` |
+| Did the build I uploaded finish processing? | `asc_list_builds` |
+| Where is the version in review, what is production serving? | `asc_list_versions`, `gplay_list_tracks` |
 
 ## Chains that matter
 
@@ -163,11 +168,30 @@ flickers, that is why; use `set_animations` on Android.
 start_recording  name: "checkout"
 ... drive the app with ui_act ...
 stop_recording
-export_flow      format: "mcp"
+save_flow        path: "checkout.hubflow"
+run_flow         path: "tests/hub/checkout.hubflow"
 ```
 
 Each action comes back paired with what it caused. If `clean: false`, the
 recording captured a failure: fix it before treating it as a test.
+
+The saved file is versioned in Git. Reports and selected screenshots stay
+under `.rn-devtools/flows/runs`. By default the runner captures the starting
+state, marked important steps, the validated final state and the exact
+failure state. It does not capture every step.
+
+For a sensitive type action, pass `recordAs: "TEST_PASSWORD"`. The live
+value reaches the app, while the recording keeps only `${TEST_PASSWORD}`.
+The recorder refuses recognized password, OTP, token and secure text targets
+without that variable. Pass the native `target` from `list_targets` to
+`run_flow` when screenshots are enabled. `RN_DEVTOOLS_SCREENSHOTS=off`
+disables these captures too.
+
+When a replay reports `target-mismatch`, inspect its bounded candidates.
+`propose_flow_repair` writes a sibling `.candidate.hubflow` only when the
+testID matches, or the component and source file together prove strong
+identity. It never edits the original flow or changes an assertion to make a
+regression pass.
 
 ### Investigate after the fact
 
@@ -191,6 +215,25 @@ The answer names the component that owns the changed region, with its
 source file, and what the bus recorded since the baseline. Not a
 percentage: a diagnosis.
 
+### Check where a release stands
+
+```
+asc_list_builds                     is the build usable yet
+asc_list_versions                   where the submission stands
+gplay_list_tracks                   what production is actually serving
+```
+
+These read the stores, not the app, so they need no device and answer
+things the runtime cannot know: a build stuck in `PROCESSING`, a version
+still `WAITING_FOR_REVIEW`, a staged rollout parked at 10%. They exist only
+when their plugin is configured; `list_plugins` says which ones are, what
+the others are missing, and every host they contact.
+
+The same plugins also DRIVE a release (`asc_distribute_build`,
+`asc_submit_for_review`, `gplay_promote_release`, `gplay_update_track`).
+That is a separate skill, `rn-devtools-release`, installed alongside this
+one: read it before shipping anything.
+
 ## Reading failures
 
 | Symptom | What it actually means |
@@ -208,6 +251,9 @@ percentage: a diagnosis.
 | `assert` fails with an empty `evidence` | The window was wrong. Pass `since` from a cursor taken before the action |
 | `source` is `null` everywhere | Production build, or a React version without dev bookkeeping |
 | `audit_accessibility` returns `conclusive: false` | One of the two trees came back empty; the report is not a clean bill of health |
+| A screenshot answers with a `note` about assert | This is the second capture with nothing asserted between them. The note is not decoration: the step being checked has an `assert` kind that proves it |
+| An `asc_*` or `gplay_*` tool is nowhere in the tool list | Its plugin has no credentials, so it exposes nothing. `list_plugins` names the keys it wants; the hub reads them once, at startup, so it must be restarted afterwards |
+| The `asc_*` reads exist but nothing writes | Writes are switched off for this hub (`RN_DEVTOOLS_PLUGIN_WRITES`). Say so instead of looking for another way in |
 
 ## Writing or editing the glue file
 
@@ -222,7 +268,11 @@ for `devtools.emitRaw(type, payload)` directly.
 ## What not to do
 
 - Do not take a screenshot to check a result. `assert` is faster, cheaper
-  and sees what pixels cannot.
+  and sees what pixels cannot. Pixels are for a question that is genuinely
+  visual, and `compare_snapshot` answers that one with a diagnosis rather
+  than an image. If `screenshot_native` does not exist in this session, it
+  was switched off deliberately (`RN_DEVTOOLS_SCREENSHOTS`): prove the step
+  another way rather than looking for a route around it.
 - Do not use `tap_native` or `swipe_native` unless a native dialog is
   genuinely in the way, or unless the gesture itself is what you are
   testing (a Swipeable, a pan handler): both are coordinate-based and

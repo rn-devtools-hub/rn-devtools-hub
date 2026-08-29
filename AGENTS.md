@@ -82,6 +82,28 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
   would contradict the argument printed on the box.
 - Sessions and baselines are written under `.rn-devtools/` in the host
   project, which is gitignored and never committed.
+- Plugins are the only code here that talks to anything off the machine.
+  A plugin declares the hosts it will contact, they are printed in the
+  banner and returned by list_plugins, and a plugin with no credentials
+  exposes NO tool: an agent does not pay context for a tool it cannot call.
+  Secrets resolve at startup and stay in the process; what is reported is
+  that a value is set and where it came from, never the value.
+- A plugin does not reimplement a vendor API and does not wrap a CLI that
+  does: it calls the vendor's own REST endpoints with the vendor's own
+  auth, and the generic *_request tools keep everything else one call
+  away. The price is drift, so a plugin DECLARES what it depends on in an
+  exported CONTRACT (endpoints, fields, and why for each) and
+  `npm run check:store-apis` verifies it against the specifications the
+  vendors publish (Apple's OpenAPI document, Google's discovery
+  document). Weekly in CI and on any PR touching server/plugins. A spec
+  that cannot be downloaded is skipped, not reported as drift.
+- A plugin tool that CHANGES something lives in writeTools and must carry
+  {readOnlyHint:false, destructiveHint:true}, or the plugin is refused
+  whole. Those flags are what an MCP client reads to decide whether to ask
+  the human. Writes ship enabled, and the switch removes the tools rather
+  than making them refuse: an agent never plans a step that does not exist.
+- The skill lives in TWO trees and a packaging test asserts every skill is
+  byte-identical between them. Adding one means adding it to both.
 - Credentials are removed BEFORE they leave the device, headers and bodies
   alike, by name and by shape, and what was removed is named in the event.
   Anything the hub holds can end up in a model's context window, and
@@ -104,6 +126,15 @@ Read CONTRIBUTING.md first. The invariants that must never be broken:
 - No action path may swallow a missing method. A `callNative` that returns
   void hides both the absent method and the exception; on an action it must
   report failure, and the command must turn that into an explicit error.
+- A screenshot is the weakest proof available here and the most expensive
+  answer to read. `assert` exists for the three things pixels cannot show
+  (a request that failed silently, a rejected promise, a value that never
+  reached the field) and compare_snapshot answers the visual question with
+  a diagnosis. The hub counts pixel bytes separately, says so on the
+  SECOND capture taken with no assertion in between, and
+  RN_DEVTOOLS_SCREENSHOTS=off or =<n> removes or budgets screenshot_native
+  outright. Off REMOVES the tool: a switched-off capability must not be
+  something an agent discovers halfway through a plan.
 - A tool that answers `ok:false` is returned as an MCP error (`isError`),
   payload intact. A declared refusal that arrives looking like a result is
   invisible to a client that only reads the status, which is the same
@@ -127,6 +158,7 @@ Full validation commands:
 
 ```bash
 npm run typecheck && npm test && npm run build
+npm run check:store-apis   # plugins only: are Apple's and Google's APIs still what the contracts say
 perl -ne 'print if /<script>/../<\/script>/' server/dashboard.html \
   | grep -v "^<script>$" | grep -v "^</script>$" > /tmp/dash.js && node --check /tmp/dash.js
 RN_DEVTOOLS_TOKEN=dev bun server/server.mjs &  # then curl the dashboard and /mcp
@@ -197,6 +229,31 @@ only). Tools:
   between what React renders and what accessibility exposes).
 - Build: build_app delegates to expo run / eas build and streams the
   failures onto the same bus as the crashes.
+- Store assets: capture_store_screenshots drives the app through a
+  manifest (devices from list_targets, locales via a dev action, screens
+  via nav:*) and writes the captures to disk at native resolution. The
+  images NEVER enter the answer, so it costs no context and does not touch
+  the RN_DEVTOOLS_SCREENSHOTS budget, which is about verifying. Nothing is
+  resized: an unrecognised size is reported rather than uploaded as the
+  wrong device class. asc_upload_screenshots and gplay_upload_screenshots
+  read the index it writes.
+- Plugins (the services around the app, not the app): list_plugins says
+  which ones exist, whether they are configured, which tools CHANGE
+  something, whether writes are enabled, and every host they will contact.
+  Configured ones add their tools, unconfigured ones add none. App Store
+  Connect reads (asc_list_builds, asc_list_versions, asc_list_beta_groups,
+  asc_list_apps, asc_request) and drives (asc_set_whats_new,
+  asc_distribute_build, asc_expire_build, asc_prepare_version,
+  asc_submit_for_review, asc_release_version, asc_phased_release,
+  asc_write_request). Google Play reads (gplay_list_tracks, gplay_get_track,
+  gplay_list_artifacts, gplay_list_reviews, gplay_request) and drives
+  (gplay_update_track, gplay_promote_release, gplay_reply_review,
+  gplay_write_request). Every mutating tool carries destructiveHint and
+  disappears entirely under RN_DEVTOOLS_PLUGIN_WRITES=off (or
+  RN_DEVTOOLS_<ID>_WRITES). Credentials come from env vars or
+  .rn-devtools/plugins.json, are read once at startup (configure, then
+  RESTART the hub) and are never returned. The rn-devtools-release skill
+  ships with the plugin and teaches the release loop. See docs/plugins.md.
 - Event flow: get_events_since (cursor-based polling without missing
   events), wait_for_event (blocks until a matching event, e.g.
   `screen.ready` after `devtools.markScreenReady()` or a
@@ -209,7 +266,8 @@ only). Tools:
   `hideDevMenuFab` so the expo-dev-menu bubble stops covering the native
   controls in the top corner: it lives in its own window, so no UI tree
   ever shows it), terminate_app, open_url, screenshot_native (pixels,
-  complements the tree), tap_native and swipe_native (last resort, and the
+  complements the tree, and the answer says what it cost: use assert to
+  VERIFY, not this), tap_native and swipe_native (last resort, and the
   only way to exercise a real gesture: adb / AXe / idb), boot_device,
   shutdown_device,
   set_location (simulated GPS), set_animations (Android determinism),

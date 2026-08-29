@@ -26,6 +26,7 @@ import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
+import { HUBFLOW_TOOLS, durableFlowFromRecorded, listHubflowCatalog, proposeHubflowRepair, readHubflow, resolveHubflowArtifact, runHubflow, writeHubflow } from "./hubflow.mjs";
 import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
 import { STORE_SHOT_TOOL, captureStoreScreenshots } from "./storeshots.mjs";
 import { createToolLog, recordToolCall, summarizeTools, readEmptiness, readScreenshotPolicy, screenshotAdvice, PIXEL_TOOLS } from "./tools.mjs";
@@ -219,6 +220,8 @@ let nextDeviceId = 1;
 // second concurrent recording would interleave two intents into one
 // unusable script
 const recorder = createRecorder();
+const activeFlowRuns = new Map();
+const flowRunReservations = new Set();
 
 // Re-read on every request: UI changes are visible with a simple
 // browser refresh, without restarting the hub
@@ -312,6 +315,42 @@ const isLocalRequest = (request, bunServer) => {
 };
 
 const hasValidToken = (url) => url.searchParams.get("token") === HUB_TOKEN;
+const hasLocalOrigin = (request) => {
+  const origin = request.headers.get("origin");
+  return !origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+};
+
+const flowNameForPath = (name) => String(name ?? "flow")
+  .replace(/[^a-z0-9._-]+/gi, "-").replace(/^-|-$/g, "") || "flow";
+
+const resolveFlowVariables = (value) => {
+  if (typeof value === "string") {
+    const match = /^\$\{([A-Z][A-Z0-9_]{1,63})\}$/.exec(value);
+    if (!match) return value;
+    const resolved = process.env[match[1]];
+    if (resolved === undefined) throw new Error(`Hubflow environment variable ${match[1]} is not set`);
+    return resolved;
+  }
+  if (Array.isArray(value)) return value.map(resolveFlowVariables);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolveFlowVariables(entry)]));
+  }
+  return value;
+};
+
+const flowCatalogForDashboard = async () => {
+  const flows = await listHubflowCatalog(PROJECT_ROOT);
+  return flows.map((flow) => {
+    const run = activeFlowRuns.get(flow.path) ?? flow.lastRun;
+    if (!run) return flow;
+    const flowName = flowNameForPath(flow.name);
+    const artifacts = (run.artifacts ?? []).map((artifact) => ({
+      ...artifact,
+      url: `/flows/artifact?flowName=${encodeURIComponent(flowName)}&runId=${encodeURIComponent(run.runId)}&file=${encodeURIComponent(artifact.path)}&token=${encodeURIComponent(HUB_TOKEN)}`,
+    }));
+    return { ...flow, lastRun: { ...run, artifacts, visualEvidence: artifacts } };
+  });
+};
 
 /**
  * Who may open the device WebSocket.
@@ -709,6 +748,7 @@ const MCP_TOOLS = [
   ASSERT_TOOL,
   ...SESSION_TOOLS,
   ...FLOW_TOOLS,
+  ...HUBFLOW_TOOLS,
   ...VISUAL_TOOLS,
   ...A11Y_TOOLS,
   BUILD_TOOL,
@@ -884,6 +924,9 @@ const handleMcpTool = async (name, args = {}) => {
     };
   }
   if (name === "list_plugins") return pluginHost.describe();
+  if (name === "list_flows") return { flows: await listHubflowCatalog(PROJECT_ROOT) };
+  if (name === "get_flow") return { path: args.path, flow: await readHubflow(PROJECT_ROOT, args.path) };
+  if (name === "propose_flow_repair") return proposeHubflowRepair(PROJECT_ROOT, args.path, args);
   // Plugins reach the services around the app (stores, release APIs), so
   // like the native tools they need no connected JS device
   if (pluginHost.owns(name)) return pluginHost.handle(name, args);
@@ -952,6 +995,49 @@ const handleMcpTool = async (name, args = {}) => {
   }
   const [deviceId, device] = pickDevice(args.deviceId);
   if (!device) throw new Error("No device available");
+  if (name === "save_flow") {
+    if (!recorder.acts.length) throw new Error("Nothing recorded: call start_recording, drive the app, then stop_recording");
+    if (recorder.active) throw new Error("Recording is still active: call stop_recording before save_flow");
+    const recorded = buildFlow(recorder, device.history);
+    if (!recorded.clean) throw new Error("The recording contains a failure and cannot become a regression scenario");
+    const flow = durableFlowFromRecorded(recorded, {
+      description: args.description,
+      finalCursor: recorder.endCursor,
+      visualEvidence: {
+        screenshots: args.screenshotPolicy ?? "important-and-failure",
+        final: true,
+      },
+    });
+    return writeHubflow(PROJECT_ROOT, args.path, flow);
+  }
+  if (name === "run_flow") {
+    if (activeFlowRuns.has(args.path)) {
+      return { ok: false, reason: "flow-already-running", path: args.path, run: activeFlowRuns.get(args.path) };
+    }
+    const flow = await readHubflow(PROJECT_ROOT, args.path);
+    activeFlowRuns.set(args.path, { status: "running", steps: [], startedAt: Date.now() });
+    try {
+      const result = await runHubflow(flow, {
+        projectRoot: PROJECT_ROOT,
+        invoke: (tool, toolArgs) => handleMcpTool(tool, { ...resolveFlowVariables(toolArgs), deviceId }),
+        onProgress: (run) => {
+          activeFlowRuns.set(args.path, run);
+          broadcastToDashboards({ kind: "flow.progress", path: args.path, run });
+        },
+        capture: async ({ path }) => {
+          const shot = await screenshotNative({ target: args.target });
+          const bytes = Buffer.from(shot.__mcpImage.data, "base64");
+          writeFileSync(path, bytes);
+          const decoded = decodePng(bytes);
+          return { target: shot.target, mimeType: "image/png", width: decoded.width, height: decoded.height };
+        },
+      });
+      broadcastToDashboards({ kind: "flow.finished", path: args.path, run: result });
+      return result;
+    } finally {
+      activeFlowRuns.delete(args.path);
+    }
+  }
   if (name === "get_app_info") {
     const info = eventsOfType(device, ["app.info", "net.info"], 100);
     return { device: deviceSummary([deviceId, device]), events: info };
@@ -1404,9 +1490,63 @@ const startServer = (port) => serve({
     const url = new URL(request.url);
     if (url.pathname === "/mcp") return handleMcpRequest(request, bunServer);
 
-    // Design, Mirror, Native, Project, Tools and Plugin endpoints: protected by the hub token
-    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/") || url.pathname.startsWith("/tools/") || url.pathname.startsWith("/plugins/")) {
+    // Dashboard data and actions are protected by the hub token
+    if (url.pathname === "/flows" || url.pathname.startsWith("/flows/") || url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/") || url.pathname.startsWith("/tools/") || url.pathname.startsWith("/plugins/")) {
       if (!hasValidToken(url)) return jsonResponse({ error: "Invalid token" }, 401);
+
+      if (url.pathname === "/flows" && request.method === "GET") {
+        return jsonResponse({ flows: await flowCatalogForDashboard() });
+      }
+      if (url.pathname === "/flows/run" && request.method === "POST") {
+        if (!hasLocalOrigin(request)) return jsonResponse({ error: "Origin rejected" }, 403);
+        let body;
+        try { body = await request.json(); } catch { return jsonResponse({ error: "Invalid JSON body" }, 400); }
+        if (activeFlowRuns.has(body.path) || flowRunReservations.has(body.path)) {
+          return jsonResponse({ error: "Flow already running" }, 409);
+        }
+        const [, selected] = pickDevice(body.deviceId);
+        if (!selected) return jsonResponse({ error: "No device available" }, 422);
+        try { await readHubflow(PROJECT_ROOT, body.path); } catch (error) {
+          return jsonResponse({ error: String(error?.message ?? error) }, 422);
+        }
+        flowRunReservations.add(body.path);
+        handleMcpTool("run_flow", body)
+          .catch((error) => {
+            const run = { ok: false, status: "failed", reason: "runner-error", message: String(error?.message ?? error), finishedAt: Date.now() };
+            broadcastToDashboards({ kind: "flow.finished", path: body.path, run });
+          })
+          .finally(() => flowRunReservations.delete(body.path));
+        return jsonResponse({ ok: true, status: "running", path: body.path }, 202);
+      }
+      if (url.pathname === "/flows/repair" && request.method === "POST") {
+        if (!hasLocalOrigin(request)) return jsonResponse({ error: "Origin rejected" }, 403);
+        let body;
+        try { body = await request.json(); } catch { return jsonResponse({ error: "Invalid JSON body" }, 400); }
+        try {
+          return jsonResponse(await proposeHubflowRepair(PROJECT_ROOT, body.path, body));
+        } catch (error) {
+          return jsonResponse({ error: String(error?.message ?? error) }, 422);
+        }
+      }
+      if (url.pathname === "/flows/artifact" && request.method === "GET") {
+        try {
+          const file = await resolveHubflowArtifact(
+            PROJECT_ROOT,
+            url.searchParams.get("flowName"),
+            url.searchParams.get("runId"),
+            url.searchParams.get("file"),
+          );
+          return new Response(readFileSync(file), {
+            headers: {
+              "Content-Type": "image/png",
+              "Cache-Control": "no-store",
+              "X-Content-Type-Options": "nosniff",
+            },
+          });
+        } catch (error) {
+          return jsonResponse({ error: String(error?.message ?? error) }, 404);
+        }
+      }
 
       if (url.pathname === "/native/targets") return jsonResponse(await listTargets());
       if (url.pathname === "/native/logs") {
@@ -1491,7 +1631,7 @@ const startServer = (port) => serve({
     }
     // Static dashboard
     return new Response(readDashboard(), {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: { "Content-Type": "text/html; charset=utf-8", "Referrer-Policy": "no-referrer" },
     });
   },
 

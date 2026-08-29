@@ -57,6 +57,14 @@ describe("recorded flow conversion", () => {
 });
 
 describe("hubflow execution", () => {
+  it("keeps homonymous scenario reports in separate directories", async () => {
+    const root = await project();
+    const flow = sample({ visualEvidence: { screenshots: "off" } });
+    const first = await hubflow.runHubflow(flow, { projectRoot: root, flowPath: "tests/hub/a.hubflow", runId: "same", invoke: async () => ({ ok: true }) });
+    const second = await hubflow.runHubflow(flow, { projectRoot: root, flowPath: "tests/hub/b.hubflow", runId: "same", invoke: async () => ({ ok: true }) });
+    expect(first.storageKey).not.toBe(second.storageKey);
+  });
+
   it("runs setup, action, expectations and teardown with readable reports and selected captures", async () => {
     const root = await project();
     const calls: string[] = [];
@@ -67,7 +75,7 @@ describe("hubflow execution", () => {
     expect(report.status).toBe("passed");
     expect(report.steps[0].status).toBe("passed");
     expect(captures).toEqual(["start", "step", "final"]);
-    expect(JSON.parse(await readFile(join(root, ".rn-devtools/flows/runs/checkout/run-1/report.json"), "utf8")).status).toBe("passed");
+    expect(JSON.parse(await readFile(join(root, ".rn-devtools/flows/runs", report.storageKey, "run-1/report.json"), "utf8")).status).toBe("passed");
   });
 
   it("captures failures, classifies selector drift, records previous successful evidence and always tears down", async () => {
@@ -113,6 +121,7 @@ describe("hubflow execution", () => {
     await hubflow.writeHubflow(root, "checkout.hubflow", flow);
     await hubflow.runHubflow(flow, {
       projectRoot: root,
+      flowPath: "checkout.hubflow",
       runId: "repair-run",
       invoke: async () => ({
         ok: false,
@@ -142,12 +151,47 @@ describe("hubflow execution", () => {
     }
   });
 
+  it("takes no screenshot for a successful failure-only run", async () => {
+    const root = await project();
+    let captures = 0;
+    const report = await hubflow.runHubflow(sample({ visualEvidence: { screenshots: "failure-only", final: true } }), {
+      projectRoot: root,
+      invoke: async () => ({ ok: true }),
+      capture: async () => { captures += 1; },
+    });
+    expect(report.ok).toBe(true);
+    expect(captures).toBe(0);
+  });
+
+  it("fails and captures when teardown cannot restore the environment", async () => {
+    const root = await project();
+    const captures: string[] = [];
+    const report = await hubflow.runHubflow(sample({
+      teardown: [{ tool: "restore_time", arguments: {} }],
+      visualEvidence: { screenshots: "failure-only", final: true },
+    }), {
+      projectRoot: root,
+      invoke: async (tool: string) => {
+        if (tool === "restore_time") throw new Error("restore failed");
+        return { ok: true };
+      },
+      capture: async ({ kind }: any) => { captures.push(kind); },
+    });
+    expect(report.ok).toBe(false);
+    expect(report.reason).toBe("teardown-failed");
+    expect(captures).toEqual(["failure"]);
+  });
+
   it("prunes older run directories according to retention", async () => {
     const root = await project();
-    for (const runId of ["one", "two", "three"]) await hubflow.runHubflow(sample({ visualEvidence: { screenshots: "off" }, retention: { runs: 2 } }), { projectRoot: root, runId, invoke: async () => ({ ok: true }) });
+    let storageKey = "";
+    for (const runId of ["one", "two", "three"]) {
+      const report = await hubflow.runHubflow(sample({ visualEvidence: { screenshots: "off" }, retention: { runs: 2 } }), { projectRoot: root, runId, invoke: async () => ({ ok: true }) });
+      storageKey = report.storageKey;
+    }
     const entries = await hubflow.listHubflows(root);
     expect(entries).toEqual([]);
-    const dirs = await import("node:fs/promises").then((fs) => fs.readdir(join(root, ".rn-devtools/flows/runs/checkout")));
+    const dirs = await import("node:fs/promises").then((fs) => fs.readdir(join(root, ".rn-devtools/flows/runs", storageKey)));
     expect(dirs).toHaveLength(2);
   });
 });

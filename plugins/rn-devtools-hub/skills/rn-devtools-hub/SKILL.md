@@ -168,11 +168,30 @@ flickers, that is why; use `set_animations` on Android.
 start_recording  name: "checkout"
 ... drive the app with ui_act ...
 stop_recording
-export_flow      format: "mcp"
+save_flow        path: "checkout.hubflow"
+run_flow         path: "tests/hub/checkout.hubflow"
 ```
 
 Each action comes back paired with what it caused. If `clean: false`, the
 recording captured a failure: fix it before treating it as a test.
+
+The saved file is versioned in Git. Reports and selected screenshots stay
+under `.rn-devtools/flows/runs`. By default the runner captures the starting
+state, marked important steps, the validated final state and the exact
+failure state. It does not capture every step.
+
+For a sensitive type action, pass `recordAs: "TEST_PASSWORD"`. The live
+value reaches the app, while the recording keeps only `${TEST_PASSWORD}`.
+The recorder refuses recognized password, OTP, token and secure text targets
+without that variable. Pass the native `target` from `list_targets` to
+`run_flow` when screenshots are enabled. `RN_DEVTOOLS_SCREENSHOTS=off`
+disables these captures too.
+
+When a replay reports `target-mismatch`, inspect its bounded candidates.
+`propose_flow_repair` writes a sibling `.candidate.hubflow` only when the
+testID matches, or the component and source file together prove strong
+identity. It never edits the original flow or changes an assertion to make a
+regression pass.
 
 ### Investigate after the fact
 

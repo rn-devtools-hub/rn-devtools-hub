@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInit } from "../src/cli/init.mjs";
 import { runStdioBridge } from "../src/cli/stdio.mjs";
+import { runFlowCommand } from "../src/cli/run-flow.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const [command, ...rest] = process.argv.slice(2);
@@ -25,6 +26,7 @@ if (command === "--help" || command === "-h" || command === "help") {
     npx rn-devtools-hub            Start the hub, prints the dashboard URL
     npx rn-devtools-hub mcp        Speak MCP over stdio (bridges to the hub)
     npx rn-devtools-hub init       Wire the SDK into this project
+    npx rn-devtools-hub run <file> Run a .hubflow scenario on the connected app
       --dry-run                    Show what would change, write nothing
       --force                      Regenerate the glue file if it exists
       --port <number>              Hub port to write into the glue (default 8973)
@@ -60,6 +62,15 @@ if (command === "mcp") {
     process.exit(0);
   } catch (error) {
     console.error(`rn-devtools-hub mcp: ${error?.message ?? error}`);
+    process.exit(1);
+  }
+}
+
+if (command === "run") {
+  try {
+    process.exit(await runFlowCommand(rest));
+  } catch (error) {
+    console.error(`rn-devtools-hub run: ${error?.message ?? error}`);
     process.exit(1);
   }
 }

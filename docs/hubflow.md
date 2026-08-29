@@ -30,7 +30,9 @@ ui_act action: "type", by: "placeholder", value: "Password",
 ```
 
 The live app receives the value, but the recording stores only
-`${TEST_PASSWORD}`. Set that environment variable before replay.
+`${TEST_PASSWORD}`. Set that environment variable before replay. Recording
+refuses password, OTP, token and React Native secure text targets without
+`recordAs`, so those values cannot silently enter a versioned scenario.
 
 ## File format
 
@@ -98,6 +100,10 @@ From an MCP client:
 ```text
 run_flow path: "tests/hub/checkout.hubflow"
 ```
+
+Pass the native `target` returned by `list_targets` when screenshots are
+enabled. This keeps the visual proof on the same simulator or device chosen
+for the scenario. `RN_DEVTOOLS_SCREENSHOTS=off` disables Hubflow captures too.
 
 From a terminal or CI job while the app is connected:
 

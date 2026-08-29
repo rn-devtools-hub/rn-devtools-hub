@@ -484,6 +484,8 @@
   }
   .tests-run:active { transform:scale(.97); }
   .tests-run:disabled { opacity:.45; cursor:not-allowed; }
+  .tests-controls { display:flex; align-items:center; gap:8px; }
+  .tests-controls select { max-width:230px; }
   .tests-layout { display:grid; grid-template-columns:minmax(250px, 340px) minmax(0, 1fr); gap:14px; align-items:start; }
   .tests-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
   .tests-list { max-height:calc(100vh - 230px); overflow:auto; }
@@ -532,7 +534,7 @@
     .tests-layout { grid-template-columns:1fr; }
     .tests-list { max-height:280px; }
     .tests-head { align-items:stretch; flex-direction:column; }
-    .tests-run { align-self:flex-start; }
+    .tests-controls { align-self:flex-start; flex-wrap:wrap; }
   }
 </style>
 </head>
@@ -736,7 +738,10 @@
     <section class="panel" id="panel-tests">
       <div class="tests-head">
         <div><h2>Tests</h2><p>Readable scenarios, verified outcomes and visual evidence.</p></div>
-        <button class="tests-run" id="testsRun" disabled>Run selected</button>
+        <div class="tests-controls">
+          <select id="testsTarget" aria-label="Native screenshot target"><option value="">Select screenshot target</option></select>
+          <button class="tests-run" id="testsRun" disabled>Run selected</button>
+        </div>
       </div>
       <div class="tiles" id="testTiles"></div>
       <div class="tests-layout">
@@ -1288,12 +1293,12 @@
     if (button.dataset.tab === "tools") pollToolStats();
     // Plugins: read once per visit, they are resolved at hub startup
     if (button.dataset.tab === "plugins") pollPlugins();
-    if (button.dataset.tab === "tests") loadTests();
+    if (button.dataset.tab === "tests") { loadTestTargets(); loadTests(); }
     scheduleRender();
   });
 
   // ---------- Tests: human-readable .hubflow scenarios ----------
-  const testsState = { flows: [], runs: [], selectedPath: "", loading: false, error: "" };
+  const testsState = { flows: [], runs: [], targets: [], selectedPath: "", loading: false, error: "" };
   const testStatus = (run) => {
     const value = String(run?.status ?? run?.result ?? "not-run").toLowerCase();
     if (["pass", "passed", "success", "succeeded"].includes(value)) return "passed";
@@ -1402,7 +1407,8 @@
     const measuredDuration = run?.durationMs ?? (run?.finishedAt && run?.startedAt ? run.finishedAt - run.startedAt : null);
     const duration = measuredDuration != null ? `${measuredDuration} ms` : "Not available";
     const when = run?.startedAt ?? run?.createdAt;
-    $("testsRun").disabled = status === "running" || !state.selectedDevice;
+    const needsTarget = (flow.visualEvidence?.screenshots ?? "important-and-failure") !== "off";
+    $("testsRun").disabled = status === "running" || !state.selectedDevice || (needsTarget && !$("testsTarget").value);
     $("testsRun").textContent = status === "running" ? "Running" : "Run selected";
     $("testsDetail").innerHTML = `<div class="test-detail">
       <div class="test-detail-head"><div><h2>${esc(flow.name ?? flow.path)}</h2><div class="test-path">${esc(flow.path)}</div>
@@ -1437,6 +1443,21 @@
     finally { testsState.loading = false; renderTests(); }
   };
 
+  const loadTestTargets = async () => {
+    try {
+      const response = await fetch(`/native/targets?token=${encodeURIComponent(hubToken)}`);
+      const data = await response.json();
+      testsState.targets = (data.targets ?? []).filter((target) => target.state === "ready");
+      const previous = $("testsTarget").value;
+      $("testsTarget").innerHTML = `<option value="">Select screenshot target</option>${testsState.targets.map((target) => `<option value="${esc(target.target)}">${esc(target.name ?? target.target)} (${esc(target.platform)})</option>`).join("")}`;
+      if (testsState.targets.some((target) => target.target === previous)) $("testsTarget").value = previous;
+      else if (testsState.targets.length === 1) $("testsTarget").value = testsState.targets[0].target;
+      renderTests();
+    } catch {
+      testsState.targets = [];
+    }
+  };
+
   $("testsList").addEventListener("click", (event) => {
     const row = event.target.closest("[data-test-path]");
     if (!row) return;
@@ -1449,7 +1470,7 @@
     try {
       const response = await fetch(`/flows/run?token=${encodeURIComponent(hubToken)}`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: testsState.selectedPath, deviceId: state.selectedDevice }),
+        body: JSON.stringify({ path: testsState.selectedPath, deviceId: state.selectedDevice, target: $("testsTarget").value || undefined }),
       });
       if (!response.ok) throw new Error(`Run could not start, status ${response.status}.`);
       await response.json().catch(() => ({}));
@@ -1462,6 +1483,7 @@
       }, 1000);
     } catch (error) { testsState.error = error.message; renderTests(); }
   });
+  $("testsTarget").addEventListener("change", renderTests);
   $("testsDetail").addEventListener("click", async (event) => {
     const button = event.target.closest("[data-repair-index]");
     if (!button || !testsState.selectedPath) return;

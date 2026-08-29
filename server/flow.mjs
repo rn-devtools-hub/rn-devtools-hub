@@ -78,9 +78,27 @@ const recordedText = (entry) => {
   return `\${${name}}`;
 };
 
+const SENSITIVE_TARGET = /pass(word|code)?|otp|one.?time|secret|token|pin|cvv|cvc/i;
+
+export const needsRecordedVariable = (entry) => {
+  if (entry?.action !== "type" || entry.recordAs) return false;
+  const selector = entry.selector ?? {};
+  const target = entry.target ?? {};
+  if (target.secureTextEntry === true || target.props?.secureTextEntry === true) return true;
+  return [
+    selector.value, selector.name, selector.within?.value, selector.within?.name,
+    target.testID, target.name, target.placeholder, target.props?.testID,
+    target.props?.placeholder, target.props?.accessibilityLabel,
+  ]
+    .some((value) => typeof value === "string" && SENSITIVE_TARGET.test(value));
+};
+
 /** Called by the hub after every successful ui_act while recording */
 export const recordAct = (recorder, entry) => {
   if (!recorder.active) return;
+  if (needsRecordedVariable(entry)) {
+    throw new Error("Sensitive type actions require recordAs while recording");
+  }
   recorder.acts.push({
     action: entry.action,
     selector: entry.selector,

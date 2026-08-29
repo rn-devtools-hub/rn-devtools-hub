@@ -25,8 +25,8 @@ import { upgradeTreeSources, upgradeSource, isLocalNetwork } from "./symbolicate
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
-import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
-import { HUBFLOW_TOOLS, durableFlowFromRecorded, listHubflowCatalog, proposeHubflowRepair, readHubflow, resolveHubflowArtifact, runHubflow, writeHubflow } from "./hubflow.mjs";
+import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, needsRecordedVariable, renderFlowText, renderFlowMcp } from "./flow.mjs";
+import { HUBFLOW_TOOLS, durableFlowFromRecorded, listHubflowCatalog, proposeHubflowRepair, readHubflow, resolveHubflowArtifact, resolveHubflowPath, runHubflow, writeHubflow } from "./hubflow.mjs";
 import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
 import { STORE_SHOT_TOOL, captureStoreScreenshots } from "./storeshots.mjs";
 import { createToolLog, recordToolCall, summarizeTools, readEmptiness, readScreenshotPolicy, screenshotAdvice, PIXEL_TOOLS } from "./tools.mjs";
@@ -341,12 +341,12 @@ const resolveFlowVariables = (value) => {
 const flowCatalogForDashboard = async () => {
   const flows = await listHubflowCatalog(PROJECT_ROOT);
   return flows.map((flow) => {
-    const run = activeFlowRuns.get(flow.path) ?? flow.lastRun;
+    const run = activeFlowRuns.get(resolveHubflowPath(PROJECT_ROOT, flow.path)) ?? flow.lastRun;
     if (!run) return flow;
-    const flowName = flowNameForPath(flow.name);
+    const flowKey = run.storageKey ?? flowNameForPath(flow.name);
     const artifacts = (run.artifacts ?? []).map((artifact) => ({
       ...artifact,
-      url: `/flows/artifact?flowName=${encodeURIComponent(flowName)}&runId=${encodeURIComponent(run.runId)}&file=${encodeURIComponent(artifact.path)}&token=${encodeURIComponent(HUB_TOKEN)}`,
+      url: `/flows/artifact?flowKey=${encodeURIComponent(flowKey)}&runId=${encodeURIComponent(run.runId)}&file=${encodeURIComponent(artifact.path)}&token=${encodeURIComponent(HUB_TOKEN)}`,
     }));
     return { ...flow, lastRun: { ...run, artifacts, visualEvidence: artifacts } };
   });
@@ -1011,20 +1011,23 @@ const handleMcpTool = async (name, args = {}) => {
     return writeHubflow(PROJECT_ROOT, args.path, flow);
   }
   if (name === "run_flow") {
-    if (activeFlowRuns.has(args.path)) {
-      return { ok: false, reason: "flow-already-running", path: args.path, run: activeFlowRuns.get(args.path) };
+    const runKey = resolveHubflowPath(PROJECT_ROOT, args.path);
+    if (activeFlowRuns.has(runKey)) {
+      return { ok: false, reason: "flow-already-running", path: args.path, run: activeFlowRuns.get(runKey) };
     }
     const flow = await readHubflow(PROJECT_ROOT, args.path);
-    activeFlowRuns.set(args.path, { status: "running", steps: [], startedAt: Date.now() });
+    activeFlowRuns.set(runKey, { status: "running", steps: [], startedAt: Date.now() });
     try {
       const result = await runHubflow(flow, {
         projectRoot: PROJECT_ROOT,
+        flowPath: args.path,
         invoke: (tool, toolArgs) => handleMcpTool(tool, { ...resolveFlowVariables(toolArgs), deviceId }),
         onProgress: (run) => {
-          activeFlowRuns.set(args.path, run);
+          activeFlowRuns.set(runKey, run);
           broadcastToDashboards({ kind: "flow.progress", path: args.path, run });
         },
-        capture: async ({ path }) => {
+        capture: SCREENSHOT_POLICY.mode === "off" ? undefined : async ({ path }) => {
+          if (!args.target) throw new Error("Pass a native target to capture Hubflow visual evidence");
           const shot = await screenshotNative({ target: args.target });
           const bytes = Buffer.from(shot.__mcpImage.data, "base64");
           writeFileSync(path, bytes);
@@ -1035,7 +1038,7 @@ const handleMcpTool = async (name, args = {}) => {
       broadcastToDashboards({ kind: "flow.finished", path: args.path, run: result });
       return result;
     } finally {
-      activeFlowRuns.delete(args.path);
+      activeFlowRuns.delete(runKey);
     }
   }
   if (name === "get_app_info") {
@@ -1159,6 +1162,13 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
     const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
     const { deviceId: _ignored, recordAs: _recordAs, ...payload } = args;
+    if (name === "ui_act" && recorder.active && needsRecordedVariable({
+      action: payload.action,
+      selector: { by: payload.by, value: payload.value, name: payload.name, within: payload.within },
+      recordAs: args.recordAs,
+    })) {
+      throw new Error("Sensitive type actions require recordAs while recording");
+    }
 
     /**
      * A UI is asynchronous. query_ui answering "nothing matched" during a
@@ -1501,21 +1511,25 @@ const startServer = (port) => serve({
         if (!hasLocalOrigin(request)) return jsonResponse({ error: "Origin rejected" }, 403);
         let body;
         try { body = await request.json(); } catch { return jsonResponse({ error: "Invalid JSON body" }, 400); }
-        if (activeFlowRuns.has(body.path) || flowRunReservations.has(body.path)) {
-          return jsonResponse({ error: "Flow already running" }, 409);
-        }
         const [, selected] = pickDevice(body.deviceId);
         if (!selected) return jsonResponse({ error: "No device available" }, 422);
-        try { await readHubflow(PROJECT_ROOT, body.path); } catch (error) {
+        let runKey;
+        try {
+          runKey = resolveHubflowPath(PROJECT_ROOT, body.path);
+          await readHubflow(PROJECT_ROOT, body.path);
+        } catch (error) {
           return jsonResponse({ error: String(error?.message ?? error) }, 422);
         }
-        flowRunReservations.add(body.path);
+        if (activeFlowRuns.has(runKey) || flowRunReservations.has(runKey)) {
+          return jsonResponse({ error: "Flow already running" }, 409);
+        }
+        flowRunReservations.add(runKey);
         handleMcpTool("run_flow", body)
           .catch((error) => {
             const run = { ok: false, status: "failed", reason: "runner-error", message: String(error?.message ?? error), finishedAt: Date.now() };
             broadcastToDashboards({ kind: "flow.finished", path: body.path, run });
           })
-          .finally(() => flowRunReservations.delete(body.path));
+          .finally(() => flowRunReservations.delete(runKey));
         return jsonResponse({ ok: true, status: "running", path: body.path }, 202);
       }
       if (url.pathname === "/flows/repair" && request.method === "POST") {
@@ -1532,7 +1546,7 @@ const startServer = (port) => serve({
         try {
           const file = await resolveHubflowArtifact(
             PROJECT_ROOT,
-            url.searchParams.get("flowName"),
+            url.searchParams.get("flowKey"),
             url.searchParams.get("runId"),
             url.searchParams.get("file"),
           );

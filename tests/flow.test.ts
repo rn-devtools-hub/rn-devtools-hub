@@ -137,6 +137,31 @@ describe("recording lifecycle", () => {
       cursor: 0,
     })).toThrow("uppercase environment variable");
   });
+
+  it("refuses to retain a sensitive field without recordAs", () => {
+    const recorder = createRecorder();
+    startRecording(recorder, { cursor: 0 });
+    expect(() => recordAct(recorder, {
+      action: "type",
+      selector: { by: "placeholder", value: "One-time code" },
+      text: "123456",
+      cursor: 0,
+    })).toThrow("require recordAs");
+    expect(JSON.stringify(recorder)).not.toContain("123456");
+  });
+
+  it("refuses a secure text target even with a neutral selector", () => {
+    const recorder = createRecorder();
+    startRecording(recorder, { cursor: 0 });
+    expect(() => recordAct(recorder, {
+      action: "type",
+      selector: { by: "testID", value: "login-field" },
+      target: { props: { secureTextEntry: true } },
+      text: "do-not-store",
+      cursor: 1,
+    })).toThrow("require recordAs");
+    expect(JSON.stringify(recorder)).not.toContain("do-not-store");
+  });
 });
 
 describe("buildFlow", () => {

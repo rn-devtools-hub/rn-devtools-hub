@@ -182,11 +182,16 @@ failure state. It does not capture every step.
 
 For a sensitive type action, pass `recordAs: "TEST_PASSWORD"`. The live
 value reaches the app, while the recording keeps only `${TEST_PASSWORD}`.
+The recorder refuses recognized password, OTP, token and secure text targets
+without that variable. Pass the native `target` from `list_targets` to
+`run_flow` when screenshots are enabled. `RN_DEVTOOLS_SCREENSHOTS=off`
+disables these captures too.
 
 When a replay reports `target-mismatch`, inspect its bounded candidates.
 `propose_flow_repair` writes a sibling `.candidate.hubflow` only when the
-testID, component or source file proves strong identity. It never edits the
-original flow or changes an assertion to make a regression pass.
+testID matches, or the component and source file together prove strong
+identity. It never edits the original flow or changes an assertion to make a
+regression pass.
 
 ### Investigate after the fact
 

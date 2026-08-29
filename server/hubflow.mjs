@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export const HUBFLOW_FORMAT = "rn-devtools-hub/flow";
@@ -201,9 +202,14 @@ const safeSegment = (value, label) => {
   return value;
 };
 
-const latestRunFor = async (projectRoot, flowName) => {
+const flowStorageKey = (flowName, flowPath = "") => {
   const safeName = flowName.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-|-$/g, "") || "flow";
-  const root = resolve(projectRoot, ".rn-devtools/flows/runs", safeName);
+  const suffix = createHash("sha256").update(String(flowPath)).digest("hex").slice(0, 10);
+  return `${safeName}-${suffix}`;
+};
+
+const latestRunFor = async (projectRoot, flowName, flowPath) => {
+  const root = resolve(projectRoot, ".rn-devtools/flows/runs", flowStorageKey(flowName, flowPath));
   let entries;
   try { entries = await readdir(root, { withFileTypes: true }); } catch { return null; }
   const runs = [];
@@ -222,7 +228,7 @@ export const listHubflowCatalog = async (projectRoot) => {
   for (const path of paths) {
     try {
       const flow = await readHubflow(projectRoot, path);
-      flows.push({ path, ...flow, lastRun: await latestRunFor(projectRoot, flow.name) });
+      flows.push({ path, ...flow, lastRun: await latestRunFor(projectRoot, flow.name, path) });
     } catch (error) {
       flows.push({ path, name: path.split("/").pop()?.replace(/\.hubflow$/, "") ?? path, invalid: true, error: String(error?.message ?? error), steps: [] });
     }
@@ -295,7 +301,7 @@ const repairCandidates = (error) => (error?.result?.candidates ?? []).slice(0, 5
 
 export const proposeHubflowRepair = async (projectRoot, file, { stepIndex, candidateIndex }) => {
   const flow = await readHubflow(projectRoot, file);
-  const run = await latestRunFor(projectRoot, flow.name);
+  const run = await latestRunFor(projectRoot, flow.name, file);
   const failed = run?.steps?.[Number(stepIndex)]?.failure;
   if (failed?.classification !== "target-mismatch") throw new Error("The selected step has no target mismatch to repair");
   const candidate = failed.candidates?.[Number(candidateIndex)];
@@ -307,7 +313,7 @@ export const proposeHubflowRepair = async (projectRoot, file, { stepIndex, candi
   const sameTestId = Boolean(candidate.testID) && (current.by === "testID" ? current.value === candidate.testID : evidence.testID === candidate.testID);
   const sameComponent = Boolean(candidate.source?.componentName) && candidate.source.componentName === evidence.source?.componentName;
   const sameFile = Boolean(candidate.source?.file) && candidate.source.file === evidence.source?.file;
-  if (!sameTestId && !sameComponent && !sameFile) {
+  if (!sameTestId && !(sameComponent && sameFile)) {
     throw new Error("Candidate identity is not strong enough for a repair proposal");
   }
   const repaired = JSON.parse(JSON.stringify(flow));
@@ -408,13 +414,13 @@ export const runHubflow = async (flow, options) => {
   validateHubflow(flow);
   if (typeof options?.invoke !== "function") throw new Error("runHubflow requires an invoke callback");
   const projectRoot = resolve(options.projectRoot);
-  const safeName = flow.name.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-|-$/g, "") || "flow";
+  const storageKey = flowStorageKey(flow.name, options.flowPath ?? flow.name);
   const runId = options.runId ?? new Date().toISOString().replace(/[:.]/g, "-");
-  const runsRoot = resolve(projectRoot, ".rn-devtools/flows/runs", safeName);
+  const runsRoot = resolve(projectRoot, ".rn-devtools/flows/runs", storageKey);
   const runDir = resolve(runsRoot, runId);
   await mkdir(runDir, { recursive: true });
   const policy = flow.visualEvidence?.screenshots ?? "important-and-failure";
-  const report = { format: HUBFLOW_FORMAT, version: HUBFLOW_VERSION, name: flow.name, runId, startedAt: Date.now(), status: "running", steps: [], artifacts: [] };
+  const report = { format: HUBFLOW_FORMAT, version: HUBFLOW_VERSION, name: flow.name, path: options.flowPath ?? null, storageKey, runId, startedAt: Date.now(), status: "running", steps: [], artifacts: [] };
   const progress = () => options.onProgress?.(JSON.parse(JSON.stringify(report)));
   progress();
   let previousSuccessfulCapture = null;
@@ -468,22 +474,35 @@ export const runHubflow = async (flow, options) => {
   } catch (error) {
     failure = error;
     report.setupFailure = { classification: classifyFlowFailure(error, error.flowCall), message: String(error.message), tool: error.flowCall?.tool ?? null };
+    if (policy !== "off") {
+      const artifact = await safeCapture(options.capture, runDir, "failure-setup", { kind: "failure", phase: "setup" }, report);
+      if (artifact) report.artifacts.push(artifact);
+    }
   } finally {
     const teardownErrors = [];
     for (const call of flow.teardown ?? []) try { await invokeCall(options.invoke, call, { phase: "teardown" }); } catch (error) { teardownErrors.push({ tool: call.tool, message: String(error.message) }); }
-    if (teardownErrors.length) report.teardownErrors = teardownErrors;
+    if (teardownErrors.length) {
+      report.teardownErrors = teardownErrors;
+      report.teardownFailure = { classification: "teardown-failed", message: "One or more teardown calls failed" };
+      failure ??= new Error("Hubflow teardown failed");
+      if (policy !== "off") {
+        const artifact = await safeCapture(options.capture, runDir, "failure-teardown", { kind: "failure", phase: "teardown" }, report);
+        if (artifact) report.artifacts.push(artifact);
+      }
+    }
   }
   report.status = failure ? "failed" : "passed";
   report.ok = !failure;
   if (failure) {
     report.reason = report.steps.find((step) => step.status === "failed")?.failure?.classification
       ?? report.setupFailure?.classification
+      ?? report.teardownFailure?.classification
       ?? "flow-failed";
     const failed = report.steps.find((step) => step.status === "failed");
     report.failedStep = failed?.index ?? null;
   }
   report.finishedAt = Date.now();
-  if (!failure && flow.visualEvidence?.final !== false && policy !== "off") {
+  if (!failure && flow.visualEvidence?.final !== false && (policy === "important-and-failure" || policy === "every-step")) {
     const artifact = await safeCapture(options.capture, runDir, "final", { kind: "final" }, report);
     if (artifact) report.artifacts.push(artifact);
   }

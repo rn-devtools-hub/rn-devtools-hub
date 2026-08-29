@@ -190,6 +190,9 @@
   tr.row:hover td { background: var(--surface); }
   tr.row.selected td { background: var(--surface-2); color: var(--ink); }
   td.mono, .mono { font-family: var(--mono); font-size: 11.5px; }
+  .muted { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+  td.wrap { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
+  table.fixed { table-layout: fixed; }
   td.crit { color: var(--critical); }
 
   /* ---------- HTTP method badges (visual distinction GET/POST/...) ---------- */
@@ -469,6 +472,70 @@
     width: 100%; min-height: 64px; font-family: var(--mono); font-size: 12px;
     resize: vertical;
   }
+
+  /* ---------- Tests ---------- */
+  .tests-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:16px; }
+  .tests-head h2 { margin:0 0 5px; font-size:18px; }
+  .tests-head p { margin:0; color:var(--muted); line-height:1.5; }
+  .tests-run {
+    border:1px solid var(--series-1); border-radius:7px; background:var(--series-1);
+    color:white; padding:7px 12px; cursor:pointer; font:600 12px var(--sans);
+    transition:transform 160ms var(--ease-out), opacity 180ms var(--ease-out);
+  }
+  .tests-run:active { transform:scale(.97); }
+  .tests-run:disabled { opacity:.45; cursor:not-allowed; }
+  .tests-controls { display:flex; align-items:center; gap:8px; }
+  .tests-controls select { max-width:230px; }
+  .tests-layout { display:grid; grid-template-columns:minmax(250px, 340px) minmax(0, 1fr); gap:14px; align-items:start; }
+  .tests-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .tests-list { max-height:calc(100vh - 230px); overflow:auto; }
+  .test-row {
+    width:100%; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 12px;
+    padding:12px 14px; border:0; border-bottom:1px solid var(--border); background:transparent;
+    color:var(--ink); text-align:left; cursor:pointer; font-family:var(--sans);
+    transition:background 180ms var(--ease-out), border-color 180ms var(--ease-out);
+  }
+  .test-row:last-child { border-bottom:0; }
+  .test-row:hover, .test-row.active { background:var(--surface-2); }
+  .test-row.active { box-shadow:inset 2px 0 var(--series-1); }
+  .test-row-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .test-row-meta { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .test-status { font-size:11px; font-weight:600; }
+  .test-status.passed { color:var(--good); } .test-status.failed { color:var(--critical); }
+  .test-status.running { color:var(--series-1); } .test-status.blocked { color:var(--warning); }
+  .test-detail { padding:18px; min-height:360px; animation:test-in 200ms var(--ease-out); }
+  @keyframes test-in { from { opacity:.5; transform:translateY(3px); } to { opacity:1; transform:none; } }
+  .test-detail-head { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom:18px; }
+  .test-detail h2 { margin:0 0 5px; font-size:17px; }
+  .test-path { color:var(--muted); font:11px var(--mono); overflow-wrap:anywhere; }
+  .test-summary { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--ink-2); font-size:11.5px; margin-top:10px; }
+  .test-steps { display:grid; gap:8px; margin-top:12px; }
+  .test-step { border:1px solid var(--border); border-radius:8px; padding:11px 12px; }
+  .test-step.running { border-color:var(--series-1-dim); }
+  .test-step.failed { border-left:2px solid var(--critical); }
+  .test-step-top { display:flex; gap:10px; align-items:baseline; }
+  .test-step-index { color:var(--muted); font:11px var(--mono); }
+  .test-step-name { font-weight:600; flex:1; }
+  .test-step-copy { margin:6px 0 0 25px; color:var(--ink-2); font-size:11.5px; line-height:1.45; }
+  .test-diagnosis { margin-top:14px; border:1px solid var(--border); border-left:2px solid var(--critical); border-radius:8px; padding:12px 14px; }
+  .test-diagnosis h3, .test-gallery h3 { font-size:12.5px; margin:0 0 8px; }
+  .test-diagnosis p { color:var(--ink-2); margin:4px 0; line-height:1.5; }
+  .test-repairs { display:grid; gap:8px; margin-top:12px; }
+  .test-repair { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    border-top:1px solid var(--border); padding-top:9px; }
+  .test-repair button { flex-shrink:0; }
+  .test-gallery { margin-top:18px; }
+  .test-images { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; }
+  .test-image { margin:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--page); }
+  .test-image img { width:100%; height:190px; display:block; object-fit:contain; }
+  .test-image figcaption { padding:8px 9px; color:var(--ink-2); font-size:11px; border-top:1px solid var(--border); }
+  .tests-unavailable { padding:36px 20px; text-align:center; color:var(--muted); line-height:1.6; }
+  @media (max-width:760px) {
+    .tests-layout { grid-template-columns:1fr; }
+    .tests-list { max-height:280px; }
+    .tests-head { align-items:stretch; flex-direction:column; }
+    .tests-controls { align-self:flex-start; flex-wrap:wrap; }
+  }
 </style>
 </head>
 <body>
@@ -495,7 +562,9 @@
     <button data-tab="sqlite">SQLite</button>
     <button data-tab="endpoints">Endpoints</button>
     <button data-tab="actions">Actions</button>
+    <button data-tab="tests">Tests<span class="count" id="cTests"></span></button>
     <button data-tab="tools">Tools<span class="count" id="cTools"></span></button>
+    <button data-tab="plugins">Plugins</button>
     <button data-tab="design">Design</button>
     <button data-tab="mirror">Mirror</button>
   </nav>
@@ -665,6 +734,22 @@
       <div class="empty" id="actionsEmpty">The app has not declared any actions yet</div>
     </section>
 
+    <!-- ================= TESTS ================= -->
+    <section class="panel" id="panel-tests">
+      <div class="tests-head">
+        <div><h2>Tests</h2><p>Readable scenarios, verified outcomes and visual evidence.</p></div>
+        <div class="tests-controls">
+          <select id="testsTarget" aria-label="Native screenshot target"><option value="">Select screenshot target</option></select>
+          <button class="tests-run" id="testsRun" disabled>Run selected</button>
+        </div>
+      </div>
+      <div class="tiles" id="testTiles"></div>
+      <div class="tests-layout">
+        <div class="tests-card tests-list" id="testsList"><div class="tests-unavailable">Loading scenarios</div></div>
+        <div class="tests-card" id="testsDetail"><div class="tests-unavailable">Select a scenario to inspect what it verifies.</div></div>
+      </div>
+    </section>
+
     <!-- ================= TOOLS (MCP usage) ================= -->
     <section class="panel" id="panel-tools">
       <div class="tiles" id="toolTiles"></div>
@@ -699,6 +784,15 @@
         <h3>Failures</h3>
         <div id="toolErrors"><div class="empty">No failure recorded</div></div>
       </div>
+    </section>
+
+    <!-- ================= PLUGINS ================= -->
+    <section class="panel" id="panel-plugins">
+      <div class="toolbar">
+        <button id="pluginRefresh">Reload</button>
+        <span class="muted" id="pluginConfigFile"></span>
+      </div>
+      <div id="pluginList"><div class="empty">Loading plugins</div></div>
     </section>
 
     <!-- ================= DESIGN ================= -->
@@ -850,6 +944,10 @@
       } else if (data.kind === "historyCleared") {
         state.byDevice.clear();
         scheduleRender();
+      } else if (data.kind === "flow.progress" || data.kind === "flow.finished") {
+        const flow = testsState.flows.find((item) => item.path === data.path);
+        if (flow) flow.lastRun = data.run;
+        renderTests();
       }
     };
   };
@@ -1193,7 +1291,224 @@
     if (button.dataset.tab === "mirror") mirrorAuto();
     // Tools: the panel is a hub-side poll, not part of the device stream
     if (button.dataset.tab === "tools") pollToolStats();
+    // Plugins: read once per visit, they are resolved at hub startup
+    if (button.dataset.tab === "plugins") pollPlugins();
+    if (button.dataset.tab === "tests") { loadTestTargets(); loadTests(); }
     scheduleRender();
+  });
+
+  // ---------- Tests: human-readable .hubflow scenarios ----------
+  const testsState = { flows: [], runs: [], targets: [], selectedPath: "", loading: false, error: "" };
+  const testStatus = (run) => {
+    const value = String(run?.status ?? run?.result ?? "not-run").toLowerCase();
+    if (["pass", "passed", "success", "succeeded"].includes(value)) return "passed";
+    if (["fail", "failed", "error"].includes(value)) return "failed";
+    if (["running", "queued", "pending"].includes(value)) return "running";
+    if (["blocked", "skipped"].includes(value)) return "blocked";
+    return "not-run";
+  };
+  const testStatusLabel = (status) => ({
+    passed: "Passed", failed: "Failed", running: "Running", blocked: "Blocked", "not-run": "Not run",
+  })[status] ?? "Not run";
+  const testRunFor = (flow) => flow?.lastRun ?? testsState.runs
+    .filter((run) => run.path === flow?.path || run.flowPath === flow?.path)
+    .sort((a, b) => String(b.startedAt ?? b.createdAt ?? "").localeCompare(String(a.startedAt ?? a.createdAt ?? "")))[0];
+  const testSteps = (flow, run) => {
+    const declared = Array.isArray(flow.steps) ? flow.steps : [];
+    const results = Array.isArray(run?.steps) ? run.steps : [];
+    return Array.from({ length: Math.max(declared.length, results.length) }, (_, index) => {
+      const step = declared[index] ?? {};
+      const result = results[index] ?? {};
+      const source = typeof step === "string" ? { name: step } : (step ?? {});
+      return { ...source, ...result, name: result.name ?? source.name ?? source.title ?? `Step ${index + 1}` };
+    });
+  };
+  const testTarget = (args = {}) => {
+    if (args.by === "role") return `${args.value ?? "element"}${args.name ? ` “${args.name}”` : ""}`;
+    return args.value ? `${args.by ?? "element"} “${args.value}”` : "the selected element";
+  };
+  const describeTestCall = (call, kind = "act") => {
+    const args = call?.arguments ?? {};
+    if (call?.tool === "ui_act") {
+      const verbs = { tap: "Tap", longPress: "Long press", type: "Enter a value in", clear: "Clear", submit: "Submit", scrollTo: "Scroll to", scrollToEnd: "Scroll to the end of", scrollBy: "Scroll" };
+      return `${verbs[args.action] ?? args.action ?? "Act on"} ${testTarget(args)}`;
+    }
+    if (call?.tool === "assert") {
+      if (args.kind === "visible") return `Verify ${testTarget(args)} is visible`;
+      if (args.kind === "absent") return `Verify ${testTarget(args)} is absent`;
+      if (args.kind === "text") return `Verify the expected text is rendered`;
+      if (args.kind === "network_ok") return "Verify network requests succeeded";
+      if (args.kind === "no_console_error") return "Verify no console error occurred";
+      if (args.kind === "no_crash") return "Verify the app did not crash";
+    }
+    if (call?.tool === "wait_for_event") return `Wait for ${args.type ?? "the expected app event"}`;
+    if (call?.tool === "run_action") return `Run app action ${args.name ?? ""}`.trim();
+    if (call?.tool === "set_state") return `Prepare the ${args.store ?? "app"} state`;
+    return `${kind === "expect" ? "Verify" : "Run"} ${call?.tool ?? "step"}`;
+  };
+  const safeImageUrl = (value) => {
+    const url = String(value ?? "");
+    if (url.startsWith("/") || url.startsWith("data:image/")) return esc(url);
+    try { const parsed = new URL(url, location.href); return parsed.origin === location.origin ? esc(parsed.href) : ""; }
+    catch { return ""; }
+  };
+  const testEvidence = (flow, run) => {
+    const raw = run?.artifacts ?? run?.visualEvidence ?? run?.screenshots ?? [];
+    const items = Array.isArray(raw) ? raw : (Array.isArray(raw?.screenshots) ? raw.screenshots : []);
+    const labelFor = (path, index) => String(path ?? "").includes("failure") ? "State at failure"
+      : String(path ?? "").includes("start") ? "Starting state"
+      : String(path ?? "").includes("final") ? "Validated final state"
+      : `Evidence ${index + 1}`;
+    return items.map((item, index) => typeof item === "string"
+      ? { url: item, label: labelFor(item, index) }
+      : { url: item.url ?? item.path ?? item.src, label: item.label ?? item.name ?? item.stepName ?? labelFor(item.path ?? item.url, index) })
+      .filter((item) => safeImageUrl(item.url));
+  };
+
+  const renderTests = () => {
+    const flows = testsState.flows;
+    const statuses = flows.map((flow) => testStatus(testRunFor(flow)));
+    const count = (status) => statuses.filter((value) => value === status).length;
+    $("cTests").textContent = flows.length || "";
+    $("testTiles").innerHTML = [
+      ["Scenarios", flows.length, "Available .hubflow files"],
+      ["Passed", count("passed"), "Latest result"],
+      ["Failed", count("failed"), "Needs attention"],
+      ["Not run", count("not-run") + count("blocked"), "No successful result yet"],
+    ].map(([label, value, sub]) => `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`).join("");
+
+    if (testsState.error && !flows.length) {
+      $("testsList").innerHTML = `<div class="tests-unavailable">Hubflow scenarios are not available yet.<br>${esc(testsState.error)}</div>`;
+      $("testsDetail").innerHTML = `<div class="tests-unavailable">Add a .hubflow file to the project, then reload this page.</div>`;
+      $("testsRun").disabled = true;
+      return;
+    }
+    if (!flows.length) {
+      $("testsList").innerHTML = `<div class="tests-unavailable">No scenarios found.</div>`;
+      $("testsDetail").innerHTML = `<div class="tests-unavailable">Recorded scenarios will appear here with their steps and evidence.</div>`;
+      $("testsRun").disabled = true;
+      return;
+    }
+    if (!flows.some((flow) => flow.path === testsState.selectedPath)) testsState.selectedPath = flows[0].path;
+    $("testsList").innerHTML = flows.map((flow) => {
+      const run = testRunFor(flow); const status = testStatus(run);
+      return `<button class="test-row ${flow.path === testsState.selectedPath ? "active" : ""}" data-test-path="${esc(flow.path)}">
+        <span class="test-row-name">${esc(flow.name ?? flow.path)}</span><span class="test-status ${status}">${testStatusLabel(status)}</span>
+        <span class="test-row-meta">${esc(flow.path)}</span><span class="test-row-meta">${flow.steps?.length ?? 0} steps</span>
+      </button>`;
+    }).join("");
+    const flow = flows.find((item) => item.path === testsState.selectedPath);
+    const run = testRunFor(flow); const status = testStatus(run); const steps = testSteps(flow, run);
+    const evidence = testEvidence(flow, run);
+    const failedStep = steps.find((step) => testStatus(step) === "failed");
+    const failedStepIndex = failedStep ? steps.indexOf(failedStep) : -1;
+    const failure = run?.failure ?? run?.error ?? failedStep?.failure ?? failedStep?.error ?? run?.setupFailure;
+    const repairCandidates = Array.isArray(failure?.candidates) ? failure.candidates : [];
+    const measuredDuration = run?.durationMs ?? (run?.finishedAt && run?.startedAt ? run.finishedAt - run.startedAt : null);
+    const duration = measuredDuration != null ? `${measuredDuration} ms` : "Not available";
+    const when = run?.startedAt ?? run?.createdAt;
+    const needsTarget = (flow.visualEvidence?.screenshots ?? "important-and-failure") !== "off";
+    $("testsRun").disabled = status === "running" || !state.selectedDevice || (needsTarget && !$("testsTarget").value);
+    $("testsRun").textContent = status === "running" ? "Running" : "Run selected";
+    $("testsDetail").innerHTML = `<div class="test-detail">
+      <div class="test-detail-head"><div><h2>${esc(flow.name ?? flow.path)}</h2><div class="test-path">${esc(flow.path)}</div>
+        <div class="test-summary"><span class="test-status ${status}">${testStatusLabel(status)}</span><span>${steps.length} steps</span><span>${esc(duration)}</span>${when ? `<span>${esc(new Date(when).toLocaleString())}</span>` : ""}</div>
+      </div></div>
+      <h3 style="font-size:12.5px;margin:0">Scenario</h3>
+      <div class="test-steps">${steps.length ? steps.map((step, index) => {
+        const stepStatus = testStatus(step);
+        const lines = [
+          step.description ?? step.expectation ?? step.message ?? describeTestCall(step.act),
+          ...(step.expect ?? []).map((call) => describeTestCall(call, "expect")),
+        ].filter(Boolean);
+        return `<div class="test-step ${stepStatus}"><div class="test-step-top"><span class="test-step-index">${index + 1}</span><span class="test-step-name">${esc(step.name)}</span><span class="test-status ${stepStatus}">${testStatusLabel(stepStatus)}</span></div>${lines.length ? `<div class="test-step-copy">${lines.map((line) => `<div>${esc(line)}</div>`).join("")}</div>` : ""}</div>`;
+      }).join("") : `<div class="empty">This scenario has no declared steps.</div>`}</div>
+      ${failure ? `<div class="test-diagnosis"><h3>Failure diagnosis</h3><p>${esc(typeof failure === "string" ? failure : failure.message ?? failure.reason ?? JSON.stringify(failure))}</p>${run?.expected ? `<p><strong>Expected:</strong> ${esc(run.expected)}</p>` : ""}${run?.observed ? `<p><strong>Observed:</strong> ${esc(run.observed)}</p>` : ""}
+        ${repairCandidates.length ? `<div class="test-repairs"><h3>Possible targets</h3>${repairCandidates.map((candidate, index) => `<div class="test-repair"><div><strong>${esc(candidate.name ?? candidate.testID ?? candidate.role ?? `Candidate ${index + 1}`)}</strong><div class="test-path">${esc(candidate.testID ?? candidate.source?.componentName ?? candidate.source?.file ?? "Identity unavailable")}</div></div><button data-repair-index="${index}" data-repair-step="${failedStepIndex}">Create candidate</button></div>`).join("")}</div>` : ""}</div>` : ""}
+      ${evidence.length ? `<div class="test-gallery"><h3>Visual evidence</h3><div class="test-images">${evidence.map((item) => `<figure class="test-image"><a href="${safeImageUrl(item.url)}" target="_blank" rel="noopener"><img src="${safeImageUrl(item.url)}" alt="${esc(item.label)}" loading="lazy"></a><figcaption>${esc(item.label)}</figcaption></figure>`).join("")}</div></div>` : `<div class="test-gallery"><h3>Visual evidence</h3><div class="empty">No screenshot was saved for this run.</div></div>`}
+    </div>`;
+  };
+
+  const loadTests = async () => {
+    if (testsState.loading) return;
+    testsState.loading = true;
+    try {
+      const response = await fetch(`/flows?token=${encodeURIComponent(hubToken)}`);
+      if (!response.ok) throw new Error(response.status === 404 ? "The flows endpoint is not installed." : `Request failed with status ${response.status}.`);
+      const data = await response.json();
+      testsState.flows = Array.isArray(data.flows) ? data.flows : [];
+      testsState.runs = Array.isArray(data.runs) ? data.runs : [];
+      testsState.error = "";
+    } catch (error) { testsState.error = error.message; }
+    finally { testsState.loading = false; renderTests(); }
+  };
+
+  const loadTestTargets = async () => {
+    try {
+      const response = await fetch(`/native/targets?token=${encodeURIComponent(hubToken)}`);
+      const data = await response.json();
+      testsState.targets = (data.targets ?? []).filter((target) => target.state === "ready");
+      const previous = $("testsTarget").value;
+      $("testsTarget").innerHTML = `<option value="">Select screenshot target</option>${testsState.targets.map((target) => `<option value="${esc(target.target)}">${esc(target.name ?? target.target)} (${esc(target.platform)})</option>`).join("")}`;
+      if (testsState.targets.some((target) => target.target === previous)) $("testsTarget").value = previous;
+      else if (testsState.targets.length === 1) $("testsTarget").value = testsState.targets[0].target;
+      renderTests();
+    } catch {
+      testsState.targets = [];
+    }
+  };
+
+  $("testsList").addEventListener("click", (event) => {
+    const row = event.target.closest("[data-test-path]");
+    if (!row) return;
+    testsState.selectedPath = row.dataset.testPath;
+    renderTests();
+  });
+  $("testsRun").addEventListener("click", async () => {
+    if (!testsState.selectedPath || !state.selectedDevice) return;
+    $("testsRun").disabled = true; $("testsRun").textContent = "Starting";
+    try {
+      const response = await fetch(`/flows/run?token=${encodeURIComponent(hubToken)}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: testsState.selectedPath, deviceId: state.selectedDevice, target: $("testsTarget").value || undefined }),
+      });
+      if (!response.ok) throw new Error(`Run could not start, status ${response.status}.`);
+      await response.json().catch(() => ({}));
+      await loadTests();
+      let checks = 0;
+      const poll = setInterval(async () => {
+        await loadTests(); checks += 1;
+        const flow = testsState.flows.find((item) => item.path === testsState.selectedPath);
+        if (testStatus(testRunFor(flow)) !== "running" || checks >= 120) clearInterval(poll);
+      }, 1000);
+    } catch (error) { testsState.error = error.message; renderTests(); }
+  });
+  $("testsTarget").addEventListener("change", renderTests);
+  $("testsDetail").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-repair-index]");
+    if (!button || !testsState.selectedPath) return;
+    button.disabled = true;
+    button.textContent = "Creating";
+    try {
+      const response = await fetch(`/flows/repair?token=${encodeURIComponent(hubToken)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          path: testsState.selectedPath,
+          stepIndex: Number(button.dataset.repairStep),
+          candidateIndex: Number(button.dataset.repairIndex),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? `Repair request failed with status ${response.status}.`);
+      await loadTests();
+      testsState.selectedPath = result.candidate;
+      renderTests();
+    } catch (error) {
+      testsState.error = error.message;
+      button.disabled = false;
+      button.textContent = "Create candidate";
+    }
   });
 
   const renderAll = () => {
@@ -2579,6 +2894,94 @@
     });
   });
 
+  // ---------- Plugins: the services around the app ----------
+  /**
+   * The one panel about something that is not on the machine.
+   *
+   * A plugin with no credentials is not broken and not hidden: it is
+   * shown with exactly what it is waiting for and where to put it, the
+   * same way a missing adb greys out Mirror instead of disappearing. The
+   * hosts a configured plugin will contact are printed next to it,
+   * because this hub is otherwise entirely local and that deserves to be
+   * read rather than discovered.
+   */
+  const renderPlugins = (data) => {
+    const host = $("pluginList");
+    const file = $("pluginConfigFile");
+    if (!data) {
+      host.innerHTML = `<div class="empty">Plugins could not be read from the hub</div>`;
+      file.textContent = "";
+      return;
+    }
+    file.textContent = data.configFile.error
+      ? data.configFile.error
+      : `${data.configFile.exists ? "Reading" : "No"} ${data.configFile.path.split("/").slice(-2).join("/")}`;
+
+    // What is still missing is named by the variables that would fill it,
+    // path variables included: a key file is set by pointing at it
+    const wantedFrom = (plugin, key) => {
+      const missing = (plugin.missing ?? []).find((entry) => entry.key === key);
+      return [...(missing?.env ?? []), ...(missing?.pathEnv ?? [])].join(" or ");
+    };
+
+    const badge = (plugin) => plugin.ready
+      ? `<span class="status-badge s2">configured</span>`
+      : `<span class="status-badge s0">not configured</span>`;
+
+    // A hub that can submit a build to Apple or widen a rollout says so
+    // where someone reads it, next to the plugin that can do it
+    const writeBadge = (plugin) => {
+      if (!plugin.writeTools?.length) return "";
+      return plugin.writes?.enabled
+        ? `<span class="status-badge s4">can change releases</span>`
+        : `<span class="status-badge s3">read only</span>`;
+    };
+
+    const cards = (data.plugins ?? []).map((plugin) => `
+      <div class="chart-card">
+        <h3>${esc(plugin.title)} ${badge(plugin)} ${writeBadge(plugin)}</h3>
+        <div class="muted" style="margin-bottom:10px">${esc(plugin.summary)}</div>
+        ${plugin.ready ? "" : `<div class="muted" style="margin-bottom:10px">${esc(plugin.setupHint)}</div>`}
+        <table class="fixed">
+          <thead><tr><th style="width:26%">Setting</th><th style="width:12%">State</th><th>Read from</th></tr></thead>
+          <tbody>${(plugin.config ?? []).map((entry) => `
+            <tr>
+              <td class="mono" title="${esc(entry.description)}">${esc(entry.key)}${entry.required ? "" : " (optional)"}</td>
+              <td>${entry.set ? `<span class="status-badge s2">set</span>` : `<span class="status-badge ${entry.required ? "s5" : "s0"}">absent</span>`}</td>
+              <td class="mono wrap">${esc(entry.source ?? wantedFrom(plugin, entry.key))}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+        <div class="muted" style="margin-top:10px">
+          ${plugin.ready ? "Reads" : "Would read"}:
+          <span class="mono">${plugin.tools.map(esc).join(", ")}</span>
+        </div>
+        ${plugin.writeTools?.length ? `
+        <div class="muted" style="margin-top:6px">
+          ${plugin.writes?.enabled ? "Changes" : `Would change (off, ${esc(plugin.writes?.disabledBy ?? "")})`}:
+          <span class="mono">${plugin.writeTools.map(esc).join(", ")}</span>
+        </div>` : ""}
+        <div class="muted" style="margin-top:6px">Contacts: <span class="mono">${plugin.hosts.map(esc).join(", ") || "nothing"}</span>${plugin.license ? ` &middot; ${esc(plugin.license)}` : ""}</div>
+      </div>`).join("");
+
+    const failures = (data.failures ?? []).length
+      ? `<div class="chart-card"><h3>Refused</h3>${data.failures.map((line) => `<div class="mono">${esc(line)}</div>`).join("")}</div>`
+      : "";
+
+    host.innerHTML = (cards + failures) || `<div class="empty">No plugin installed</div>`;
+  };
+
+  const pollPlugins = async () => {
+    try {
+      const response = await fetch(`/plugins/list?token=${encodeURIComponent(hubToken)}`);
+      renderPlugins(await response.json());
+    } catch {
+      renderPlugins(null);
+    }
+  };
+
+  $("pluginRefresh").addEventListener("click", pollPlugins);
+
   // ================================================================
   // Capability badges: lightweight polling, light up as soon as a
   // phone-interaction technology is available
@@ -2772,7 +3175,15 @@
         `${totals.empty} returned nothing`) +
       tile("Answer time p95", totals.p95Ms === null ? "–" : `${totals.p95Ms} ms`, "",
         totals.p50Ms === null ? "" : `p50 ${totals.p50Ms} ms`) +
-      tile("Context returned", fmtBytes(totals.bytes), "", "what the agent paid to read this");
+      tile("Context returned", fmtBytes(totals.bytes), "", "what the agent paid to read this") +
+      // Pixels separately: a session where most of the context bought was
+      // images is a session verifying with screenshots, which is both the
+      // most expensive answer and the weakest proof available here
+      tile("Pixels", totals.pixelCalls ? fmtBytes(totals.pixelBytes) : "–",
+        totals.bytes && totals.pixelBytes / totals.bytes > 0.5 ? "warn" : "",
+        totals.pixelCalls
+          ? `${totals.pixelCalls} screenshot${totals.pixelCalls > 1 ? "s" : ""}, ${Math.round((100 * totals.pixelBytes) / Math.max(totals.bytes, 1))}% of the context`
+          : "no screenshot taken");
 
     renderToolTimeline(data.timeline);
     renderToolBars(data.tools);

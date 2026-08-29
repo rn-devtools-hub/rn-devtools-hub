@@ -25,9 +25,12 @@ import { upgradeTreeSources, upgradeSource, isLocalNetwork } from "./symbolicate
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
-import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, renderFlowText, renderFlowMcp } from "./flow.mjs";
+import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, needsRecordedVariable, renderFlowText, renderFlowMcp } from "./flow.mjs";
+import { HUBFLOW_TOOLS, durableFlowFromRecorded, listHubflowCatalog, proposeHubflowRepair, readHubflow, resolveHubflowArtifact, resolveHubflowPath, runHubflow, writeHubflow } from "./hubflow.mjs";
 import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
-import { createToolLog, recordToolCall, summarizeTools, readEmptiness } from "./tools.mjs";
+import { STORE_SHOT_TOOL, captureStoreScreenshots } from "./storeshots.mjs";
+import { createToolLog, recordToolCall, summarizeTools, readEmptiness, readScreenshotPolicy, screenshotAdvice, PIXEL_TOOLS } from "./tools.mjs";
+import { createPluginHost, LIST_PLUGINS_TOOL } from "./plugins.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Host project root (the hub is launched from the root: bun run devtools)
@@ -217,6 +220,8 @@ let nextDeviceId = 1;
 // second concurrent recording would interleave two intents into one
 // unusable script
 const recorder = createRecorder();
+const activeFlowRuns = new Map();
+const flowRunReservations = new Set();
 
 // Re-read on every request: UI changes are visible with a simple
 // browser refresh, without restarting the hub
@@ -237,6 +242,53 @@ const mcpText = (value, isError = false) => ({
 /** Bounded, in memory, wiped on restart: the interesting window is the
  * session an agent is driving right now */
 const toolLog = createToolLog();
+
+/**
+ * How many pixel captures this hub will serve.
+ *
+ * A screenshot is the weakest proof an agent can get and the most
+ * expensive one to read: it cannot show a request that failed silently, a
+ * promise that rejected or a value that never reached the field, and it
+ * bills a megabyte of context to not show them. The skill has said "never
+ * verify with a screenshot" since the beginning, and a skill is advice.
+ * This is the switch:
+ *
+ *   RN_DEVTOOLS_SCREENSHOTS=off    screenshot_native is not exposed
+ *   RN_DEVTOOLS_SCREENSHOTS=5      five per hub run, then refused
+ *
+ * Off removes the tool rather than making it refuse, for the same reason
+ * the plugin writes switch does: an agent never plans a step that does
+ * not exist. Left unset, nothing changes, and the second capture with no
+ * assertion between them says so in its own answer.
+ */
+const SCREENSHOT_POLICY = readScreenshotPolicy(process.env);
+
+const screenshotRefusal = () => {
+  if (SCREENSHOT_POLICY.mode === "off") {
+    return "screenshot_native is switched off by RN_DEVTOOLS_SCREENSHOTS. Prove the step with assert (kinds visible, absent, text, network_ok, no_console_error, no_crash), or compare_snapshot for a real visual regression.";
+  }
+  if (SCREENSHOT_POLICY.mode === "budget" && toolLog.pixelCalls >= SCREENSHOT_POLICY.budget) {
+    return `The screenshot budget for this hub is spent (${SCREENSHOT_POLICY.budget} set by RN_DEVTOOLS_SCREENSHOTS, ${toolLog.pixelCalls} taken). assert proves a step without pixels, and compare_snapshot answers a visual question with a diagnosis rather than an image.`;
+  }
+  return null;
+};
+
+/**
+ * What this capture cost, and whether it is being used as proof.
+ *
+ * One screenshot is a look. A second one with no assertion in between is
+ * a verification loop, and that is the only moment worth saying so: a
+ * note on every capture is noise an agent learns to skip.
+ */
+const pixelNote = (image) => {
+  const contextBytes = Math.round((image?.data?.length ?? 0) * 0.75);
+  const advice = screenshotAdvice(toolLog);
+  if (advice.sinceProof < 1) return { contextBytes };
+  return {
+    contextBytes,
+    note: `${advice.sinceProof + 1} screenshots with no assert between them, ${Math.round((advice.bytes + contextBytes) / 1024)} kB of context. A screenshot cannot show a request that failed silently or a promise that rejected: assert can, and compare_snapshot answers a visual question with a diagnosis instead of an image.`,
+  };
+};
 
 /**
  * What this answer bills the agent in context.
@@ -263,6 +315,42 @@ const isLocalRequest = (request, bunServer) => {
 };
 
 const hasValidToken = (url) => url.searchParams.get("token") === HUB_TOKEN;
+const hasLocalOrigin = (request) => {
+  const origin = request.headers.get("origin");
+  return !origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+};
+
+const flowNameForPath = (name) => String(name ?? "flow")
+  .replace(/[^a-z0-9._-]+/gi, "-").replace(/^-|-$/g, "") || "flow";
+
+const resolveFlowVariables = (value) => {
+  if (typeof value === "string") {
+    const match = /^\$\{([A-Z][A-Z0-9_]{1,63})\}$/.exec(value);
+    if (!match) return value;
+    const resolved = process.env[match[1]];
+    if (resolved === undefined) throw new Error(`Hubflow environment variable ${match[1]} is not set`);
+    return resolved;
+  }
+  if (Array.isArray(value)) return value.map(resolveFlowVariables);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolveFlowVariables(entry)]));
+  }
+  return value;
+};
+
+const flowCatalogForDashboard = async () => {
+  const flows = await listHubflowCatalog(PROJECT_ROOT);
+  return flows.map((flow) => {
+    const run = activeFlowRuns.get(resolveHubflowPath(PROJECT_ROOT, flow.path)) ?? flow.lastRun;
+    if (!run) return flow;
+    const flowKey = run.storageKey ?? flowNameForPath(flow.name);
+    const artifacts = (run.artifacts ?? []).map((artifact) => ({
+      ...artifact,
+      url: `/flows/artifact?flowKey=${encodeURIComponent(flowKey)}&runId=${encodeURIComponent(run.runId)}&file=${encodeURIComponent(artifact.path)}&token=${encodeURIComponent(HUB_TOKEN)}`,
+    }));
+    return { ...flow, lastRun: { ...run, artifacts, visualEvidence: artifacts } };
+  });
+};
 
 /**
  * Who may open the device WebSocket.
@@ -641,7 +729,7 @@ const MCP_TOOLS = [
   {
     name: "ui_act",
     description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd, scrollBy (dx/dy in points, relative to the current offset), focus and blur. focus opens the keyboard, which is what makes anything depending on it (KeyboardAvoidingView, insets) verifiable without touching the device. Target by testID, text, label, placeholder, type or role plus name; scope with within. placeholder is how a form field with no testID is reached without counting positions. When several elements match, the result lists the candidates with rects so you can pass index; an index beyond the last match is REFUSED (ok:false, reason:\"index-out-of-range\") instead of falling back to the last element, because acting on another element and reporting success is the one failure an automation tool must never produce. A typed value that does not come back is reported the same way (reason:\"value-unchanged\"), and verified/note say whether the text truly reached the field. Hidden navigator screens are skipped unless includeHidden.",
-    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "scrollBy", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number", description: "action:scrollBy, horizontal distance in points from the current offset" }, dy: { type: "number", description: "action:scrollBy, vertical distance in points from the current offset (positive scrolls down)" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "scrollBy", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, recordAs: { type: "string", pattern: "^[A-Z][A-Z0-9_]{1,63}$", description: "For type actions, send text live but persist only ${NAME} in recordings" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number", description: "action:scrollBy, horizontal distance in points from the current offset" }, dy: { type: "number", description: "action:scrollBy, vertical distance in points from the current offset (positive scrolls down)" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
@@ -660,6 +748,7 @@ const MCP_TOOLS = [
   ASSERT_TOOL,
   ...SESSION_TOOLS,
   ...FLOW_TOOLS,
+  ...HUBFLOW_TOOLS,
   ...VISUAL_TOOLS,
   ...A11Y_TOOLS,
   BUILD_TOOL,
@@ -729,7 +818,25 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", required: ["store"], properties: { deviceId: { type: "string" }, store: { type: "string" }, path: { type: "string" }, value: {} }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
+  LIST_PLUGINS_TOOL,
+  STORE_SHOT_TOOL,
 ];
+
+/**
+ * Plugins: the services around the app, not the app.
+ *
+ * Built once, at startup, and never rebuilt: an MCP client is told
+ * listChanged:false, so a tool list that grew mid-session would be a tool
+ * the client never learns about, and one that shrank would be a tool it
+ * still calls. Configure the credentials, restart the hub, read the
+ * banner. Only configured plugins contribute tools; the others are
+ * visible through list_plugins with what they are waiting for.
+ */
+const pluginHost = await createPluginHost({
+  projectRoot: PROJECT_ROOT,
+  env: process.env,
+  reserved: new Set([...MCP_TOOLS, ...NATIVE_TOOLS].map((tool) => tool.name)),
+});
 
 // Waits for an event from ANY device: session_start launches the app
 // and needs its first hello/app.info without knowing its deviceId yet
@@ -816,9 +923,24 @@ const handleMcpTool = async (name, args = {}) => {
       devices: Array.from(devices.entries()).map(deviceSummary),
     };
   }
+  if (name === "list_plugins") return pluginHost.describe();
+  if (name === "list_flows") return { flows: await listHubflowCatalog(PROJECT_ROOT) };
+  if (name === "get_flow") return { path: args.path, flow: await readHubflow(PROJECT_ROOT, args.path) };
+  if (name === "propose_flow_repair") return proposeHubflowRepair(PROJECT_ROOT, args.path, args);
+  // Plugins reach the services around the app (stores, release APIs), so
+  // like the native tools they need no connected JS device
+  if (pluginHost.owns(name)) return pluginHost.handle(name, args);
   // Host-side native tools (simctl/adb): no connected JS device needed
   if (NATIVE_TOOLS.some((tool) => tool.name === name)) {
-    return handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
+    if (PIXEL_TOOLS.has(name)) {
+      const refusal = screenshotRefusal();
+      if (refusal) throw new Error(refusal);
+    }
+    const nativeResult = await handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
+    if (PIXEL_TOOLS.has(name) && nativeResult?.__mcpImage) {
+      return { ...nativeResult, ...pixelNote(nativeResult.__mcpImage) };
+    }
+    return nativeResult;
   }
   if (SESSION_TOOLS.some((tool) => tool.name === name)) {
     return handleSessionTool(name, args, PROJECT_ROOT);
@@ -873,6 +995,52 @@ const handleMcpTool = async (name, args = {}) => {
   }
   const [deviceId, device] = pickDevice(args.deviceId);
   if (!device) throw new Error("No device available");
+  if (name === "save_flow") {
+    if (!recorder.acts.length) throw new Error("Nothing recorded: call start_recording, drive the app, then stop_recording");
+    if (recorder.active) throw new Error("Recording is still active: call stop_recording before save_flow");
+    const recorded = buildFlow(recorder, device.history);
+    if (!recorded.clean) throw new Error("The recording contains a failure and cannot become a regression scenario");
+    const flow = durableFlowFromRecorded(recorded, {
+      description: args.description,
+      finalCursor: recorder.endCursor,
+      visualEvidence: {
+        screenshots: args.screenshotPolicy ?? "important-and-failure",
+        final: true,
+      },
+    });
+    return writeHubflow(PROJECT_ROOT, args.path, flow);
+  }
+  if (name === "run_flow") {
+    const runKey = resolveHubflowPath(PROJECT_ROOT, args.path);
+    if (activeFlowRuns.has(runKey)) {
+      return { ok: false, reason: "flow-already-running", path: args.path, run: activeFlowRuns.get(runKey) };
+    }
+    const flow = await readHubflow(PROJECT_ROOT, args.path);
+    activeFlowRuns.set(runKey, { status: "running", steps: [], startedAt: Date.now() });
+    try {
+      const result = await runHubflow(flow, {
+        projectRoot: PROJECT_ROOT,
+        flowPath: args.path,
+        invoke: (tool, toolArgs) => handleMcpTool(tool, { ...resolveFlowVariables(toolArgs), deviceId }),
+        onProgress: (run) => {
+          activeFlowRuns.set(runKey, run);
+          broadcastToDashboards({ kind: "flow.progress", path: args.path, run });
+        },
+        capture: SCREENSHOT_POLICY.mode === "off" ? undefined : async ({ path }) => {
+          if (!args.target) throw new Error("Pass a native target to capture Hubflow visual evidence");
+          const shot = await screenshotNative({ target: args.target });
+          const bytes = Buffer.from(shot.__mcpImage.data, "base64");
+          writeFileSync(path, bytes);
+          const decoded = decodePng(bytes);
+          return { target: shot.target, mimeType: "image/png", width: decoded.width, height: decoded.height };
+        },
+      });
+      broadcastToDashboards({ kind: "flow.finished", path: args.path, run: result });
+      return result;
+    } finally {
+      activeFlowRuns.delete(runKey);
+    }
+  }
   if (name === "get_app_info") {
     const info = eventsOfType(device, ["app.info", "net.info"], 100);
     return { device: deviceSummary([deviceId, device]), events: info };
@@ -935,6 +1103,49 @@ const handleMcpTool = async (name, args = {}) => {
     if (response.error) throw new Error(response.error);
     return response.result;
   }
+  if (name === "capture_store_screenshots") {
+    /**
+     * The one place pixels are captured without an agent paying to look
+     * at them: the files go to disk and the answer is a list of paths.
+     * That is also why it does not go through screenshot_native and its
+     * budget, which exists to stop an agent VERIFYING with images.
+     */
+    return captureStoreScreenshots(args, {
+      projectRoot: PROJECT_ROOT,
+      decodePng,
+      screenshot: (options) => screenshotNative(options),
+      runAction: async (actionName, actionArgs) => {
+        const response = await sendDeviceCommand(deviceId, "action.run", { name: actionName, args: actionArgs });
+        if (response.error) throw new Error(`action ${actionName}: ${response.error}`);
+        return response.result;
+      },
+      queryUi: async (selector) => {
+        const response = await sendDeviceCommand(deviceId, "ui.query", selector);
+        if (response.error) throw new Error(response.error);
+        return response.result;
+      },
+      waitForEvent: ({ type, payloadContains, timeoutMs }) => new Promise((resolve) => {
+        const waiter = {
+          deviceId,
+          match: (event) => {
+            if (type && !String(event.type).includes(String(type))) return false;
+            if (payloadContains) {
+              try {
+                if (!JSON.stringify(event.payload ?? "").includes(String(payloadContains))) return false;
+              } catch { return false; }
+            }
+            return true;
+          },
+          resolve: (event) => resolve({ timedOut: false, event }),
+          timer: setTimeout(() => {
+            eventWaiters.delete(waiter);
+            resolve({ timedOut: true, event: null });
+          }, timeoutMs),
+        };
+        eventWaiters.add(waiter);
+      }),
+    });
+  }
   if (name === "run_action") {
     const response = await sendDeviceCommand(deviceId, "action.run", { name: args.name, args: args.args });
     if (response.error) throw new Error(response.error);
@@ -950,7 +1161,14 @@ const handleMcpTool = async (name, args = {}) => {
   }
   if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
     const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
-    const { deviceId: _ignored, ...payload } = args;
+    const { deviceId: _ignored, recordAs: _recordAs, ...payload } = args;
+    if (name === "ui_act" && recorder.active && needsRecordedVariable({
+      action: payload.action,
+      selector: { by: payload.by, value: payload.value, name: payload.name, within: payload.within },
+      recordAs: args.recordAs,
+    })) {
+      throw new Error("Sensitive type actions require recordAs while recording");
+    }
 
     /**
      * A UI is asynchronous. query_ui answering "nothing matched" during a
@@ -1015,6 +1233,7 @@ const handleMcpTool = async (name, args = {}) => {
         action: payload.action,
         selector: { by: payload.by, value: payload.value, name: payload.name, within: payload.within },
         text: payload.text,
+        recordAs: args.recordAs,
         // Without the index the replay runs the SAME selector on ANOTHER
         // element: a flow recorded on the third row of a list came back
         // as a flow on the first one, and nothing in the export said so
@@ -1093,7 +1312,7 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "start_recording") {
     return startRecording(recorder, { name: args.name, cursor: device.lastSeq ?? 0 });
   }
-  if (name === "stop_recording") return stopRecording(recorder);
+  if (name === "stop_recording") return stopRecording(recorder, { cursor: device.lastSeq ?? 0 });
   if (name === "export_flow") {
     if (!recorder.acts.length) {
       throw new Error("Nothing recorded: call start_recording, drive the app with ui_act, then export");
@@ -1184,7 +1403,13 @@ const handleMcpRequest = async (request, bunServer) => {
   }
   if (method === "notifications/initialized") return new Response(null, { status: 202 });
   if (method === "ping") return jsonResponse(mcpResult(id, {}));
-  if (method === "tools/list") return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...NATIVE_TOOLS] }));
+  if (method === "tools/list") {
+    // A tool that is switched off is absent, not present and refusing
+    const native = SCREENSHOT_POLICY.mode === "off"
+      ? NATIVE_TOOLS.filter((tool) => !PIXEL_TOOLS.has(tool.name))
+      : NATIVE_TOOLS;
+    return jsonResponse(mcpResult(id, { tools: [...MCP_TOOLS, ...native, ...pluginHost.tools()] }));
+  }
   if (method === "tools/call") {
     const startedAt = Date.now();
     const args = params?.arguments ?? {};
@@ -1275,9 +1500,67 @@ const startServer = (port) => serve({
     const url = new URL(request.url);
     if (url.pathname === "/mcp") return handleMcpRequest(request, bunServer);
 
-    // Design, Mirror, Native, Project and Tools endpoints: protected by the hub token
-    if (url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/") || url.pathname.startsWith("/tools/")) {
+    // Dashboard data and actions are protected by the hub token
+    if (url.pathname === "/flows" || url.pathname.startsWith("/flows/") || url.pathname.startsWith("/design/") || url.pathname.startsWith("/mirror/") || url.pathname.startsWith("/native/") || url.pathname.startsWith("/project/") || url.pathname.startsWith("/tools/") || url.pathname.startsWith("/plugins/")) {
       if (!hasValidToken(url)) return jsonResponse({ error: "Invalid token" }, 401);
+
+      if (url.pathname === "/flows" && request.method === "GET") {
+        return jsonResponse({ flows: await flowCatalogForDashboard() });
+      }
+      if (url.pathname === "/flows/run" && request.method === "POST") {
+        if (!hasLocalOrigin(request)) return jsonResponse({ error: "Origin rejected" }, 403);
+        let body;
+        try { body = await request.json(); } catch { return jsonResponse({ error: "Invalid JSON body" }, 400); }
+        const [, selected] = pickDevice(body.deviceId);
+        if (!selected) return jsonResponse({ error: "No device available" }, 422);
+        let runKey;
+        try {
+          runKey = resolveHubflowPath(PROJECT_ROOT, body.path);
+          await readHubflow(PROJECT_ROOT, body.path);
+        } catch (error) {
+          return jsonResponse({ error: String(error?.message ?? error) }, 422);
+        }
+        if (activeFlowRuns.has(runKey) || flowRunReservations.has(runKey)) {
+          return jsonResponse({ error: "Flow already running" }, 409);
+        }
+        flowRunReservations.add(runKey);
+        handleMcpTool("run_flow", body)
+          .catch((error) => {
+            const run = { ok: false, status: "failed", reason: "runner-error", message: String(error?.message ?? error), finishedAt: Date.now() };
+            broadcastToDashboards({ kind: "flow.finished", path: body.path, run });
+          })
+          .finally(() => flowRunReservations.delete(runKey));
+        return jsonResponse({ ok: true, status: "running", path: body.path }, 202);
+      }
+      if (url.pathname === "/flows/repair" && request.method === "POST") {
+        if (!hasLocalOrigin(request)) return jsonResponse({ error: "Origin rejected" }, 403);
+        let body;
+        try { body = await request.json(); } catch { return jsonResponse({ error: "Invalid JSON body" }, 400); }
+        try {
+          return jsonResponse(await proposeHubflowRepair(PROJECT_ROOT, body.path, body));
+        } catch (error) {
+          return jsonResponse({ error: String(error?.message ?? error) }, 422);
+        }
+      }
+      if (url.pathname === "/flows/artifact" && request.method === "GET") {
+        try {
+          const file = await resolveHubflowArtifact(
+            PROJECT_ROOT,
+            url.searchParams.get("flowKey"),
+            url.searchParams.get("runId"),
+            url.searchParams.get("file"),
+          );
+          return new Response(readFileSync(file), {
+            headers: {
+              "Content-Type": "image/png",
+              "Cache-Control": "no-store",
+              "X-Content-Type-Options": "nosniff",
+            },
+          });
+        } catch (error) {
+          return jsonResponse({ error: String(error?.message ?? error) }, 404);
+        }
+      }
 
       if (url.pathname === "/native/targets") return jsonResponse(await listTargets());
       if (url.pathname === "/native/logs") {
@@ -1308,6 +1591,7 @@ const startServer = (port) => serve({
       if (url.pathname === "/design/manifest") return jsonResponse(designManifest());
       if (url.pathname === "/design/asset") return serveProjectAsset(url.searchParams.get("path"));
       if (url.pathname === "/tools/stats") return jsonResponse(summarizeTools(toolLog));
+      if (url.pathname === "/plugins/list") return jsonResponse(pluginHost.describe());
       if (url.pathname === "/mirror/sources") {
         return jsonResponse(await listMirrorSources(url.searchParams.get("quick") === "1"));
       }
@@ -1361,7 +1645,7 @@ const startServer = (port) => serve({
     }
     // Static dashboard
     return new Response(readDashboard(), {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: { "Content-Type": "text/html; charset=utf-8", "Referrer-Policy": "no-referrer" },
     });
   },
 
@@ -1620,6 +1904,16 @@ if (EXPLICIT_PORT === null && activePort !== DEFAULT_PORT) {
 console.log(`  Dashboard : http://localhost:${activePort}/?token=${HUB_TOKEN}`);
 console.log(`  WebSocket : ws://<local-ip>:${activePort}`);
 console.log(`  Local MCP : http://127.0.0.1:${activePort}/mcp`);
+// A plugin is the one thing here that talks to the outside, so what it
+// will contact is printed with it rather than left to be discovered
+for (const line of pluginHost.banner()) console.log(line);
+if (SCREENSHOT_POLICY.mode === "off") {
+  console.log("  Screenshots: off (RN_DEVTOOLS_SCREENSHOTS). Agents prove steps with assert instead.");
+} else if (SCREENSHOT_POLICY.mode === "budget") {
+  console.log(`  Screenshots: ${SCREENSHOT_POLICY.budget} for this run (RN_DEVTOOLS_SCREENSHOTS)`);
+} else if (SCREENSHOT_POLICY.warning) {
+  console.log(`  Screenshots: ${SCREENSHOT_POLICY.warning}`);
+}
 console.log("");
 console.log("  The app connects automatically via the Metro server IP.");
 console.log("");

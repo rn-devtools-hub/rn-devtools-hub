@@ -73,6 +73,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "hub": "bun server/server.mjs",
+    "check:store-apis": "node scripts/check-store-apis.mjs",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build",
     "release": "release-it",
     "prepare": "husky"

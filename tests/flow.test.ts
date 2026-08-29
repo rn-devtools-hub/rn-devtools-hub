@@ -41,7 +41,7 @@ const {
 } = flowModule as {
   createRecorder: () => Record<string, any>;
   startRecording: (recorder: unknown, options?: Record<string, unknown>) => Record<string, unknown>;
-  stopRecording: (recorder: unknown) => Record<string, unknown>;
+  stopRecording: (recorder: unknown, options?: Record<string, unknown>) => Record<string, unknown>;
   recordAct: (recorder: unknown, entry: Record<string, unknown>) => void;
   buildFlow: (recorder: unknown, events: unknown) => Flow;
   renderFlowText: (flow: Flow) => string;
@@ -97,6 +97,45 @@ describe("recording lifecycle", () => {
     startRecording(recorder, { name: "second", cursor: 10 });
     expect(recorder.acts).toHaveLength(0);
     expect(recorder.name).toBe("second");
+  });
+
+  it("bounds the final action at the cursor captured when recording stops", () => {
+    const recorder = createRecorder();
+    startRecording(recorder, { name: "bounded", cursor: 0 });
+    recordAct(recorder, { action: "tap", selector: { by: "testID", value: "go" }, cursor: 0 });
+    stopRecording(recorder, { cursor: 2 });
+    const flow = buildFlow(recorder, [
+      event("screen.ready", { screen: "Expected" }, 2),
+      event("crash", { message: "unrelated later crash" }, 3),
+    ]);
+    expect(flow.clean).toBe(true);
+    expect(flow.steps[0].consequences).toHaveLength(1);
+  });
+
+  it("stores an environment placeholder instead of recorded sensitive text", () => {
+    const recorder = createRecorder();
+    startRecording(recorder, { cursor: 0 });
+    recordAct(recorder, {
+      action: "type",
+      selector: { by: "placeholder", value: "Password" },
+      text: "not-for-disk",
+      recordAs: "TEST_PASSWORD",
+      cursor: 0,
+    });
+    expect(recorder.acts[0].text).toBe("${TEST_PASSWORD}");
+    expect(JSON.stringify(recorder)).not.toContain("not-for-disk");
+  });
+
+  it("refuses an unsafe recordAs variable name", () => {
+    const recorder = createRecorder();
+    startRecording(recorder, { cursor: 0 });
+    expect(() => recordAct(recorder, {
+      action: "type",
+      selector: { by: "testID", value: "password" },
+      text: "secret",
+      recordAs: "bad-name",
+      cursor: 0,
+    })).toThrow("uppercase environment variable");
   });
 });
 

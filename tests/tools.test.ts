@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain JS module, no types
-import { createToolLog, recordToolCall, summarizeTools, readEmptiness, normalizeError } from "../server/tools.mjs";
+import { createToolLog, recordToolCall, summarizeTools, readEmptiness, normalizeError, readScreenshotPolicy, screenshotAdvice } from "../server/tools.mjs";
 
 const logWith = (calls: Array<Record<string, unknown>>) => {
   const log = createToolLog();
@@ -106,5 +106,93 @@ describe("summarizeTools", () => {
     expect(summary.totals.calls).toBe(3);
     expect(summary.totals.bytes).toBe(30);
     expect(log.seq).toBe(10);
+  });
+});
+
+/**
+ * Pixels.
+ *
+ * "Never verify with a screenshot" has been the first habit in the skill
+ * from the start, and a skill is advice: an agent that ignores it
+ * screenshots every step and bills a megabyte of context each time. These
+ * are the two things that turn the advice into something the hub can
+ * actually do: count what the pixels cost, and let them be switched off.
+ */
+describe("readScreenshotPolicy", () => {
+  it("leaves screenshots alone when nothing is set", () => {
+    expect(readScreenshotPolicy({})).toMatchObject({ mode: "on", budget: null });
+  });
+
+  it("reads off, and the spellings people actually type", () => {
+    for (const raw of ["off", "OFF", " none ", "false", "0", "no"]) {
+      expect(readScreenshotPolicy({ RN_DEVTOOLS_SCREENSHOTS: raw }).mode).toBe("off");
+    }
+  });
+
+  it("reads a budget, with or without the prefix", () => {
+    expect(readScreenshotPolicy({ RN_DEVTOOLS_SCREENSHOTS: "5" })).toMatchObject({ mode: "budget", budget: 5 });
+    expect(readScreenshotPolicy({ RN_DEVTOOLS_SCREENSHOTS: "budget:12" })).toMatchObject({ mode: "budget", budget: 12 });
+  });
+
+  it("keeps the capability and warns when the value cannot be read", () => {
+    // Silently disabling a tool because a variable was mistyped is worse
+    // than ignoring the variable
+    const policy = readScreenshotPolicy({ RN_DEVTOOLS_SCREENSHOTS: "yes please" });
+    expect(policy.mode).toBe("on");
+    expect(policy.warning).toMatch(/stay enabled/);
+  });
+});
+
+describe("screenshotAdvice", () => {
+  it("says nothing about a single look", () => {
+    const log = logWith([{ name: "screenshot_native", bytes: 900000 }]);
+    expect(screenshotAdvice(log).sinceProof).toBe(1);
+  });
+
+  it("counts the captures taken since the last assertion, and what they cost", () => {
+    const log = logWith([
+      { name: "screenshot_native", bytes: 1000 },
+      { name: "assert", bytes: 200 },
+      { name: "ui_act", bytes: 300 },
+      { name: "screenshot_native", bytes: 2000 },
+      { name: "screenshot_native", bytes: 3000 },
+    ]);
+    // The assert resets it: what matters is pixels used INSTEAD of proof
+    expect(screenshotAdvice(log)).toEqual({ sinceProof: 2, bytes: 5000 });
+  });
+
+  it("forgets the loop as soon as something was actually proven", () => {
+    const log = logWith([
+      { name: "screenshot_native", bytes: 1000 },
+      { name: "screenshot_native", bytes: 1000 },
+      { name: "assert", bytes: 100 },
+    ]);
+    expect(screenshotAdvice(log)).toEqual({ sinceProof: 0, bytes: 0 });
+  });
+});
+
+describe("pixel accounting", () => {
+  it("counts pixel calls outside the ring, so a budget survives the window", () => {
+    const log = createToolLog(2);
+    for (const call of [
+      { name: "screenshot_native", bytes: 10 },
+      { name: "screenshot_native", bytes: 20 },
+      { name: "query_ui", bytes: 5 },
+      { name: "query_ui", bytes: 5 },
+    ]) recordToolCall(log, call);
+    expect(log.calls.length).toBe(2);
+    expect(log.pixelCalls).toBe(2);
+    expect(log.pixelBytes).toBe(30);
+  });
+
+  it("reports the pixel share of the context in the summary", () => {
+    const log = logWith([
+      { name: "screenshot_native", bytes: 900 },
+      { name: "query_ui", bytes: 100 },
+    ]);
+    const summary = summarizeTools(log);
+    expect(summary.totals.pixelCalls).toBe(1);
+    expect(summary.totals.pixelBytes).toBe(900);
+    expect(summary.totals.bytes).toBe(1000);
   });
 });

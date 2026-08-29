@@ -33,6 +33,7 @@ export const createRecorder = () => ({
   name: null,
   startedAt: null,
   startCursor: 0,
+  endCursor: null,
   acts: [],
 });
 
@@ -41,13 +42,20 @@ export const startRecording = (recorder, { name, cursor } = {}) => {
   recorder.name = name ?? "recorded-flow";
   recorder.startedAt = Date.now();
   recorder.startCursor = Number(cursor) || 0;
+  recorder.endCursor = null;
   recorder.acts = [];
   return { ok: true, name: recorder.name, startCursor: recorder.startCursor };
 };
 
-export const stopRecording = (recorder) => {
+export const stopRecording = (recorder, { cursor } = {}) => {
   recorder.active = false;
-  return { ok: true, name: recorder.name, acts: recorder.acts.length };
+  recorder.endCursor = Number.isFinite(Number(cursor)) ? Number(cursor) : null;
+  return {
+    ok: true,
+    name: recorder.name,
+    acts: recorder.acts.length,
+    endCursor: recorder.endCursor,
+  };
 };
 
 /**
@@ -61,13 +69,42 @@ const recordedIndex = (raw) => {
   return Number.isInteger(index) && index >= 0 ? index : null;
 };
 
+const recordedText = (entry) => {
+  if (!entry.recordAs) return entry.text ?? null;
+  const name = String(entry.recordAs);
+  if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(name)) {
+    throw new Error("recordAs must be an uppercase environment variable name");
+  }
+  return `\${${name}}`;
+};
+
+const SENSITIVE_TARGET = /pass(word|code)?|otp|one.?time|secret|token|pin|cvv|cvc/i;
+
+export const needsRecordedVariable = (entry) => {
+  if (entry?.action !== "type" || entry.recordAs) return false;
+  const selector = entry.selector ?? {};
+  const target = entry.target ?? {};
+  if (target.secureTextEntry === true || target.props?.secureTextEntry === true) return true;
+  return [
+    selector.value, selector.name, selector.within?.value, selector.within?.name,
+    target.testID, target.name, target.placeholder, target.props?.testID,
+    target.props?.placeholder, target.props?.accessibilityLabel,
+  ]
+    .some((value) => typeof value === "string" && SENSITIVE_TARGET.test(value));
+};
+
 /** Called by the hub after every successful ui_act while recording */
 export const recordAct = (recorder, entry) => {
   if (!recorder.active) return;
+  if (needsRecordedVariable(entry)) {
+    throw new Error("Sensitive type actions require recordAs while recording");
+  }
   recorder.acts.push({
     action: entry.action,
     selector: entry.selector,
-    text: entry.text ?? null,
+    // A caller can send the literal value to the live input while keeping
+    // only an environment placeholder at every durable boundary.
+    text: recordedText(entry),
     // A selector matching several elements is disambiguated by the index,
     // so a flow that forgets it replays on a DIFFERENT element while
     // reading as the same script
@@ -140,7 +177,9 @@ export const buildFlow = (recorder, events) => {
 
   const steps = acts.map((act, index) => {
     const from = act.cursor;
-    const to = index + 1 < acts.length ? acts[index + 1].cursor : Number.POSITIVE_INFINITY;
+    const to = index + 1 < acts.length
+      ? acts[index + 1].cursor
+      : recorder.endCursor ?? Number.POSITIVE_INFINITY;
     const window = list.filter((event) => {
       const seq = event.seq ?? 0;
       return seq > from && seq <= to && NOTABLE_TYPES.has(event.type);
@@ -250,7 +289,7 @@ export const FLOW_TOOLS = [
   {
     name: "stop_recording",
     description: "Stops the current recording. The flow stays available for export_flow.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {

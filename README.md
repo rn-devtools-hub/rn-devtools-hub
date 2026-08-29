@@ -160,7 +160,9 @@ hub. Your data never leaves your machine.
 | SQLite | Read-only SQL console (SELECT/PRAGMA) on your app's database |
 | Endpoints | Map of declared endpoints, calls, latencies |
 | Actions | Buttons driving the app: reload, clear caches, your custom actions |
-| Tools | What the agents do with this hub: calls per tool, failures with their message, empty answers and why, context bytes returned, selectors used, and the loop replayed against the app's own events |
+| Tests | Human-readable `.hubflow` scenarios, live replay progress, failure diagnosis, approved visual evidence and safe target repair candidates |
+| Tools | What the agents do with this hub: calls per tool, failures with their message, empty answers and why, context bytes returned (pixels counted separately, because a session spending most of its context on screenshots is a session verifying the expensive way), selectors used, and the loop replayed against the app's own events |
+| Plugins | The services around the app: App Store Connect and Google Play, what each one is configured with, whether it may change a release, and every host it will contact |
 | Design | Icon, splash, fonts, sounds, identity (read from app.json and the assets) |
 | Mirror | Live app screen (needs react-native-view-shot in the app), full Android via adb (tap, swipe, keyboard, Wi-Fi), iOS simulator via xcrun |
 
@@ -172,6 +174,10 @@ you start reading code.
 Plus: multi-device with merged sessions, bug report export in Markdown (ready
 for a GitHub issue), real-time capability badges, and a local MCP server to
 drive everything from Claude, Cursor or any MCP client.
+
+See [Hubflow scenarios](docs/hubflow.md) to record an exploration, save it
+as a causal E2E test, replay it in CI and inspect its selected success or
+failure screenshots in the dashboard.
 
 ## What an agent gets
 
@@ -186,7 +192,10 @@ drive everything from Claude, Cursor or any MCP client.
 | `render_component` | Mount a component inside the running app, under its real providers |
 | `snapshot_baseline`, `compare_snapshot` | A visual diff that names the component owning the changed region |
 | `export_session`, `export_flow` | One correlated timeline, and actions paired with the consequences they caused |
+| `save_flow`, `list_flows`, `get_flow`, `run_flow`, `propose_flow_repair` | Persist a causal scenario, replay it with assertions and screenshots, and create a reviewable repair candidate when a strongly identified target moves |
 | `audit_accessibility` | What React renders but the accessibility tree does not expose |
+| `list_plugins`, `asc_*`, `gplay_*` | The release around the app: has the build finished processing, where is the version in review, what is production serving, what do the store reviews say. And driving it: distribute to TestFlight, submit for review, promote a track, widen or halt a staged rollout |
+| `capture_store_screenshots` | Regenerate the App Store and Play screenshots from the running app: devices, locales and screens from a manifest, each reached with the app's own dev actions, captured at native resolution and uploaded. The pixels never enter the agent's context |
 
 Source locations survive React 19, where the location lives in owner stacks
 pointing into the bundle: the hub symbolicates them against Metro before the
@@ -214,6 +223,18 @@ onboarding skipped), plus `set_permission`, `launch_app`, `open_url`,
 controls no UI tree can show) and the last-resort `tap_native` and
 `swipe_native`, on iOS simulators and Android devices, with every capability
 probed and degrading cleanly.
+
+Everything above stops at the machine. The half of a release that does not
+is behind a plugin: App Store Connect and Google Play ship with the hub and
+stay inert until you give them credentials. They read a release and they
+drive one, so the agent that decides to widen a rollout is the agent that
+already has the crash evidence for it. Installing the hub's plugin installs
+the release skill with it, so there is nothing else to add.
+
+A configured plugin prints the hosts it will contact at startup, an
+unconfigured one exposes no tool at all rather than costing an agent context
+it cannot use, and `RN_DEVTOOLS_PLUGIN_WRITES=off` removes every tool that
+could change anything. See [docs/plugins.md](docs/plugins.md).
 
 ## Quick start
 
@@ -284,6 +305,14 @@ project:
 - The SQLite console only accepts SELECT and PRAGMA
 - The MCP server only listens on localhost, with Origin verification
 - Design panel assets are confined to the project root, with whitelisted extensions
+- Plugins are the only outbound path, they are inert without credentials,
+  each one declares the hosts it contacts, and no credential is ever
+  returned by a tool or written to a log
+- Every plugin tool that changes something is declared as such, is
+  annotated so MCP clients confirm it, and can be removed entirely with
+  `RN_DEVTOOLS_PLUGIN_WRITES=off`
+- `RN_DEVTOOLS_SCREENSHOTS=off` (or a number) removes or budgets pixel
+  captures, for teams who do not want an agent verifying with screenshots
 
 ## Contributing
 

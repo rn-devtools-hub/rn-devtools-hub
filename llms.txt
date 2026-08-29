@@ -18,6 +18,9 @@ Key points to integrate the package into an app:
 - Two transports: streamable HTTP on 127.0.0.1:8973/mcp, or `npx rn-devtools-hub mcp` for stdio-only clients
 - Claude Code: `/plugin marketplace add rn-devtools-hub/rn-devtools-hub` installs the server plus a skill that teaches an agent to chain the tools
 - The events/commands contract of each panel is in docs/protocol.md: implementing it is enough to feed the dashboard
+- Hub plugins reach the services around the app (App Store Connect, Google Play): they read a release and drive one (TestFlight distribution, submit for review, track promotion, staged rollout), stay inert without credentials, declare every host they contact, and every mutating tool disappears under RN_DEVTOOLS_PLUGIN_WRITES=off. The rn-devtools-release skill ships with the plugin. See docs/plugins.md
+- Store screenshots: capture_store_screenshots regenerates the App Store and Play sets from the running app (manifest of devices, locales and screens, reached with dev actions and waited on with events), then asc_upload_screenshots and gplay_upload_screenshots publish them. Captures are written to disk, never into the agent's context
+- Hubflow: record actions and their consequences, save versioned `.hubflow` scenarios under `tests/hub`, replay them through MCP, the Tests dashboard or `npx rn-devtools-hub run`, and keep reports plus selected success/failure screenshots under `.rn-devtools/flows/runs`
 - Security: dashboard token, secret redaction, read-only SQLite, MCP on localhost only
 
 ## Documentation
@@ -25,6 +28,8 @@ Key points to integrate the package into an app:
 - [README](https://github.com/rn-devtools-hub/rn-devtools-hub/blob/main/README.md): overview, quick start, feature table
 - [Integration guide](https://rn-devtools-hub.github.io/rn-devtools-hub/integration.html): step-by-step recipes per feature (network, cache, storage, SQLite, actions, mirror)
 - [Protocol](https://rn-devtools-hub.github.io/rn-devtools-hub/protocol.html): complete contract of events and commands between app, hub and dashboard
+- [Plugins](https://rn-devtools-hub.github.io/rn-devtools-hub/plugins.html): the App Store Connect and Google Play plugins, how to configure them, and how to write one
+- [Hubflow](https://rn-devtools-hub.github.io/rn-devtools-hub/hubflow.html): record, save, replay, inspect and safely repair causal E2E scenarios
 - [AGENTS.md](https://github.com/rn-devtools-hub/rn-devtools-hub/blob/main/AGENTS.md): integration procedure for AI agents, known pitfalls, validation
 - [CONTRIBUTING](https://github.com/rn-devtools-hub/rn-devtools-hub/blob/main/CONTRIBUTING.md): architecture, invariants, conventional commits, release
 

@@ -10,7 +10,7 @@
     {
       "name": "rn-devtools-hub",
       "source": "./plugins/rn-devtools-hub",
-      "description": "See the app as React sees it, act without coordinates, and prove it works. Wires the local MCP server and teaches an agent to chain its tools."
+      "description": "See the app as React sees it, act without coordinates, prove it works, then ship it. Wires the local MCP server and installs two skills: driving the running app, and releasing it to TestFlight, the App Store and Google Play."
     }
   ]
 }

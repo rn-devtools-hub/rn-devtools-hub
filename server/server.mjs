@@ -690,7 +690,7 @@ const MCP_TOOLS = [
   {
     name: "ui_act",
     description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd, scrollBy (dx/dy in points, relative to the current offset), focus and blur. focus opens the keyboard, which is what makes anything depending on it (KeyboardAvoidingView, insets) verifiable without touching the device. Target by testID, text, label, placeholder, type or role plus name; scope with within. placeholder is how a form field with no testID is reached without counting positions. When several elements match, the result lists the candidates with rects so you can pass index; an index beyond the last match is REFUSED (ok:false, reason:\"index-out-of-range\") instead of falling back to the last element, because acting on another element and reporting success is the one failure an automation tool must never produce. A typed value that does not come back is reported the same way (reason:\"value-unchanged\"), and verified/note say whether the text truly reached the field. Hidden navigator screens are skipped unless includeHidden.",
-    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "scrollBy", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number", description: "action:scrollBy, horizontal distance in points from the current offset" }, dy: { type: "number", description: "action:scrollBy, vertical distance in points from the current offset (positive scrolls down)" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "scrollBy", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, recordAs: { type: "string", pattern: "^[A-Z][A-Z0-9_]{1,63}$", description: "For type actions, send text live but persist only ${NAME} in recordings" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number", description: "action:scrollBy, horizontal distance in points from the current offset" }, dy: { type: "number", description: "action:scrollBy, vertical distance in points from the current offset (positive scrolls down)" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
@@ -1072,7 +1072,7 @@ const handleMcpTool = async (name, args = {}) => {
   }
   if (name === "get_ui_tree" || name === "query_ui" || name === "ui_act") {
     const command = { get_ui_tree: "ui.tree", query_ui: "ui.query", ui_act: "ui.act" }[name];
-    const { deviceId: _ignored, ...payload } = args;
+    const { deviceId: _ignored, recordAs: _recordAs, ...payload } = args;
 
     /**
      * A UI is asynchronous. query_ui answering "nothing matched" during a
@@ -1137,6 +1137,7 @@ const handleMcpTool = async (name, args = {}) => {
         action: payload.action,
         selector: { by: payload.by, value: payload.value, name: payload.name, within: payload.within },
         text: payload.text,
+        recordAs: args.recordAs,
         // Without the index the replay runs the SAME selector on ANOTHER
         // element: a flow recorded on the third row of a list came back
         // as a flow on the first one, and nothing in the export said so
@@ -1215,7 +1216,7 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "start_recording") {
     return startRecording(recorder, { name: args.name, cursor: device.lastSeq ?? 0 });
   }
-  if (name === "stop_recording") return stopRecording(recorder);
+  if (name === "stop_recording") return stopRecording(recorder, { cursor: device.lastSeq ?? 0 });
   if (name === "export_flow") {
     if (!recorder.acts.length) {
       throw new Error("Nothing recorded: call start_recording, drive the app with ui_act, then export");

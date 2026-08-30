@@ -57,6 +57,7 @@
   "files": [
     "dist",
     "server",
+    "scripts/benchmark-pilot.mjs",
     "bin",
     "src/cli",
     "assets/logo.svg",
@@ -73,6 +74,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "hub": "bun server/server.mjs",
+    "benchmark:pilot": "node scripts/benchmark-pilot.mjs",
     "check:store-apis": "node scripts/check-store-apis.mjs",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build",
     "release": "release-it",

@@ -1,0 +1,30 @@
+{
+  "format": "rn-devtools-bugfix-pilot",
+  "version": 1,
+  "frozenAt": "REPLACE_WITH_ISO_TIMESTAMP",
+  "seed": "REPLACE_WITH_PUBLIC_RANDOM_SEED",
+  "reference": {
+    "repository": "REPLACE_WITH_REPOSITORY_URL",
+    "revision": "REPLACE_WITH_FULL_COMMIT_SHA"
+  },
+  "client": {
+    "name": "Claude Code",
+    "version": "REPLACE_WITH_CLIENT_VERSION",
+    "model": "REPLACE_WITH_EXACT_MODEL_IDENTIFIER"
+  },
+  "repetitions": 3,
+  "budget": {
+    "toolCalls": 40,
+    "wallClockMs": 1200000
+  },
+  "bugs": [
+    { "id": "bug-01", "category": "state", "fixCommit": "REPLACE", "prompt": "REPLACE", "reproductionCommand": "REPLACE", "targetTestCommand": "REPLACE", "regressionCommand": "REPLACE", "targetTestSha256": "0000000000000000000000000000000000000000000000000000000000000000", "expectedHubHelp": true },
+    { "id": "bug-02", "category": "network", "fixCommit": "REPLACE", "prompt": "REPLACE", "reproductionCommand": "REPLACE", "targetTestCommand": "REPLACE", "regressionCommand": "REPLACE", "targetTestSha256": "0000000000000000000000000000000000000000000000000000000000000000", "expectedHubHelp": true },
+    { "id": "bug-03", "category": "navigation", "fixCommit": "REPLACE", "prompt": "REPLACE", "reproductionCommand": "REPLACE", "targetTestCommand": "REPLACE", "regressionCommand": "REPLACE", "targetTestSha256": "0000000000000000000000000000000000000000000000000000000000000000", "expectedHubHelp": true },
+    { "id": "bug-04", "category": "event-handling", "fixCommit": "REPLACE", "prompt": "REPLACE", "reproductionCommand": "REPLACE", "targetTestCommand": "REPLACE", "regressionCommand": "REPLACE", "targetTestSha256": "0000000000000000000000000000000000000000000000000000000000000000", "expectedHubHelp": true },
+    { "id": "bug-05", "category": "timing", "fixCommit": "REPLACE", "prompt": "REPLACE", "reproductionCommand": "REPLACE", "targetTestCommand": "REPLACE", "regressionCommand": "REPLACE", "targetTestSha256": "0000000000000000000000000000000000000000000000000000000000000000", "expectedHubHelp": true },
+    { "id": "bug-06", "category": "platform", "fixCommit": "REPLACE", "prompt": "REPLACE", "reproductionCommand": "REPLACE", "targetTestCommand": "REPLACE", "regressionCommand": "REPLACE", "targetTestSha256": "0000000000000000000000000000000000000000000000000000000000000000", "expectedHubHelp": true },
+    { "id": "bug-07", "category": "visual-control", "fixCommit": "REPLACE", "prompt": "REPLACE", "reproductionCommand": "REPLACE", "targetTestCommand": "REPLACE", "regressionCommand": "REPLACE", "targetTestSha256": "0000000000000000000000000000000000000000000000000000000000000000", "expectedHubHelp": false },
+    { "id": "bug-08", "category": "pre-runtime-control", "fixCommit": "REPLACE", "prompt": "REPLACE", "reproductionCommand": "REPLACE", "targetTestCommand": "REPLACE", "regressionCommand": "REPLACE", "targetTestSha256": "0000000000000000000000000000000000000000000000000000000000000000", "expectedHubHelp": false }
+  ]
+}

@@ -85,15 +85,42 @@ describe("hubflow execution", () => {
       teardown: [{ tool: "restore_time", arguments: {} }], visualEvidence: { screenshots: "every-step", final: true },
     });
     const seen: string[] = [];
-    const report = await hubflow.runHubflow(flow, { projectRoot: root, runId: "run-2", invoke: async (tool: string, args: any) => { seen.push(tool); if (args.value === "Old label") throw new Error("selector not found"); return { ok: true }; }, capture: async ({ path }: any) => { await writeFile(path, "png"); } });
+    const report = await hubflow.runHubflow(flow, { projectRoot: root, runId: "run-2", invoke: async (tool: string, args: any) => { seen.push(tool); if (args.value === "Old label") throw new Error("selector not found"); return { ok: true }; }, capture: async ({ path }: any) => { await writeFile(path, "png"); }, collectFailureEvidence: async () => ({ kind: "native-logs", lines: ["FATAL EXCEPTION"] }) });
     expect(report.status).toBe("failed");
     expect(report.ok).toBe(false);
     expect(report.reason).toBe("target-mismatch");
     expect(report.failedStep).toBe(1);
     expect(report.steps[1].failure.classification).toBe("target-mismatch");
+    expect(report.steps[1].failure.nativeEvidence).toEqual({ kind: "native-logs", lines: ["FATAL EXCEPTION"] });
     expect(report.steps[1].previousSuccessfulCapture.path).toBe("step-01.png");
     expect(report.steps[1].screenshot.path).toBe("failure-step-02.png");
     expect(seen[seen.length - 1]).toBe("restore_time");
+  });
+
+  it("selects bounded native crash context without attaching the whole logcat dump", () => {
+    const lines = [
+      "unrelated before", "context before", "E AndroidRuntime: FATAL EXCEPTION: main",
+      "java.lang.RuntimeException: mounting failed", "at com.rnmaps.maps.MapView.onAttachedToWindow(MapView.java:328)",
+      "E unknown:SurfaceMountingManager: Stopping surface [81]", "context after", "nearby context",
+      "far unrelated one", "far unrelated two", "far unrelated three",
+    ];
+    const selected = hubflow.selectNativeFailureLogs(lines);
+    expect(selected).toContain("E AndroidRuntime: FATAL EXCEPTION: main");
+    expect(selected).toContain("at com.rnmaps.maps.MapView.onAttachedToWindow(MapView.java:328)");
+    expect(selected).toContain("E unknown:SurfaceMountingManager: Stopping surface [81]");
+    expect(selected).not.toContain("far unrelated three");
+  });
+
+  it("keeps native evidence collection failures secondary", async () => {
+    const root = await project();
+    const report = await hubflow.runHubflow(sample(), {
+      projectRoot: root,
+      invoke: async () => { throw new Error("Device not connected"); },
+      collectFailureEvidence: async () => { throw new Error("adb unavailable"); },
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0].failure.message).toContain("Device not connected");
+    expect(report.evidenceErrors).toContainEqual({ label: "native-failure-logs", message: "adb unavailable" });
   });
 
   it("does not turn a missing screenshot adapter into a functional failure", async () => {

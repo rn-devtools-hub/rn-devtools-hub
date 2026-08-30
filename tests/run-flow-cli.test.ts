@@ -22,12 +22,17 @@ describe("hubflow CLI", () => {
         return { ok: true, json: async () => ({ result: { content: [{ type: "text", text: JSON.stringify({ project: { directory: "/project" } }) }] } }) };
       }
       expect(JSON.parse(init.body).params).toMatchObject({ name: "run_flow", arguments: { path: "tests/hub/fail.hubflow" } });
-      return { ok: true, json: async () => ({ result: { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, name: "fail", status: "failed", failedStep: 1, reason: "expectation-failed" }) }] } }) };
+      return { ok: true, json: async () => ({ result: { isError: true, content: [{ type: "text", text: JSON.stringify({
+        ok: false, name: "fail", status: "failed", failedStep: 1, reason: "expectation-failed",
+        steps: [{}, { failure: { nativeEvidence: { target: "adb:phone", count: 2, lines: ["FATAL EXCEPTION: main", "at MapView.onAttachedToWindow"] } } }],
+      }) }] } }) };
     };
     const status = await runFlowCommand(["tests/hub/fail.hubflow", "--port", "8973"], {
       cwd: "/project", fetchImpl, write: (line: string) => writes.push(line),
     });
     expect(status).toBe(1);
     expect(writes).toContain("Failed step: 2");
+    expect(writes).toContain("Native evidence: 2 line(s) from adb:phone");
+    expect(writes).toContain("  FATAL EXCEPTION: main");
   });
 });

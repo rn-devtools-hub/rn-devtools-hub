@@ -389,6 +389,43 @@ const safeCapture = async (capture, runDir, label, context, report) => {
   }
 };
 
+const NATIVE_CRASH_PATTERN = /FATAL EXCEPTION|AndroidRuntime|RuntimeException|Caused by:|MapView\.onAttachedToWindow|Stopping surface|SIGABRT|SIGSEGV/i;
+const NATIVE_FAILURE_PATTERN = /SurfaceMountingManager|DevLauncher|ReactHost|BridgelessReact|rnmaps|FabricUIManager/i;
+
+/** Prioritize fatal neighborhoods, then add bounded lifecycle context. */
+export const selectNativeFailureLogs = (lines, limit = 80) => {
+  if (!Array.isArray(lines)) return [];
+  const maximum = Math.max(1, Math.min(Number(limit) || 80, 200));
+  const critical = new Set();
+  const related = new Set();
+  lines.forEach((line, index) => {
+    const value = String(line);
+    const destination = NATIVE_CRASH_PATTERN.test(value) ? critical : NATIVE_FAILURE_PATTERN.test(value) ? related : null;
+    if (!destination) return;
+    const radius = destination === critical ? 4 : 2;
+    for (let nearby = Math.max(0, index - radius); nearby <= Math.min(lines.length - 1, index + radius); nearby += 1) {
+      destination.add(nearby);
+    }
+  });
+  const selected = [...critical];
+  for (const index of related) {
+    if (selected.length >= maximum) break;
+    if (!critical.has(index)) selected.push(index);
+  }
+  return selected.sort((a, b) => a - b).slice(0, maximum).map((index) => String(lines[index]));
+};
+
+const safeFailureEvidence = async (collect, context, report) => {
+  if (!collect) return null;
+  try {
+    return await collect(context);
+  } catch (error) {
+    report.evidenceErrors ??= [];
+    report.evidenceErrors.push({ label: "native-failure-logs", message: String(error?.message ?? error) });
+    return null;
+  }
+};
+
 const captureEvidence = async (capture, runDir, label, context) => {
   if (!capture) return null;
   const path = resolve(runDir, `${label}.png`);
@@ -461,6 +498,10 @@ export const runHubflow = async (flow, options) => {
           tool: error.flowCall?.tool ?? null,
           ...(repairCandidates(error).length ? { candidates: repairCandidates(error) } : {}),
         };
+        const nativeEvidence = await safeFailureEvidence(options.collectFailureEvidence, {
+          phase: "step", step: index, error: String(error.message), tool: error.flowCall?.tool ?? null,
+        }, report);
+        if (nativeEvidence) stepReport.failure.nativeEvidence = nativeEvidence;
         if (policy !== "off") {
           const artifact = await safeCapture(options.capture, runDir, `failure-step-${String(index + 1).padStart(2, "0")}`, { kind: "failure", step: index }, report);
           if (artifact) { report.artifacts.push(artifact); stepReport.screenshot = artifact; }
@@ -474,6 +515,10 @@ export const runHubflow = async (flow, options) => {
   } catch (error) {
     failure = error;
     report.setupFailure = { classification: classifyFlowFailure(error, error.flowCall), message: String(error.message), tool: error.flowCall?.tool ?? null };
+    const nativeEvidence = await safeFailureEvidence(options.collectFailureEvidence, {
+      phase: "setup", error: String(error.message), tool: error.flowCall?.tool ?? null,
+    }, report);
+    if (nativeEvidence) report.setupFailure.nativeEvidence = nativeEvidence;
     if (policy !== "off") {
       const artifact = await safeCapture(options.capture, runDir, "failure-setup", { kind: "failure", phase: "setup" }, report);
       if (artifact) report.artifacts.push(artifact);
@@ -484,6 +529,10 @@ export const runHubflow = async (flow, options) => {
     if (teardownErrors.length) {
       report.teardownErrors = teardownErrors;
       report.teardownFailure = { classification: "teardown-failed", message: "One or more teardown calls failed" };
+      const nativeEvidence = await safeFailureEvidence(options.collectFailureEvidence, {
+        phase: "teardown", error: report.teardownFailure.message, tool: teardownErrors[0]?.tool ?? null,
+      }, report);
+      if (nativeEvidence) report.teardownFailure.nativeEvidence = nativeEvidence;
       failure ??= new Error("Hubflow teardown failed");
       if (policy !== "off") {
         const artifact = await safeCapture(options.capture, runDir, "failure-teardown", { kind: "failure", phase: "teardown" }, report);

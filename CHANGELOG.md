@@ -2,6 +2,16 @@
 
 Generated automatically from conventional commits.
 
+## [0.17.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.16.0...v0.17.0) (2026-08-30)
+
+### Features
+
+* **assert:** prove how many elements a list rendered ([408483c](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/408483c89ea44999453696d3cb55b6e4a3e61e13))
+
+### Bug Fixes
+
+* **hub:** report the real package version in the MCP handshake ([efbeae8](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/efbeae8f3aa8c5f2d384f7d6fe7c1a29c365004e))
+
 ## [0.16.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.15.1...v0.16.0) (2026-08-29)
 
 ### Features

@@ -95,6 +95,7 @@ without walking any screen at all.
 | Act on it | `ui_act`, or `run_action` to skip the path |
 | Did it work? | `assert` |
 | Did anything break that has no pixel? | `assert` kind `network_ok`, `no_console_error`, `no_crash` |
+| How many did it render? | `assert` kind `count`, with `equals`, `min` or `max` |
 | What happened after my action? | `get_events_since`, `wait_for_event` |
 | Did I break the layout? | `snapshot_baseline` then `compare_snapshot` |
 | Does this component render correctly? | `render_component` |

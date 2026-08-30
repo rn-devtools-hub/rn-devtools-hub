@@ -29,6 +29,11 @@ const readToolResult = (message) => {
   return { value, isError: result?.isError === true };
 };
 
+const failureEvidence = (value) => value?.setupFailure?.nativeEvidence
+  ?? value?.teardownFailure?.nativeEvidence
+  ?? value?.steps?.find((step) => step?.failure?.nativeEvidence)?.failure?.nativeEvidence
+  ?? null;
+
 export const runFlowCommand = async (argv, io = {}) => {
   const options = parseRunFlowArgs(argv);
   const cwd = io.cwd ?? process.cwd();
@@ -61,5 +66,10 @@ export const runFlowCommand = async (argv, io = {}) => {
   write(`Run: ${value.runId ?? "not available"}`);
   if (value.failedStep !== undefined && value.failedStep !== null) write(`Failed step: ${value.failedStep + 1}`);
   if (value.reason) write(`Reason: ${value.reason}`);
+  const nativeEvidence = failureEvidence(value);
+  if (nativeEvidence) {
+    write(`Native evidence: ${nativeEvidence.count ?? nativeEvidence.lines?.length ?? 0} line(s) from ${nativeEvidence.target ?? "device"}`);
+    for (const line of nativeEvidence.lines ?? []) write(`  ${line}`);
+  }
   return isError || value.ok === false ? 1 : 0;
 };

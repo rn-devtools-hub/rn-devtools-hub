@@ -2,6 +2,23 @@
 
 Generated automatically from conventional commits.
 
+## [0.16.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.15.1...v0.16.0) (2026-08-29)
+
+### Features
+
+* **cli:** run Hubflow scenarios ([eace502](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/eace502461e17d78fbdf289d2ba78cf6bc39b777))
+* **dashboard:** add the Hubflow tests workspace ([f0bfe62](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/f0bfe62689df6ea8d5348f3f1a0268761a9eebc4))
+* **hub:** count what screenshots cost, and let them be switched off ([3a445ab](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/3a445ab460242b8802242f3ab0cddaeaf714746f))
+* **hub:** drive App Store Connect and Google Play from the hub ([7c07b68](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/7c07b68f4e00ce14178a23b230f3bb50c9dc3df7))
+* **hubflow:** add durable causal scenarios ([029914d](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/029914df554806d95aca85bcc940dda9e3c9bb7a))
+* **hub:** regenerate and publish the store screenshots from the app ([63678cf](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/63678cf92e75357068bb8ca14c5ef2d97b03e62a))
+* **plugins:** declare the vendor contract, and check it upstream ([c595cbb](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/c595cbb9a63541d9aa0cf36875ac2d47fbbf0194))
+
+### Bug Fixes
+
+* **flow:** bound and protect recordings ([20ad428](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/20ad428782b49492b637870fe00d6d35fb50d12b))
+* **hubflow:** harden replay evidence ([8b64e1f](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/8b64e1f070e7ed27559829e135761a04c21564c6))
+
 ## [0.15.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.15.0...v0.15.1) (2026-08-15)
 
 ### Bug Fixes

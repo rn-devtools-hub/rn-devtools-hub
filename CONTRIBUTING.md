@@ -57,6 +57,47 @@ To test with a real app: see docs/integration.md in an RN project.
 - CHANGELOG.md is generated automatically by release-it from the commits:
   never edit it by hand.
 
+## What a version promises
+
+A major bump exists to protect the things other people build against. Below is
+what counts, so that "is this breaking?" is answered by a list rather than by a
+judgement call at merge time.
+
+**The public surface:**
+
+- **The SDK entry point.** Everything `rn-devtools-hub/client` exports: the
+  `devtools` object and its methods, the named helpers, and the exported types.
+- **The MCP tool contract.** The name of every tool, the required fields of its
+  input schema, and the result fields the skills and the docs tell an agent to
+  read.
+- **The CLI.** The `rn-devtools-hub` subcommands (`init`, `mcp`, `run`) and
+  their flags.
+- **The `.hubflow` format**, which additionally carries its own `format` and
+  `version` fields, both checked on read, so a scenario written today keeps
+  running or fails loudly.
+- **The plugin contract**: `id`, `handle(name, args, ctx)`, `tools` and
+  `writeTools`, and the rule that a tool name starts with its plugin id.
+
+**What is deliberately not public**, and may change in any release:
+
+- Everything else under `server/`. Those modules ship so the hub can run, not
+  so anyone can import them.
+- The dashboard: its markup, its element ids, its HTTP endpoints. It is a user
+  interface and it moves.
+- The wording of tool descriptions, failure hints and report text. An agent
+  reads them; nothing should parse them.
+- Event payload shapes that only ever travel between an SDK and a hub of the
+  same version.
+
+**Which increment applies:**
+
+- Adding a tool, an optional input, or a field to a result is a `feat`.
+- Widening an enum is a `feat`. `assert` gaining `kind: "count"` did not break
+  a caller, because no existing scenario stopped working.
+- Removing or renaming a tool, promoting an optional input to required,
+  narrowing an enum, dropping a documented result field, or changing an SDK
+  export is `feat!`.
+
 ## Branches
 
 - `main`: released code. Protected, only receives merges from `develop`

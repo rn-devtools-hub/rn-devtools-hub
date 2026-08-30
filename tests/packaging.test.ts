@@ -107,6 +107,27 @@ describe("MCP registry manifest", () => {
 });
 
 /**
+ * The MCP handshake is the only place the hub names its own version, and an
+ * agent's connection log is where a user reads it. A literal there is wrong
+ * the moment the first release bumps package.json, so the handshake has to
+ * derive the version instead of restating it.
+ */
+describe("MCP handshake version", () => {
+  const source = readFileSync(join(root, "server/server.mjs"), "utf-8");
+
+  it("reports the package version rather than a hardcoded literal", () => {
+    expect(source).toMatch(/serverInfo: \{ name: "rn-devtools-hub", version: HUB_VERSION \}/);
+    expect(source).not.toMatch(/serverInfo: \{[^}]*version: "/);
+  });
+
+  it("reads that version from the hub's own package, not the host app's", () => {
+    // PROJECT_ROOT is the user's React Native app: reading it here would
+    // report the app's version as the hub's
+    expect(source).toMatch(/HUB_VERSION = \(\(\) => \{[\s\S]*?join\(__dirname, "\.\.", "package\.json"\)/);
+  });
+});
+
+/**
  * Two agents, one skill.
  *
  * Claude Code reads plugins/<name>/skills/<name>/SKILL.md, Codex reads

@@ -45,6 +45,19 @@ const PROJECT_NAME = (() => {
   }
 })();
 
+/**
+ * The hub's own version, read from the package next to server/. An MCP client
+ * shows this in its handshake log, so a hardcoded literal silently reports a
+ * version that stopped being true at the first release.
+ */
+const HUB_VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 const DEFAULT_PORT = 8973;
 /** Last port the automatic search will try before giving up */
 const LAST_FALLBACK_PORT = 8982;
@@ -1398,7 +1411,7 @@ const handleMcpRequest = async (request, bunServer) => {
     return jsonResponse(mcpResult(id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "rn-devtools-hub", version: "0.1.0" },
+      serverInfo: { name: "rn-devtools-hub", version: HUB_VERSION },
     }));
   }
   if (method === "notifications/initialized") return new Response(null, { status: 202 });

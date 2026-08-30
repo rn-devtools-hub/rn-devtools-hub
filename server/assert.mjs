@@ -20,9 +20,11 @@ const EVIDENCE_LIMIT = 10;
 const DEFAULT_WINDOW_MS = 5000;
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 250;
+/** Highest cardinality kind:count can distinguish; beyond it the count saturates */
+const COUNT_LIMIT = 200;
 
 export const EVENT_KINDS = new Set(["network_ok", "no_console_error", "no_crash"]);
-export const ELEMENT_KINDS = new Set(["visible", "absent", "text"]);
+export const ELEMENT_KINDS = new Set(["visible", "absent", "text", "count"]);
 
 /**
  * Events to judge: everything after `since` when the agent passes a
@@ -127,6 +129,16 @@ export const evaluateElementAssertion = (kind, queryResult, options = {}) => {
     );
     return { ok: found.length > 0, matches: found.length ? found : matches };
   }
+  if (kind === "count") {
+    const found = matches.length;
+    const bound = (name) => (Number.isFinite(Number(options[name])) ? Number(options[name]) : null);
+    const equals = bound("equals"), min = bound("min"), max = bound("max");
+    // equals is the whole constraint when given; min/max compose otherwise
+    const ok = equals !== null
+      ? found === equals
+      : (min === null || found >= min) && (max === null || found <= max);
+    return { ok, matches, count: found, expected: { equals, min, max } };
+  }
   throw new Error(`Unknown element assertion kind: ${kind}`);
 };
 
@@ -137,6 +149,7 @@ const FAILURE_HINTS = {
   visible: "No element matched before the deadline. Check the selector with query_ui, or wait on the event that renders it with wait_for_event.",
   absent: "The element is still on screen at the deadline. It may be a hidden navigator screen: pass includeHidden: false is the default, so this one is genuinely visible.",
   text: "The text was not found on any matching element before the deadline.",
+  count: "The number of matching elements never satisfied the bound before the deadline. The observed count is in checked.count; widen the selector with query_ui if it is lower than expected.",
 };
 
 /**
@@ -195,6 +208,12 @@ export const runAssert = async (args = {}, deps = {}) => {
     throw new Error(`Assertion "${kind}" needs a selector: by and value`);
   }
 
+  // A count with no bound would pass on any number, which proves nothing
+  if (kind === "count"
+    && ![args.equals, args.min, args.max].some((bound) => Number.isFinite(Number(bound)))) {
+    throw new Error('Assertion "count" needs at least one of: equals, min, max');
+  }
+
   const deadline = startedAt + Math.max(0, Math.min(Number(args.timeoutMs) || DEFAULT_TIMEOUT_MS, 120000));
   const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const selector = {
@@ -204,7 +223,9 @@ export const runAssert = async (args = {}, deps = {}) => {
     exact: args.exact,
     within: args.within,
     includeHidden: args.includeHidden,
-    limit: 10,
+    // Counting through a limit of 10 would report 10 for a list of 40 and
+    // silently fail every equals above it
+    limit: kind === "count" ? COUNT_LIMIT : 10,
   };
 
   let attempts = 0;
@@ -217,6 +238,9 @@ export const runAssert = async (args = {}, deps = {}) => {
     last = evaluateElementAssertion(kind, queryResult, {
       value: args.text ?? args.value,
       exact: args.exact,
+      equals: args.equals,
+      min: args.min,
+      max: args.max,
     });
     if (last.ok || now() >= deadline) break;
     await sleep(POLL_INTERVAL_MS);
@@ -226,7 +250,12 @@ export const runAssert = async (args = {}, deps = {}) => {
     ok: last.ok,
     reason: last.ok ? null : "assertion-failed",
     kind,
-    checked: { kind, selector: { by: selector.by, value: selector.value, name: selector.name ?? null }, attempts },
+    checked: {
+      kind,
+      selector: { by: selector.by, value: selector.value, name: selector.name ?? null },
+      attempts,
+      ...(kind === "count" ? { count: last.count, expected: last.expected, saturated: last.count >= COUNT_LIMIT } : {}),
+    },
     evidence: last.ok ? [] : last.matches.slice(0, EVIDENCE_LIMIT),
     elapsedMs: now() - startedAt,
     hint: last.ok ? null : FAILURE_HINTS[kind],
@@ -254,7 +283,7 @@ const selectorProps = {
 export const ASSERT_TOOL = {
   name: "assert",
   description:
-    "Proves a result and returns a structured verdict with the evidence attached on failure. Element kinds (visible, absent, text) RETRY until timeoutMs, because a UI is asynchronous. Event kinds (network_ok, no_console_error, no_crash) LOOK BACK over a window and prove what a screenshot cannot show: a request that failed silently, a console error, an unhandled rejection. Scope the window with since (a cursor from get_events_since, the precise form) or windowMs. Use settleMs to let in-flight work land before judging.",
+    "Proves a result and returns a structured verdict with the evidence attached on failure. Element kinds (visible, absent, text, count) RETRY until timeoutMs, because a UI is asynchronous. Use count with equals, min or max to prove how many elements a list renders. Event kinds (network_ok, no_console_error, no_crash) LOOK BACK over a window and prove what a screenshot cannot show: a request that failed silently, a console error, an unhandled rejection. Scope the window with since (a cursor from get_events_since, the precise form) or windowMs. Use settleMs to let in-flight work land before judging.",
   inputSchema: {
     type: "object",
     required: ["kind"],
@@ -262,10 +291,13 @@ export const ASSERT_TOOL = {
       deviceId: { type: "string" },
       kind: {
         type: "string",
-        enum: ["visible", "absent", "text", "network_ok", "no_console_error", "no_crash"],
+        enum: ["visible", "absent", "text", "count", "network_ok", "no_console_error", "no_crash"],
       },
       ...selectorProps,
       text: { type: "string", description: "kind:text, the expected text when it differs from value" },
+      equals: { type: "integer", minimum: 0, maximum: 200, description: "kind:count, the exact number of matching elements expected" },
+      min: { type: "integer", minimum: 0, maximum: 200, description: "kind:count, lowest acceptable number of matches" },
+      max: { type: "integer", minimum: 0, maximum: 200, description: "kind:count, highest acceptable number of matches" },
       timeoutMs: { type: "integer", minimum: 0, maximum: 120000, description: "Element kinds: retry deadline (default 5000)" },
       since: { type: "integer", minimum: 0, description: "Event kinds: judge everything after this cursor" },
       windowMs: { type: "integer", minimum: 100, maximum: 300000, description: "Event kinds: trailing window when no cursor is given (default 5000)" },

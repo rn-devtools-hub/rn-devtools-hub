@@ -33,8 +33,9 @@ estimate.
 <text x="268.1014375" y="154" fill="#fff" font-family="ui-monospace,Menlo,monospace" font-size="12">+207  (3.6/tool)</text>
 </svg>
 
-Attaching the hub costs between 150 and 800 prompt tokens depending on the
-client. On a 1M context window that is under a tenth of a percent. The tool
+Attaching the hub added between 150 and 800 tokens to the prompt usage reported
+by these client versions. On a 1M context window that is under a tenth of a
+percent if the reported delta represents context occupancy. The tool
 list also sits at the very front of the request, where it is the most cacheable
 part of the prompt, and `tools/list` is byte-stable across calls, so the cache
 prefix holds.
@@ -94,10 +95,10 @@ question is what those tokens are: the names, or the schemas.
 </svg>
 
 Inflating every description until the payload is 4.2 times larger changes the
-injected cost by zero tokens. Shortening the tool names does move it. So the
-client is loading tool schemas on demand and injecting only the names, and the
-length of the MCP server name costs more across 65 tools than the entire 40 KB
-of JSON Schema behind them.
+client-reported injected cost by zero tokens. Shortening the tool names does
+move it. This is consistent with that client loading schemas on demand and
+injecting names, but usage reporting alone cannot prove the internal mechanism:
+the client may account for schemas outside the reported prompt-token field.
 
 The practical consequence is the opposite of the usual advice. Trimming tool
 descriptions to save context saves nothing here. Only removing tools would, and
@@ -148,7 +149,7 @@ declared expo and react-native versions, the registered debug actions.
 <text x="581" y="243" fill="#898781" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10.5">16/16</text>
 </svg>
 
-Every client answered every retained round correctly.
+Every client answered every retained, completed round correctly.
 
 The interesting part is what it took to measure this honestly. A first run
 scored 50 to 65 percent, and the failures were identical across all three
@@ -266,6 +267,12 @@ Nothing drifted during these 20 rounds, so none were discarded.
 - Scoring: the expected pattern is derived from the captured value, never
   written by hand.
 
+The exact model identifiers and the raw transcripts were not retained with the
+published document. The CLI versions and aggregate results are therefore
+auditable only as reported here, not independently reproducible. Future runs
+must store the prompt, model identifier, raw client output, ground truth before
+and after the round, scoring output and any discarded attempt together.
+
 ## Limits
 
 These are single-tool lookups, not multi-step debugging. They measure whether
@@ -276,7 +283,15 @@ diagnose a bug.
 With 17 retained rounds per client, a 100% score carries a 95% interval
 reaching down to about 82%. The result rules out a broken path, not a rare
 failure mode. One Cursor run out of 18 exceeded a 260 second deadline and was
-counted as missing rather than wrong.
+counted as missing rather than wrong. Cursor's conditional answer accuracy was
+therefore 16/16, while its end-to-end completion rate on retained rounds was
+16/17 (94.1%). Both numbers are required: excluding the timeout from the
+accuracy denominator must not make the operational result look like 100%.
+
+The Wilson intervals treat answers as Bernoulli observations, although answers
+are clustered by app, machine, round and underlying hub state. They are
+descriptive intervals, not evidence that 17 independent app or environment
+samples were tested.
 
 All of it is one app on one machine. Another app with different traffic would
 be a different sample, and the injection numbers belong to the client versions

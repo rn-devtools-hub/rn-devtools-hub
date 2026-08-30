@@ -290,6 +290,39 @@ describe("runAssert", () => {
     expect(asked).toBeGreaterThan(40);
   });
 
+  it("does not certify exactly 200 when the result set contains more", async () => {
+    const time = clock();
+    let asked = 0;
+    const verdict = await runAssert(
+      { kind: "count", by: "testID", value: "zone", equals: 200, timeoutMs: 1 },
+      {
+        now: time.now,
+        sleep: time.sleep,
+        history: () => [],
+        queryUi: async (selector: { limit: number }) => {
+          asked = selector.limit;
+          return { matches: Array.from({ length: selector.limit }, () => ({ testID: "zone" })) };
+        },
+      }
+    );
+    expect(asked).toBe(201);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.checked.count).toBe(201);
+    expect(verdict.checked.saturated).toBe(true);
+  });
+
+  it("rejects malformed and contradictory count bounds", async () => {
+    const deps = { history: () => [], queryUi: async () => ({ matches: [] }) };
+    await expect(runAssert(
+      { kind: "count", by: "testID", value: "zone", equals: null },
+      deps
+    )).rejects.toThrow(/integer from 0 to 200/);
+    await expect(runAssert(
+      { kind: "count", by: "testID", value: "zone", min: 5, max: 2 },
+      deps
+    )).rejects.toThrow(/min cannot be greater/);
+  });
+
   it("gives up at the deadline and attaches a hint", async () => {
     const time = clock();
     const verdict = await runAssert(

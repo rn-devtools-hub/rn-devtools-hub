@@ -20,8 +20,12 @@ const EVIDENCE_LIMIT = 10;
 const DEFAULT_WINDOW_MS = 5000;
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 250;
-/** Highest cardinality kind:count can distinguish; beyond it the count saturates */
-const COUNT_LIMIT = 200;
+/**
+ * Count bounds are public up to 200. Query one element beyond that boundary so
+ * equals:200 and max:200 can distinguish exactly 200 matches from 201 or more.
+ */
+const MAX_COUNT_BOUND = 200;
+const COUNT_QUERY_LIMIT = MAX_COUNT_BOUND + 1;
 
 export const EVENT_KINDS = new Set(["network_ok", "no_console_error", "no_crash"]);
 export const ELEMENT_KINDS = new Set(["visible", "absent", "text", "count"]);
@@ -131,7 +135,7 @@ export const evaluateElementAssertion = (kind, queryResult, options = {}) => {
   }
   if (kind === "count") {
     const found = matches.length;
-    const bound = (name) => (Number.isFinite(Number(options[name])) ? Number(options[name]) : null);
+    const bound = (name) => (Number.isInteger(options[name]) ? options[name] : null);
     const equals = bound("equals"), min = bound("min"), max = bound("max");
     // equals is the whole constraint when given; min/max compose otherwise
     const ok = equals !== null
@@ -208,10 +212,20 @@ export const runAssert = async (args = {}, deps = {}) => {
     throw new Error(`Assertion "${kind}" needs a selector: by and value`);
   }
 
-  // A count with no bound would pass on any number, which proves nothing
-  if (kind === "count"
-    && ![args.equals, args.min, args.max].some((bound) => Number.isFinite(Number(bound)))) {
-    throw new Error('Assertion "count" needs at least one of: equals, min, max');
+  if (kind === "count") {
+    const supplied = ["equals", "min", "max"].filter((name) => args[name] !== undefined);
+    if (!supplied.length) {
+      throw new Error('Assertion "count" needs at least one of: equals, min, max');
+    }
+    for (const name of supplied) {
+      const bound = args[name];
+      if (!Number.isInteger(bound) || bound < 0 || bound > MAX_COUNT_BOUND) {
+        throw new Error(`Assertion "count" ${name} must be an integer from 0 to ${MAX_COUNT_BOUND}`);
+      }
+    }
+    if (args.min !== undefined && args.max !== undefined && args.min > args.max) {
+      throw new Error('Assertion "count" min cannot be greater than max');
+    }
   }
 
   const deadline = startedAt + Math.max(0, Math.min(Number(args.timeoutMs) || DEFAULT_TIMEOUT_MS, 120000));
@@ -225,7 +239,7 @@ export const runAssert = async (args = {}, deps = {}) => {
     includeHidden: args.includeHidden,
     // Counting through a limit of 10 would report 10 for a list of 40 and
     // silently fail every equals above it
-    limit: kind === "count" ? COUNT_LIMIT : 10,
+    limit: kind === "count" ? COUNT_QUERY_LIMIT : 10,
   };
 
   let attempts = 0;
@@ -254,7 +268,11 @@ export const runAssert = async (args = {}, deps = {}) => {
       kind,
       selector: { by: selector.by, value: selector.value, name: selector.name ?? null },
       attempts,
-      ...(kind === "count" ? { count: last.count, expected: last.expected, saturated: last.count >= COUNT_LIMIT } : {}),
+      ...(kind === "count" ? {
+        count: last.count,
+        expected: last.expected,
+        saturated: last.count >= COUNT_QUERY_LIMIT,
+      } : {}),
     },
     evidence: last.ok ? [] : last.matches.slice(0, EVIDENCE_LIMIT),
     elapsedMs: now() - startedAt,

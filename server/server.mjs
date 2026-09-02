@@ -27,7 +27,8 @@ import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessi
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, needsRecordedVariable, renderFlowText, renderFlowMcp } from "./flow.mjs";
 import { HUBFLOW_TOOLS, durableFlowFromRecorded, listHubflowCatalog, proposeHubflowRepair, readHubflow, resolveHubflowArtifact, resolveHubflowPath, runHubflow, selectNativeFailureLogs, writeHubflow } from "./hubflow.mjs";
-import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "./instrumentation.mjs";
+import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry, describeCapabilities } from "./instrumentation.mjs";
+import { declaredError, errorEnvelope } from "./errors.mjs";
 import { STORE_SHOT_TOOL, captureStoreScreenshots } from "./storeshots.mjs";
 import { createToolLog, recordToolCall, summarizeTools, readEmptiness, readScreenshotPolicy, screenshotAdvice, PIXEL_TOOLS } from "./tools.mjs";
 import { createPluginHost, LIST_PLUGINS_TOOL } from "./plugins.mjs";
@@ -695,14 +696,26 @@ const MCP_TOOLS = [
     annotations: { readOnlyHint: true },
   },
   {
+    name: "get_capabilities",
+    description: "Reports what the selected app attached and the exact SDK call that enables each missing capability.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "get_app_info",
     description: "Returns app, device, OS, development mode and network connection information.",
     inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
+    name: "get_logs",
+    description: "Returns captured JavaScript console entries filtered by level, text and cursor.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, level: { type: "string", enum: ["log", "info", "warn", "error", "debug"] }, contains: { type: "string" }, since: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 1000 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "get_recent_network",
-    description: "Returns the recent network events captured by the hub, as {count, events}. When nothing was captured it also returns capture{instrumented, note}, which states whether anything is watching the network at all: an app that never called wrapFetch answers zero forever, and that is not the same fact as an app that sent no request.",
+    description: "Returns recent network events and explains whether an empty result means quiet traffic or missing instrumentation.",
     inputSchema: { type: "object", properties: { deviceId: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 1000 } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
@@ -738,19 +751,19 @@ const MCP_TOOLS = [
   },
   {
     name: "get_ui_tree",
-    description: "Returns the semantic tree of the VISIBLE components (types, testID, text, inputs), read from the React runtime. Every node carries source {file, line, column, componentName, via} when React still knows where it was written, so editing does not start with a repo-wide grep; via states how the location was resolved and via:\"stack\" means bundle coordinates, not source ones. Screens kept mounted but hidden by the navigator (previous stack cards, inactive tabs) are excluded unless includeHidden. The app must call devtools.attachUiAutomation().",
+    description: "Returns the visible React semantic tree with props, measured rectangles and source locations. Requires attachUiAutomation.",
     inputSchema: { type: "object", properties: { deviceId: { type: "string" }, maxDepth: { type: "integer", minimum: 1, maximum: 200 }, maxNodes: { type: "integer", minimum: 10, maximum: 10000 }, includeHidden: { type: "boolean" }, includeSource: { type: "boolean", description: "Attach the source location to every node (default true); set false to shrink the payload" }, metroUrl: { type: "string", description: "Metro server used to map bundle positions back to source (default: read from the stack, else http://localhost:8081)" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: "query_ui",
-    description: "Finds VISIBLE on-screen elements by testID, text, accessibility label, placeholder, type, or role plus accessible name (preferred, Testing Library style). placeholder is the one that reaches an ordinary form field: a TextInput with no testID and no accessibilityLabel is the norm, and selecting it by position is exactly the fragile path. Scope with within to disambiguate. Returns text, the current value of an input, props, measured rect (points) and the source location of each match {file, line, column, componentName, via}. Retries while nothing matches (timeoutMs, default 1000) so a screen transition is not mistaken for a regression. An empty answer carries absence{reason, exposedBy, present, note}: it distinguishes an app that exposes no role or testID at all (every such query will answer zero) from a value that is genuinely not on screen, and lists what IS exposed to select on instead. truncated says the search stopped at limit rather than at the last match, so count is not read as a total. Hidden navigator screens are skipped unless includeHidden.",
+    description: "Finds visible elements by semantic selector and returns values, rectangles and source locations. Retries until timeoutMs.",
     inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, timeoutMs: { type: "integer", minimum: 0, maximum: 30000, description: "Retry while nothing matches, up to this deadline (default 1000). A UI is asynchronous and an empty answer during a transition reads like a regression. Pass 0 for a single immediate look." }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: "ui_act",
-    description: "Acts on a VISIBLE element through the JS runtime: tap, longPress, type (exact text, no autocapitalize), clear, submit, scrollTo, scrollToEnd, scrollBy (dx/dy in points, relative to the current offset), focus and blur. focus opens the keyboard, which is what makes anything depending on it (KeyboardAvoidingView, insets) verifiable without touching the device. Target by testID, text, label, placeholder, type or role plus name; scope with within. placeholder is how a form field with no testID is reached without counting positions. When several elements match, the result lists the candidates with rects so you can pass index; an index beyond the last match is REFUSED (ok:false, reason:\"index-out-of-range\") instead of falling back to the last element, because acting on another element and reporting success is the one failure an automation tool must never produce. A typed value that does not come back is reported the same way (reason:\"value-unchanged\"), and verified/note say whether the text truly reached the field. Hidden navigator screens are skipped unless includeHidden.",
+    description: "Taps, types, submits, focuses or scrolls a visible element through React props. Ambiguous or invalid targets are refused.",
     inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "scrollBy", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, recordAs: { type: "string", pattern: "^[A-Z][A-Z0-9_]{1,63}$", description: "For type actions, send text live but persist only ${NAME} in recordings" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number", description: "action:scrollBy, horizontal distance in points from the current offset" }, dy: { type: "number", description: "action:scrollBy, vertical distance in points from the current offset (positive scrolls down)" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
@@ -1017,6 +1030,10 @@ const handleMcpTool = async (name, args = {}) => {
   }
   const [deviceId, device] = pickDevice(args.deviceId);
   if (!device) throw new Error("No device available");
+  if (name === "get_capabilities") {
+    const state = await readInstrumentation((command, payload) => sendDeviceCommand(deviceId, command, payload));
+    return { deviceId, ...describeCapabilities(state) };
+  }
   if (name === "save_flow") {
     if (!recorder.acts.length) throw new Error("Nothing recorded: call start_recording, drive the app, then stop_recording");
     if (recorder.active) throw new Error("Recording is still active: call stop_recording before save_flow");
@@ -1084,6 +1101,18 @@ const handleMcpTool = async (name, args = {}) => {
   if (name === "get_app_info") {
     const info = eventsOfType(device, ["app.info", "net.info"], 100);
     return { device: deviceSummary([deviceId, device]), events: info };
+  }
+  if (name === "get_logs") {
+    const limit = Math.min(Number(args.limit ?? 100) || 100, 1000);
+    const contains = String(args.contains ?? "").toLowerCase();
+    const logs = device.history.filter((event) => {
+      if (event.type !== "console") return false;
+      if (Number.isFinite(args.since) && Number(event.seq ?? 0) <= Number(args.since)) return false;
+      if (args.level && event.payload?.level !== args.level) return false;
+      if (!contains) return true;
+      try { return JSON.stringify(event.payload ?? "").toLowerCase().includes(contains); } catch { return false; }
+    }).slice(-limit);
+    return { count: logs.length, logs, cursor: device.lastSeq ?? 0 };
   }
   if (name === "get_recent_network") {
     const events = eventsOfType(device, ["network.request", "network.response", "network.error"], args.limit);
@@ -1439,6 +1468,7 @@ const handleMcpRequest = async (request, bunServer) => {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: "rn-devtools-hub", version: HUB_VERSION },
+      instructions: "Start with get_project_context, then get_capabilities. Prefer role/name or testID selectors. After an action, wait_for_event and assert the result. Use screenshots only for visual questions. Error results include a code and hint; follow the hint before replanning.",
     }));
   }
   if (method === "notifications/initialized") return new Response(null, { status: 202 });
@@ -1478,18 +1508,19 @@ const handleMcpRequest = async (request, bunServer) => {
        */
       const declaredFailure =
         result && typeof result === "object" && !Array.isArray(result) && result.ok === false;
+      const output = declaredFailure ? declaredError(result) : result;
       if (declaredFailure) {
         finish({
           ok: false,
-          error: String(result.reason ?? result.hint ?? "the tool reported ok:false"),
-          bytes: sizeOfResult(result),
+          error: output.message,
+          bytes: sizeOfResult(output),
         });
       } else {
-        const emptiness = readEmptiness(result);
-        finish({ ok: true, bytes: sizeOfResult(result), empty: emptiness.empty, emptyReason: emptiness.reason });
+        const emptiness = readEmptiness(output);
+        finish({ ok: true, bytes: sizeOfResult(output), empty: emptiness.empty, emptyReason: emptiness.reason });
       }
       if (result && typeof result === "object" && result.__mcpImage) {
-        const { __mcpImage, ...rest } = result;
+        const { __mcpImage, ...rest } = output;
         return jsonResponse(mcpResult(id, {
           content: [
             { type: "image", data: __mcpImage.data, mimeType: __mcpImage.mimeType },
@@ -1498,11 +1529,12 @@ const handleMcpRequest = async (request, bunServer) => {
           ...(declaredFailure ? { isError: true } : {}),
         }));
       }
-      return jsonResponse(mcpResult(id, mcpText(result, declaredFailure)));
+      return jsonResponse(mcpResult(id, mcpText(output, declaredFailure)));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      finish({ ok: false, error: message, bytes: message.length });
-      return jsonResponse(mcpResult(id, mcpText(message, true)));
+      const output = errorEnvelope(message);
+      finish({ ok: false, error: output.message, bytes: sizeOfResult(output) });
+      return jsonResponse(mcpResult(id, mcpText(output, true)));
     }
   }
   return jsonResponse(mcpError(id, -32601, `Unknown method: ${method}`), 404);

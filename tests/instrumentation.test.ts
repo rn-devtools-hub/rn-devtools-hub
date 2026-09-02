@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain JS module, no types
-import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry } from "../server/instrumentation.mjs";
+import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry, describeCapabilities } from "../server/instrumentation.mjs";
 
 const stateOf = (report: unknown) => ({ report, supported: true });
 
@@ -64,5 +64,18 @@ describe("explainEmptyRegistry", () => {
 
   it("stays silent when the registry is not empty", () => {
     expect(explainEmptyRegistry(stateOf({ stores: [{ name: "auth" }] }), "stores")).toBeNull();
+  });
+});
+
+describe("describeCapabilities", () => {
+  it("names the exact call for every unavailable family", () => {
+    const result = describeCapabilities(stateOf({
+      network: { instrumented: false, wraps: [] }, uiAutomation: false,
+      determinism: false, originTracking: false, console: true,
+      stores: [], actions: [], previews: [],
+    }));
+    expect(result.capabilities.perception.enable).toBe("devtools.attachUiAutomation()");
+    expect(result.capabilities.console.available).toBe(true);
+    expect(result.capabilities.stores.enable).toMatch(/registerStore/);
   });
 });

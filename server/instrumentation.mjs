@@ -128,3 +128,38 @@ export const explainEmptyRegistry = (state, kind) => {
     "read. The list is empty because nothing was declared, not because the app has no state to expose."
   );
 };
+
+const capability = (available, enable, tools, details = {}) => ({
+  available,
+  tools,
+  ...(available ? {} : { enable }),
+  ...details,
+});
+
+/** Turns the runtime attachment report into an agent-readable capability map. */
+export const describeCapabilities = (state) => {
+  if (state.report === null) {
+    return {
+      supported: state.supported,
+      note: state.supported === false ? UNSUPPORTED : `Capabilities unavailable (${state.error ?? "no result"}).`,
+      capabilities: {},
+    };
+  }
+  const report = state.report;
+  const stores = Array.isArray(report.stores) ? report.stores : [];
+  const actions = Array.isArray(report.actions) ? report.actions : [];
+  const previews = Array.isArray(report.previews) ? report.previews : [];
+  return {
+    supported: true,
+    capabilities: {
+      perception: capability(report.uiAutomation === true, "devtools.attachUiAutomation()", ["get_ui_tree", "query_ui", "ui_act", "assert"]),
+      console: capability(report.console === true, "devtools.attachConsole()", ["get_logs"]),
+      network: capability(report.network?.instrumented === true, 'devtools.wrapFetch(fetch, "api") or devtools.attachAxios(api, "api")', ["get_recent_network", "get_endpoint_stats"], { wraps: report.network?.wraps ?? [] }),
+      determinism: capability(report.determinism === true, "devtools.attachDeterminism()", ["freeze_time", "advance_time", "restore_time", "mock_network"]),
+      stores: capability(stores.length > 0, "devtools.registerStore(name, adapter)", ["get_state", "set_state"], { registered: stores }),
+      actions: capability(actions.length > 0, "devtools.registerAction(definition, handler)", ["list_actions", "run_action"], { registered: actions }),
+      previews: capability(previews.length > 0, "devtools.registerPreview(name, factory)", ["list_previews", "render_component", "unmount_component"], { registered: previews }),
+      originTracking: capability(report.originTracking === true, "devtools.attachOriginTracking()", ["get_recent_network"]),
+    },
+  };
+};

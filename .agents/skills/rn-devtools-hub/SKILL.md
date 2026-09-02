@@ -48,6 +48,7 @@ reading code before checking this is the single most common waste.
 
 ```
 session_start        launch, pre-grant permissions, wait until connected
+get_capabilities     see what this app attached and how to enable what is missing
 query_ui             find the element by role + accessible name
 ui_act               tap / type / scroll through the app's own props
 wait_for_event       block on the consequence, never sleep
@@ -68,10 +69,9 @@ row or card around it. A selector that matches a container holding several
 inputs is refused, with the placeholders listed, rather than resolved to
 whichever input came first.
 
-Any tool answering `ok: false` comes back as an MCP error with its payload
-intact: a failed `assert`, a `compare_snapshot` over its threshold, an
-ambiguous selector, an index out of range, a value that never landed. The
-status and the body say the same thing, and the body carries the evidence.
+Every MCP tool failure carries `{code, message, hint, details}`. A declared
+`ok: false` refusal also keeps its original payload and evidence. Follow the
+`hint` before replanning.
 
 Read `verified` after a `type`. `ok: true` means the action ran;
 `verified: "exact"` means the field holds the text. `transformed` means the
@@ -90,6 +90,7 @@ without walking any screen at all.
 | Question | Tool |
 |---|---|
 | Why does this behave impossibly? | `get_project_context` |
+| What did this app actually attach? | `get_capabilities` |
 | What is on screen? | `get_ui_tree`, `query_ui` |
 | Which file renders this? | the `source` field on any node or match |
 | Act on it | `ui_act`, or `run_action` to skip the path |
@@ -97,6 +98,7 @@ without walking any screen at all.
 | Did anything break that has no pixel? | `assert` kind `network_ok`, `no_console_error`, `no_crash` |
 | How many did it render? | `assert` kind `count`, with `equals`, `min` or `max` |
 | What happened after my action? | `get_events_since`, `wait_for_event` |
+| What did JavaScript log? | `get_logs` |
 | Did I break the layout? | `snapshot_baseline` then `compare_snapshot` |
 | Does this component render correctly? | `render_component` |
 | Why did it fail an hour ago? | `export_session` |
@@ -241,9 +243,9 @@ one: read it before shipping anything.
 |---|---|
 | "React DevTools hook unavailable" | Release bundle, or `attachUiAutomation()` missing. Check `get_project_context` for `dev: false` |
 | "No React root observed yet" | `attachUiAutomation()` runs too late. It belongs at startup, before the first render |
-| `ui_act` returns `ok: false, reason: "ambiguous"` | Several matches, listed with rects. Pass `index` or scope with `within` |
-| `ui_act` returns `ok: false, reason: "index-out-of-range"` | The index asked for does not exist. `count` is the number of matches; valid indexes stop at `count - 1` |
-| `ui_act` returns `ok: false, reason: "value-unchanged"` | The text reached the input's props and the value did not move. Its `onChangeText` does not write back to the value it renders |
+| Error code `ambiguous` | Several matches, listed in `details`. Pass `index` or scope with `within` |
+| Error code `index-out-of-range` | The index asked for does not exist. Query again and use an index smaller than `count` |
+| Error code `value-unchanged` | The text reached the input's props and the value did not move. Its `onChangeText` does not write back to the value it renders |
 | `verified: "unverifiable"` after a `type` | The input is uncontrolled (no `value` prop): React has nothing to read back. Bind `value` to state, or confirm with a screenshot |
 | A rect carries `rectFrom` | The element has no measurable instance of its own and a neighbour was measured instead. Treat the box as approximate |
 | `scrollToEnd` stops short | A virtualized list only knows the end of what it has rendered. `result.atEnd` says whether the bottom was reached; call again or use `scrollBy` |

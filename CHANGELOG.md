@@ -2,6 +2,17 @@
 
 Generated automatically from conventional commits.
 
+## [0.18.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.17.0...v0.18.0) (2026-08-30)
+
+### Features
+
+* **benchmark:** add reproducible bug-fix pilot runner ([44270a7](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/44270a75fbb443a316feadeb5cab4bd3434909e2))
+
+### Bug Fixes
+
+* **assert:** distinguish count saturation above bounds ([8de115d](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/8de115de42c7cc649be71955b80798b128b0308e))
+* **hubflow:** attach native failures and isolate device runs ([b0625d2](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/b0625d2af537b4d40e412820ed3c28c9e1054e62))
+
 ## [0.17.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.16.0...v0.17.0) (2026-08-30)
 
 ### Features

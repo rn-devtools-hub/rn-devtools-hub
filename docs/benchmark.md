@@ -1,5 +1,12 @@
 # Benchmark
 
+This document contains two different measurements. The live-read benchmark
+was executed against a running app. The bug-fix pilot is a reproducible runner
+and manifest, but its comparative agent runs have not been executed yet, so it
+does not support a claim about bug-fix success. Prompt-token figures below are
+client-reported deltas: they measure what those client versions reported, not
+the full serialized size or guaranteed context occupancy of `tools/list`.
+
 Two questions get asked about a hub that hands an agent 58 tools. What does
 that cost the agent in context, and does the agent actually come back with the
 right answer about the running app. Both are measurable, so neither is argued
@@ -100,10 +107,10 @@ move it. This is consistent with that client loading schemas on demand and
 injecting names, but usage reporting alone cannot prove the internal mechanism:
 the client may account for schemas outside the reported prompt-token field.
 
-The practical consequence is the opposite of the usual advice. Trimming tool
-descriptions to save context saves nothing here. Only removing tools would, and
-removing a third of them would recover about 400 tokens, which is not a reason
-to remove anything.
+In this client version, trimming descriptions did not change the reported
+prompt-token field. The experiment cannot establish that schemas are free: a
+client may load, cache or account for them outside that field. Tool count and
+serialized schema bytes must therefore be reported separately.
 
 ## Whether an agent reads the app correctly through the hub
 

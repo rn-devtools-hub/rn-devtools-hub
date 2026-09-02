@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.19.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.18.0...v0.19.0) (2026-09-02)
+
+### Features
+
+* **mcp:** improve agent onboarding contract ([e700f82](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/e700f822c24bc36fe4984edaaaa0edfb5583d0d3))
+
 ## [0.18.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.17.0...v0.18.0) (2026-08-30)
 
 ### Features

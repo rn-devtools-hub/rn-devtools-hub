@@ -120,6 +120,15 @@ describe("MCP handshake version", () => {
     expect(source).not.toMatch(/serverInfo: \{[^}]*version: "/);
   });
 
+  it("teaches clients the minimum reliable loop at initialization", () => {
+    expect(source).toMatch(/instructions: .*get_project_context.*get_capabilities.*wait_for_event.*assert/);
+  });
+
+  it("exposes capability and JavaScript log discovery", () => {
+    expect(source).toContain('name: "get_capabilities"');
+    expect(source).toContain('name: "get_logs"');
+  });
+
   it("reads that version from the hub's own package, not the host app's", () => {
     // PROJECT_ROOT is the user's React Native app: reading it here would
     // report the app's version as the hub's

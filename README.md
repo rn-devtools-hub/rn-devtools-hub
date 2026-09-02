@@ -7,8 +7,8 @@
 <p align="center">
   The agent runtime for React Native. Your agent sees the app the way React
   sees it, knows which file produced each element, acts without coordinates,
-  and proves that it works. Zero dependencies, everything stays on your
-  machine.
+  and proves that it works. Zero dependencies, no telemetry or usage
+  counting, everything stays on your machine.
 </p>
 
 <p align="center">

@@ -135,6 +135,7 @@ cannot know which simulator it runs on.
 | Tool | Role |
 | --- | --- |
 | `list_targets` | booted simulators and adb devices with their state |
+| `repair_adb_routes` | restore adb reverse mappings after a USB or emulator reconnection |
 | `set_permission` | pre-grant/revoke permissions so popups never appear (iOS cannot pre-grant notifications or camera) |
 | `launch_app` | zero-dialog launch: `simctl launch --initialUrl` (iOS), explicit-component `am start` (Android), dev-menu onboarding skipped |
 | `terminate_app` / `open_url` | lifecycle and deep links |
@@ -147,6 +148,20 @@ cannot know which simulator it runs on.
 | `send_push` | simulated APNs push on iOS simulators |
 | `set_appearance` | light/dark mode switch |
 | `session_start` | bootstrap or app switch: permissions + cold launch on the selected Metro server + wait for the expected `appName`; Android derives the development-client scheme from `app.json` |
+
+`session_start` restores the Android reverse mappings for both Metro and the
+Hub before launching. Additional local service ports can be supplied through
+`adbPorts`. Native tools and Hubflow captures infer their target when exactly
+one compatible target is ready, and refuse ambiguous selections.
+
+The device transport exchanges an application-level heartbeat with the Hub.
+It replaces a half-open socket after a Hub restart, network transition, or
+return from a suspended native activity. Buffered events are sent after the
+new connection opens.
+
+Source symbolication uses a short inline budget. If a source remains
+`via: "stack"`, `resolve_source` retries against Metro with a longer timeout
+without repeating or delaying the original UI action.
 
 ## Event cursor (agents)
 

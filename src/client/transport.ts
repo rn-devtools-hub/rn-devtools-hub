@@ -21,6 +21,8 @@ const DEFAULT_MAX_BATCH_BYTES = 262144;
 const DEFAULT_FLUSH_MS = 300;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 10000;
+const HEARTBEAT_INTERVAL_MS = 5000;
+const CONNECTION_STALE_MS = 15000;
 
 export class DevtoolsTransport {
   private ws: WebSocket | null = null;
@@ -28,7 +30,11 @@ export class DevtoolsTransport {
   private nextEventId = 1;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempt = 0;
+  private connectionStartedAt = 0;
+  private lastServerActivity = 0;
+  private heartbeatConfirmed = false;
   private stopped = false;
   private commandHandlers = new Map<string, CommandHandler>();
 
@@ -57,6 +63,9 @@ export class DevtoolsTransport {
     if (!this.flushTimer) {
       this.flushTimer = setInterval(() => this.flush(), this.options.flushIntervalMs);
     }
+    if (!this.heartbeatTimer) {
+      this.heartbeatTimer = setInterval(() => this.checkConnection(), HEARTBEAT_INTERVAL_MS);
+    }
   }
 
   stop(): void {
@@ -68,6 +77,10 @@ export class DevtoolsTransport {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
     try {
       this.ws?.close();
@@ -158,6 +171,7 @@ export class DevtoolsTransport {
     if (this.stopped) return;
 
     try {
+      this.connectionStartedAt = Date.now();
       this.ws = new WebSocket(this.options.serverUrl);
     } catch {
       this.scheduleReconnect();
@@ -166,6 +180,8 @@ export class DevtoolsTransport {
 
     this.ws.onopen = () => {
       this.reconnectAttempt = 0;
+      this.lastServerActivity = Date.now();
+      this.heartbeatConfirmed = false;
       try {
         this.ws?.send(
           JSON.stringify({
@@ -183,6 +199,7 @@ export class DevtoolsTransport {
     };
 
     this.ws.onmessage = (message: { data: unknown }) => {
+      this.lastServerActivity = Date.now();
       this.handleIncoming(message.data);
     };
 
@@ -194,6 +211,32 @@ export class DevtoolsTransport {
       this.ws = null;
       this.scheduleReconnect();
     };
+  }
+
+  /** Detects half-open sockets. Mobile networks, a restarted hub and an app
+   * returning from a suspended native activity can leave readyState looking
+   * open even though no command can cross it. The application-level ping is
+   * portable across the React Native WebSocket implementations. */
+  private checkConnection(): void {
+    if (this.stopped || !this.ws) return;
+    const now = Date.now();
+    if (this.ws.readyState === 0 && now - this.connectionStartedAt > CONNECTION_STALE_MS) {
+      try { this.ws.close(); } catch { this.ws = null; this.scheduleReconnect(); }
+      return;
+    }
+    if (!this.isConnected) return;
+    // Older hubs ignore the application heartbeat. Preserve SDK backwards
+    // compatibility by enforcing the deadline only after this hub proved it
+    // understands pong messages.
+    if (this.heartbeatConfirmed && now - this.lastServerActivity > CONNECTION_STALE_MS) {
+      try { this.ws.close(); } catch { this.ws = null; this.scheduleReconnect(); }
+      return;
+    }
+    try {
+      this.ws.send(JSON.stringify({ kind: "ping", ts: now }));
+    } catch {
+      try { this.ws.close(); } catch { this.ws = null; this.scheduleReconnect(); }
+    }
   }
 
   private scheduleReconnect(): void {
@@ -209,13 +252,17 @@ export class DevtoolsTransport {
   }
 
   private async handleIncoming(raw: unknown): Promise<void> {
-    let parsed: IncomingCommand;
+    let parsed: IncomingCommand & { kind?: string };
     try {
       parsed = JSON.parse(String(raw));
     } catch {
       return;
     }
 
+    if (parsed?.kind === "pong") {
+      this.heartbeatConfirmed = true;
+      return;
+    }
     if (parsed?.type !== "command" || !parsed.command) return;
 
     const handler = this.commandHandlers.get(parsed.command);

@@ -103,6 +103,33 @@ const requireTool = (kind) => {
   }
 };
 
+/** Reinstalls adb reverse mappings after a USB transport reconnect. adb
+ * forgets these mappings independently of the emulator process, so checking
+ * them only once when Metro starts is insufficient. */
+export const repairAdbRoutes = async ({ target, ports }, runner = runCommand) => {
+  const { kind, id } = await resolveTarget(target, "android");
+  if (kind !== "adb") throw new Error("ADB routes require an Android target");
+  requireTool(kind);
+  const unique = [...new Set((ports ?? []).map(Number))].filter(
+    (port) => Number.isInteger(port) && port > 0 && port < 65536
+  );
+  if (!unique.length) throw new Error("Pass at least one valid TCP port");
+  const routes = [];
+  for (const port of unique) {
+    const result = await runner(adbReverseArgv(id, port));
+    routes.push({ port, ok: result.ok, ...(result.ok ? {} : { error: result.error || textOf(result) }) });
+  }
+  return {
+    ok: routes.every((route) => route.ok),
+    target: `adb:${id}`,
+    routes,
+  };
+};
+
+export const adbReverseArgv = (id, port) => [
+  "adb", "-s", id, "reverse", `tcp:${port}`, `tcp:${port}`,
+];
+
 const fail = (result, action) => {
   throw new Error(`${action} failed: ${result.error || textOf(result) || "unknown error"}`);
 };
@@ -818,7 +845,7 @@ export const getNativeLogs = async ({ target, lines, filter, process: processNam
 // session_start orchestration
 // ====================================================================
 
-export const sessionStart = async (args, { waitForEvent, projectRoot }) => {
+export const sessionStart = async (args, { waitForEvent, projectRoot, hubPort }) => {
   const platform = String(args.platform ?? "");
   if (!["ios", "android"].includes(platform)) throw new Error('platform must be "ios" or "android"');
   const { kind, id } = await resolveTarget(args.target, platform);
@@ -837,11 +864,12 @@ export const sessionStart = async (args, { waitForEvent, projectRoot }) => {
 
   let url = args.serverUrl ? requireUrl(args.serverUrl) : null;
   if (url && kind === "adb") {
-    try {
-      const port = new URL(url).port || "8081";
-      await runCommand(["adb", "-s", id, "reverse", `tcp:${port}`, `tcp:${port}`]);
-      steps.push({ step: `adb-reverse:${port}`, ok: true });
-    } catch { /* reverse is best effort */ }
+    const metroPort = Number(new URL(url).port || 8081);
+    const repaired = await repairAdbRoutes({
+      target,
+      ports: [metroPort, hubPort, ...(args.adbPorts ?? [])],
+    });
+    steps.push({ step: "adb-routes", ok: repaired.ok, routes: repaired.routes });
     // Android has no --initialUrl equivalent: build the dev-client deep
     // link, which needs the app scheme (exp+<slug> by default)
     const scheme = args.scheme || expoSchemeFromProject(projectRoot);
@@ -1038,6 +1066,12 @@ export const NATIVE_TOOLS = [
     annotations: { readOnlyHint: true },
   },
   {
+    name: "repair_adb_routes",
+    description: "Restores adb reverse mappings lost after an emulator or USB reconnection. Defaults to Metro 8081 and the current Hub port. Omit target only when exactly one Android target is ready.",
+    inputSchema: { type: "object", properties: { ...targetProp, ports: { type: "array", minItems: 1, items: { type: "integer", minimum: 1, maximum: 65535 } } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
     name: "set_permission",
     description: "Pre-grants or revokes an app permission so the popup never appears: location, location-always, camera, microphone, photos, media-library, contacts, calendar, notifications (Android 13+ only; iOS cannot pre-grant notifications), motion/reminders/photos-add (iOS). Grant BEFORE launching.",
     inputSchema: { type: "object", required: ["appId", "service"], properties: { ...targetProp, appId: { type: "string" }, service: { type: "string" }, grant: { type: ["boolean", "null"], description: "true=grant, false=revoke, null=reset (iOS)" } }, additionalProperties: false },
@@ -1160,7 +1194,7 @@ export const NATIVE_TOOLS = [
   {
     name: "session_start",
     description: "One-call bootstrap and app switch: resolve target, pre-grant permissions, launch the dev build on the given Metro server, then wait for the expected app to connect. Pass appName when several runtimes share the hub so an event from the wrong app cannot satisfy the wait. Android derives the development-client scheme from app.json when scheme is omitted.",
-    inputSchema: { type: "object", required: ["platform", "appId"], properties: { platform: { type: "string", enum: ["ios", "android"] }, target: { type: "string" }, appId: { type: "string" }, appName: { type: "string", description: "Expected devtools appName. Filters connection events when switching between apps." }, serverUrl: { type: "string" }, scheme: { type: "string", description: "Android development-client scheme. Defaults to app.json expo.scheme or exp+slug." }, permissions: { type: "object", additionalProperties: { type: "boolean" } }, coldStart: { type: "boolean" }, hideDevMenuFab: { type: "boolean", description: "iOS: hide the expo-dev-menu floating bubble, which intercepts taps meant for the elements under it (default true)" }, waitFor: { type: "string" }, timeoutMs: { type: "integer", minimum: 5000, maximum: 120000 } }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["platform", "appId"], properties: { platform: { type: "string", enum: ["ios", "android"] }, target: { type: "string" }, appId: { type: "string" }, appName: { type: "string", description: "Expected devtools appName. Filters connection events when switching between apps." }, serverUrl: { type: "string" }, scheme: { type: "string", description: "Android development-client scheme. Defaults to app.json expo.scheme or exp+slug." }, adbPorts: { type: "array", items: { type: "integer", minimum: 1, maximum: 65535 }, description: "Additional adb reverse ports to restore with Metro and the hub." }, permissions: { type: "object", additionalProperties: { type: "boolean" } }, coldStart: { type: "boolean" }, hideDevMenuFab: { type: "boolean", description: "iOS: hide the expo-dev-menu floating bubble, which intercepts taps meant for the elements under it (default true)" }, waitFor: { type: "string" }, timeoutMs: { type: "integer", minimum: 5000, maximum: 120000 } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
 ];
@@ -1168,6 +1202,10 @@ export const NATIVE_TOOLS = [
 export const handleNativeTool = async (name, args, helpers) => {
   switch (name) {
     case "list_targets": return listTargets();
+    case "repair_adb_routes": return repairAdbRoutes({
+      ...args,
+      ports: args.ports ?? [8081, helpers?.hubPort],
+    });
     case "set_permission": return setPermission(args);
     case "launch_app": return launchApp(args);
     case "terminate_app": return terminateApp(args);

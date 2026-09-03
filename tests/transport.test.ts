@@ -1,7 +1,7 @@
 /**
  * Transport tests: ring buffer, batching, commands, no-op before init
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { DevtoolsTransport } from "../src/client/transport";
 import { devtools } from "../src/client/index";
 import {
@@ -130,6 +130,53 @@ describe("DevtoolsTransport", () => {
     expect(response.kind).toBe("commandResult");
     expect(response.result).toEqual({ echoed: { hello: true } });
     transport.stop();
+  });
+
+  it("heartbeats an open socket and reconnects a half-open one", () => {
+    const now = 2_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const transport = makeTransport();
+    transport.start();
+    const ws = FakeWebSocket.instances[0];
+    ws.simulateOpen();
+    ws.sent = [];
+
+    (transport as any).checkConnection();
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ kind: "ping", ts: now });
+
+    ws.onmessage?.({ data: JSON.stringify({ kind: "pong", ts: now }) });
+    (transport as any).lastServerActivity = now - 16_000;
+    (transport as any).checkConnection();
+    expect(ws.readyState).toBe(3);
+    expect(transport.isConnected).toBe(false);
+    transport.stop();
+    vi.restoreAllMocks();
+  });
+
+  it("treats a pong as server activity after returning from suspension", () => {
+    const transport = makeTransport();
+    transport.start();
+    const ws = FakeWebSocket.instances[0];
+    ws.simulateOpen();
+    (transport as any).lastServerActivity = 1;
+    ws.onmessage?.({ data: JSON.stringify({ kind: "pong", ts: Date.now() }) });
+    expect((transport as any).heartbeatConfirmed).toBe(true);
+    expect((transport as any).lastServerActivity).toBeGreaterThan(1);
+    transport.stop();
+  });
+
+  it("keeps compatibility with an older hub that ignores heartbeats", () => {
+    const now = 3_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const transport = makeTransport();
+    transport.start();
+    const ws = FakeWebSocket.instances[0];
+    ws.simulateOpen();
+    (transport as any).lastServerActivity = now - 60_000;
+    (transport as any).checkConnection();
+    expect(ws.readyState).toBe(1);
+    transport.stop();
+    vi.restoreAllMocks();
   });
 
   it("unknown command: returns an error, not a crash", async () => {

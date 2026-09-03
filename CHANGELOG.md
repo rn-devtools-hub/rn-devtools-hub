@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.20.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.19.1...v0.20.0) (2026-09-03)
+
+### Features
+
+* **mcp:** recover interrupted native sessions ([492c2e2](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/492c2e28b4632b61a5eacc48513749c7d54c8199))
+
 ## [0.19.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.19.0...v0.19.1) (2026-09-03)
 
 ### Bug Fixes

@@ -13,6 +13,8 @@
  * produce false mappings. list_targets is the source of truth.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { spawn, which } from "./runtime.mjs";
 
 const SAFE_ID = /^[A-Za-z0-9._:-]+$/;
@@ -68,6 +70,25 @@ const requireUrl = (raw) => {
     throw new Error(`Invalid URL: ${raw}`);
   }
   return url;
+};
+
+/** Reads the development-client scheme without evaluating app.config.js.
+ * Static app.json covers the common case and keeps this adapter dependency
+ * free. Expo's default exp+slug scheme is deterministic when no custom one
+ * was declared. */
+export const expoSchemeFromProject = (projectRoot) => {
+  if (!projectRoot) return null;
+  try {
+    const config = JSON.parse(readFileSync(join(projectRoot, "app.json"), "utf-8"));
+    const expo = config?.expo ?? config;
+    const declared = Array.isArray(expo?.scheme) ? expo.scheme[0] : expo?.scheme;
+    if (typeof declared === "string" && /^[A-Za-z][A-Za-z0-9+.-]*$/.test(declared)) return declared;
+    if (typeof expo?.slug === "string") {
+      const slug = expo.slug.toLowerCase().replace(/[^a-z0-9+.-]/g, "");
+      if (slug) return `exp+${slug}`;
+    }
+  } catch { /* no static Expo config: the caller explains the fallback */ }
+  return null;
 };
 
 const simctlAvailable = () => process.platform === "darwin" && !!which("xcrun");
@@ -797,7 +818,7 @@ export const getNativeLogs = async ({ target, lines, filter, process: processNam
 // session_start orchestration
 // ====================================================================
 
-export const sessionStart = async (args, { waitForEvent }) => {
+export const sessionStart = async (args, { waitForEvent, projectRoot }) => {
   const platform = String(args.platform ?? "");
   if (!["ios", "android"].includes(platform)) throw new Error('platform must be "ios" or "android"');
   const { kind, id } = await resolveTarget(args.target, platform);
@@ -823,12 +844,23 @@ export const sessionStart = async (args, { waitForEvent }) => {
     } catch { /* reverse is best effort */ }
     // Android has no --initialUrl equivalent: build the dev-client deep
     // link, which needs the app scheme (exp+<slug> by default)
-    if (args.scheme) {
+    const scheme = args.scheme || expoSchemeFromProject(projectRoot);
+    if (scheme) {
       const encoded = encodeURIComponent(`${url}/?disableOnboarding=1`);
-      url = `${args.scheme}://expo-development-client/?url=${encoded}&disableOnboarding=1`;
+      url = `${scheme}://expo-development-client/?url=${encoded}&disableOnboarding=1`;
+      steps.push({
+        step: "metro-route",
+        ok: true,
+        scheme,
+        source: args.scheme ? "argument" : "project",
+      });
     } else {
       url = null; // plain launch reconnects to the last used server
-      steps.push({ step: "no-scheme", ok: true, note: "pass scheme for a deterministic first connection" });
+      steps.push({
+        step: "no-scheme",
+        ok: false,
+        note: "No scheme found in app.json: pass scheme for a deterministic Metro connection",
+      });
     }
   }
 
@@ -841,7 +873,7 @@ export const sessionStart = async (args, { waitForEvent }) => {
 
   const waitType = typeof args.waitFor === "string" && args.waitFor.length ? args.waitFor : "app.info";
   const timeoutMs = Math.max(5000, Math.min(Number(args.timeoutMs) || 60000, 120000));
-  const waited = await waitForEvent({ type: waitType, timeoutMs });
+  const waited = await waitForEvent({ type: waitType, timeoutMs, appName: args.appName });
   steps.push({ step: `wait:${waitType}`, ok: !waited.timedOut });
 
   return {
@@ -851,7 +883,7 @@ export const sessionStart = async (args, { waitForEvent }) => {
     steps,
     event: waited.event,
     hint: waited.timedOut
-      ? `The app did not emit "${waitType}" in ${timeoutMs} ms: check that devtools.init() runs and points at this hub`
+      ? `The${args.appName ? ` ${args.appName}` : ""} app did not emit "${waitType}" in ${timeoutMs} ms: check that devtools.init() runs and points at this hub`
       : null,
   };
 };
@@ -1127,8 +1159,8 @@ export const NATIVE_TOOLS = [
   },
   {
     name: "session_start",
-    description: "One-call bootstrap: resolve target, pre-grant permissions, launch the dev build on the given Metro server (cold start, no dialogs, onboarding skipped), then wait until the app connects to the hub (waitFor event, default app.info). Android: pass scheme (e.g. exp+myapp) for a deterministic first connection.",
-    inputSchema: { type: "object", required: ["platform", "appId"], properties: { platform: { type: "string", enum: ["ios", "android"] }, target: { type: "string" }, appId: { type: "string" }, serverUrl: { type: "string" }, scheme: { type: "string" }, permissions: { type: "object", additionalProperties: { type: "boolean" } }, coldStart: { type: "boolean" }, hideDevMenuFab: { type: "boolean", description: "iOS: hide the expo-dev-menu floating bubble, which intercepts taps meant for the elements under it (default true)" }, waitFor: { type: "string" }, timeoutMs: { type: "integer", minimum: 5000, maximum: 120000 } }, additionalProperties: false },
+    description: "One-call bootstrap and app switch: resolve target, pre-grant permissions, launch the dev build on the given Metro server, then wait for the expected app to connect. Pass appName when several runtimes share the hub so an event from the wrong app cannot satisfy the wait. Android derives the development-client scheme from app.json when scheme is omitted.",
+    inputSchema: { type: "object", required: ["platform", "appId"], properties: { platform: { type: "string", enum: ["ios", "android"] }, target: { type: "string" }, appId: { type: "string" }, appName: { type: "string", description: "Expected devtools appName. Filters connection events when switching between apps." }, serverUrl: { type: "string" }, scheme: { type: "string", description: "Android development-client scheme. Defaults to app.json expo.scheme or exp+slug." }, permissions: { type: "object", additionalProperties: { type: "boolean" } }, coldStart: { type: "boolean" }, hideDevMenuFab: { type: "boolean", description: "iOS: hide the expo-dev-menu floating bubble, which intercepts taps meant for the elements under it (default true)" }, waitFor: { type: "string" }, timeoutMs: { type: "integer", minimum: 5000, maximum: 120000 } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
 ];

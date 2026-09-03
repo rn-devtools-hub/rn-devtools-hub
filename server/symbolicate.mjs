@@ -149,7 +149,10 @@ export const symbolicate = async (rawFrames, options = {}) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ stack: frames }),
-      signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
+      // Source enrichment is secondary to the command that already ran.
+      // A stopped or stale Metro must not hold a successful UI action for
+      // several seconds before the agent can observe its result.
+      signal: AbortSignal.timeout(options.timeoutMs ?? 750),
     });
     if (!response.ok) {
       return { ok: false, reason: `Metro answered ${response.status}`, frames: [] };
@@ -193,16 +196,33 @@ export const upgradeTreeSources = async (nodes, options = {}) => {
   const upgradeOne = async (source) => {
     if (!source || source.via !== "stack" || !source.stack?.length) return source;
     const key = source.stack.join("\n");
-    if (!cache.has(key)) cache.set(key, await upgradeSource(source, options));
-    return cache.get(key);
+    // Cache the promise itself. Distinct branches are visited concurrently,
+    // and identical owner stacks must still produce one Metro request.
+    if (!cache.has(key)) cache.set(key, upgradeSource(source, options));
+    return await cache.get(key);
   };
 
   const visit = async (list) => {
-    for (const node of list ?? []) {
+    await Promise.all((list ?? []).map(async (node) => {
       if (node?.source) node.source = await upgradeOne(node.source);
       if (node?.children?.length) await visit(node.children);
-    }
+    }));
   };
   await visit(nodes);
   return nodes;
+};
+
+/** Upgrades a flat set of described elements concurrently. ui_act may name
+ * the selector match, the element actually touched and several candidates.
+ * Source lookup must not serialize a timeout for every one of them. */
+export const upgradeSources = async (entries, options = {}) => {
+  const cache = new Map();
+  await Promise.all((entries ?? []).map(async (entry) => {
+    const source = entry?.source;
+    if (!source || source.via !== "stack" || !source.stack?.length) return;
+    const key = source.stack.join("\n");
+    if (!cache.has(key)) cache.set(key, upgradeSource(source, options));
+    entry.source = await cache.get(key);
+  }));
+  return entries;
 };

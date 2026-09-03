@@ -428,3 +428,11 @@ for. For an HTTP MCP client, register the second hub on its own URL:
 ```bash
 claude mcp add rn-devtools-other --transport http http://127.0.0.1:8974/mcp
 ```
+
+When switching between two development builds on one target, call
+`session_start` with the destination `appId`, `appName`, and `serverUrl`.
+The `appName` filter prevents traffic from the previously connected app from
+satisfying the readiness wait. On Android, the hub reads `expo.scheme` from
+the destination project's `app.json`, or derives Expo's `exp+slug` default.
+Pass `scheme` only when the project uses a dynamic config that cannot be read
+without executing it.

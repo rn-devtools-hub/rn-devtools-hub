@@ -10,7 +10,7 @@ interface Frame {
   collapse?: boolean;
 }
 
-const { parseFrames, firstAppFrame, metroUrlFromFrames, symbolicate, upgradeSource, upgradeTreeSources, isLocalNetwork } =
+const { parseFrames, firstAppFrame, metroUrlFromFrames, symbolicate, upgradeSource, upgradeSources, upgradeTreeSources, isLocalNetwork } =
   symbolicateModule as {
     isLocalNetwork: (url: string) => boolean;
     parseFrames: (frames: string[]) => Frame[];
@@ -18,6 +18,7 @@ const { parseFrames, firstAppFrame, metroUrlFromFrames, symbolicate, upgradeSour
     metroUrlFromFrames: (frames: unknown[], fallback?: string) => string;
     symbolicate: (frames: string[], options?: Record<string, unknown>) => Promise<Record<string, any>>;
     upgradeSource: (source: unknown, options?: Record<string, unknown>) => Promise<Record<string, any>>;
+    upgradeSources: (entries: unknown[], options?: Record<string, unknown>) => Promise<any[]>;
     upgradeTreeSources: (nodes: unknown[], options?: Record<string, unknown>) => Promise<any[]>;
   };
 
@@ -308,5 +309,46 @@ describe("upgradeTreeSources", () => {
   it("leaves a tree without sources untouched", async () => {
     const tree = [{ type: "View", children: [{ type: "Text" }] }];
     await expect(upgradeTreeSources(tree, {})).resolves.toBe(tree);
+  });
+
+  it("symbolicates distinct branches concurrently", async () => {
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const stack = (name: string, line: number) => [`    at ${name} (${BUNDLE}:${line}:1)`];
+    const tree = [
+      { type: "View", source: { via: "stack", stack: stack("One", 10) } },
+      { type: "View", source: { via: "stack", stack: stack("Two", 20) } },
+    ];
+    const pending = upgradeTreeSources(tree, {
+      fetchImpl: async () => {
+        started += 1;
+        if (started === 2) release();
+        await gate;
+        return { ok: true, status: 200, json: async () => ({ stack: [{ file: "/app/src/View.tsx", lineNumber: 1 }] }) };
+      },
+    });
+    await pending;
+    expect(started).toBe(2);
+  });
+});
+
+describe("upgradeSources", () => {
+  it("deduplicates source stacks across action descriptions", async () => {
+    let calls = 0;
+    const stack = [`    at Button (${BUNDLE}:12:3)`];
+    const entries = [
+      { source: { via: "stack", stack } },
+      { source: { via: "stack", stack } },
+    ];
+    await upgradeSources(entries, {
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, status: 200, json: async () => ({ stack: [{ file: "/app/src/Button.tsx", lineNumber: 8 }] }) };
+      },
+    });
+    expect(calls).toBe(1);
+    expect(entries[0].source).toMatchObject({ via: "symbolicated", line: 8 });
+    expect(entries[1].source).toMatchObject({ via: "symbolicated", line: 8 });
   });
 });

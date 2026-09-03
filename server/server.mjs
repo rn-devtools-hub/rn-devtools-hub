@@ -21,7 +21,7 @@ import { NATIVE_TOOLS, handleNativeTool, runCommand, listTargets, getNativeLogs,
 import { PROJECT_TOOL, projectContext } from "./project.mjs";
 import { A11Y_TOOLS, parseAndroidA11y, parseIosA11y, crossCheck } from "./a11y.mjs";
 import { BUILD_TOOL, runBuild } from "./build.mjs";
-import { upgradeTreeSources, upgradeSource, isLocalNetwork } from "./symbolicate.mjs";
+import { upgradeTreeSources, upgradeSource, upgradeSources, isLocalNetwork } from "./symbolicate.mjs";
 import { ASSERT_TOOL, runAssert } from "./assert.mjs";
 import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessions } from "./session.mjs";
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
@@ -218,7 +218,7 @@ const notifyEventWaiters = (deviceId, events) => {
     // for the app it just launched to connect)
     if (waiter.deviceId !== null && waiter.deviceId !== deviceId) continue;
     const hit = events.find((event) => {
-      try { return waiter.match(event); } catch { return false; }
+      try { return waiter.match(event, deviceId); } catch { return false; }
     });
     if (hit) {
       clearTimeout(waiter.timer);
@@ -875,10 +875,14 @@ const pluginHost = await createPluginHost({
 
 // Waits for an event from ANY device: session_start launches the app
 // and needs its first hello/app.info without knowing its deviceId yet
-const waitForAnyDeviceEvent = ({ type, timeoutMs }) => new Promise((resolve) => {
+const waitForAnyDeviceEvent = ({ type, timeoutMs, appName }) => new Promise((resolve) => {
   const waiter = {
     deviceId: null,
-    match: (event) => String(event.type).includes(String(type)),
+    match: (event, deviceId) => {
+      if (!String(event.type).includes(String(type))) return false;
+      if (!appName) return true;
+      return devices.get(deviceId)?.appName === appName || event.payload?.appName === appName;
+    },
     resolve: (event) => resolve({ timedOut: false, event }),
     timer: setTimeout(() => {
       eventWaiters.delete(waiter);
@@ -971,7 +975,10 @@ const handleMcpTool = async (name, args = {}) => {
       const refusal = screenshotRefusal();
       if (refusal) throw new Error(refusal);
     }
-    const nativeResult = await handleNativeTool(name, args, { waitForEvent: waitForAnyDeviceEvent });
+    const nativeResult = await handleNativeTool(name, args, {
+      waitForEvent: waitForAnyDeviceEvent,
+      projectRoot: PROJECT_ROOT,
+    });
     if (PIXEL_TOOLS.has(name) && nativeResult?.__mcpImage) {
       return { ...nativeResult, ...pixelNote(nativeResult.__mcpImage) };
     }
@@ -1293,9 +1300,7 @@ const handleMcpTool = async (name, args = {}) => {
         response.result.actedOn,
         ...(Array.isArray(response.result.candidates) ? response.result.candidates : []),
       ];
-      for (const entry of described) {
-        if (entry?.source) entry.source = await upgradeSource(entry.source, metro);
-      }
+      await upgradeSources(described, metro);
     }
     if (name === "ui_act" && response.result?.ok) {
       recordAct(recorder, {

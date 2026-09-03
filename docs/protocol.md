@@ -146,7 +146,7 @@ cannot know which simulator it runs on.
 | `set_animations` | Android animation scales on/off for deterministic captures |
 | `send_push` | simulated APNs push on iOS simulators |
 | `set_appearance` | light/dark mode switch |
-| `session_start` | bootstrap: permissions + cold launch on the Metro server + wait for the app to connect |
+| `session_start` | bootstrap or app switch: permissions + cold launch on the selected Metro server + wait for the expected `appName`; Android derives the development-client scheme from `app.json` |
 
 ## Event cursor (agents)
 

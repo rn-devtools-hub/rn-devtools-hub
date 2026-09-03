@@ -47,7 +47,7 @@ reading code before checking this is the single most common waste.
 ## The loop
 
 ```
-session_start        launch, pre-grant permissions, wait until connected
+session_start        launch or switch app, target Metro, wait for expected appName
 get_capabilities     see what this app attached and how to enable what is missing
 query_ui             find the element by role + accessible name
 ui_act               tap / type / scroll through the app's own props

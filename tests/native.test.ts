@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 // @ts-expect-error - plain ESM module, no types
-import { BROKEN_IDB_HINT, isBrokenIdb, swipeArgv, appContainerArgv, prefsPlistPath, simulatorFlagArgv, devMenuFabValue, DEV_MENU_FAB_KEY, DEV_MENU_ONBOARDING_KEY } from "../server/native.mjs";
+import { BROKEN_IDB_HINT, isBrokenIdb, swipeArgv, appContainerArgv, prefsPlistPath, simulatorFlagArgv, devMenuFabValue, expoSchemeFromProject, DEV_MENU_FAB_KEY, DEV_MENU_ONBOARDING_KEY } from "../server/native.mjs";
 
 const argvOf = swipeArgv as (gesture: Record<string, unknown>) => string[];
 const containerArgv = appContainerArgv as (id: string, app: string) => string[];
@@ -155,5 +158,33 @@ describe("expo-dev-menu preferences", () => {
       "xcrun", "simctl", "spawn", "DEV-1", "defaults", "write",
       "/tmp/app.plist", "EXDevMenuShowFloatingActionButton", "-bool", "true",
     ]);
+  });
+});
+
+describe("expoSchemeFromProject", () => {
+  const withAppJson = (value: unknown, run: (root: string) => void) => {
+    const root = mkdtempSync(join(tmpdir(), "rn-devtools-scheme-"));
+    try {
+      writeFileSync(join(root, "app.json"), JSON.stringify(value));
+      run(root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+
+  it("uses an explicitly configured Expo scheme", () => {
+    withAppJson({ expo: { scheme: "shippex-driver", slug: "driver" } }, (root) => {
+      expect(expoSchemeFromProject(root)).toBe("shippex-driver");
+    });
+  });
+
+  it("derives Expo's development-client scheme from the slug", () => {
+    withAppJson({ expo: { slug: "Shippex Driver" } }, (root) => {
+      expect(expoSchemeFromProject(root)).toBe("exp+shippexdriver");
+    });
+  });
+
+  it("degrades when the project has no static Expo config", () => {
+    expect(expoSchemeFromProject("/path/that/does/not/exist")).toBeNull();
   });
 });

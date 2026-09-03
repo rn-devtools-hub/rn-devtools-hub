@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.19.1](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.19.0...v0.19.1) (2026-09-03)
+
+### Bug Fixes
+
+* **mcp:** make app switching deterministic ([0c5b77e](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/0c5b77eec56a694b59fcbc2c464d50f05bb71f46))
+
 ## [0.19.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.18.0...v0.19.0) (2026-09-02)
 
 ### Features

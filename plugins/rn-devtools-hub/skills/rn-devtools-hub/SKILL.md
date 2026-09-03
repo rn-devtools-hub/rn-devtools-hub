@@ -93,6 +93,7 @@ without walking any screen at all.
 | What did this app actually attach? | `get_capabilities` |
 | What is on screen? | `get_ui_tree`, `query_ui` |
 | Which file renders this? | the `source` field on any node or match |
+| Metro timed out resolving that source | `resolve_source` with the returned stack |
 | Act on it | `ui_act`, or `run_action` to skip the path |
 | Did it work? | `assert` |
 | Did anything break that has no pixel? | `assert` kind `network_ok`, `no_console_error`, `no_crash` |
@@ -107,6 +108,12 @@ without walking any screen at all.
 | Is it usable with a screen reader? | `audit_accessibility` |
 | Did the build I uploaded finish processing? | `asc_list_builds` |
 | Where is the version in review, what is production serving? | `asc_list_versions`, `gplay_list_tracks` |
+
+If a Hub restart, USB reconnect, or native activity suspends the app, let the
+SDK heartbeat reconnect before repeating the action. `session_start` restores
+Android routes during a launch; `repair_adb_routes` restores them without one.
+Native captures infer the target only when exactly one compatible target is
+ready. Multiple ready targets are deliberately refused as ambiguous.
 
 ## Chains that matter
 

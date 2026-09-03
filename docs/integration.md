@@ -436,3 +436,13 @@ satisfying the readiness wait. On Android, the hub reads `expo.scheme` from
 the destination project's `app.json`, or derives Expo's `exp+slug` default.
 Pass `scheme` only when the project uses a dynamic config that cannot be read
 without executing it.
+
+On Android, `session_start` also restores `adb reverse` for Metro and the Hub.
+Use `repair_adb_routes` when USB reconnects in the middle of an existing
+session without relaunching the app. The SDK heartbeat detects a connection
+that remained half-open while the app was suspended and reconnects once the
+JavaScript runtime resumes.
+
+Native capture tools choose the target automatically when exactly one target
+is ready. A Hubflow therefore needs `target` only when several simulators or
+devices are available.

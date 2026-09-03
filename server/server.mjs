@@ -756,6 +756,12 @@ const MCP_TOOLS = [
     annotations: { readOnlyHint: true },
   },
   {
+    name: "resolve_source",
+    description: "Retries Metro symbolication for a source that remained via stack after the short inline budget expired. This is separate so source enrichment never delays a successful UI action.",
+    inputSchema: { type: "object", required: ["stack"], properties: { stack: { type: "array", minItems: 1, maxItems: 30, items: { type: "string" } }, componentName: { type: "string" }, metroUrl: { type: "string" }, timeoutMs: { type: "integer", minimum: 100, maximum: 10000 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "query_ui",
     description: "Finds visible elements by semantic selector and returns values, rectangles and source locations. Retries until timeoutMs.",
     inputSchema: { type: "object", required: ["by", "value"], properties: { deviceId: { type: "string" }, timeoutMs: { type: "integer", minimum: 0, maximum: 30000, description: "Retry while nothing matches, up to this deadline (default 1000). A UI is asynchronous and an empty answer during a transition reads like a regression. Pass 0 for a single immediate look." }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, exact: { type: "boolean" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, limit: { type: "integer", minimum: 1, maximum: 50 }, includeHidden: { type: "boolean" } }, additionalProperties: false },
@@ -963,6 +969,22 @@ const handleMcpTool = async (name, args = {}) => {
     };
   }
   if (name === "list_plugins") return pluginHost.describe();
+  if (name === "resolve_source") {
+    const source = {
+      file: null,
+      line: null,
+      column: null,
+      componentName: args.componentName ?? null,
+      via: "stack",
+      stack: args.stack,
+    };
+    return {
+      source: await upgradeSource(source, {
+        ...(args.metroUrl ? { metroUrl: String(args.metroUrl) } : {}),
+        timeoutMs: Number(args.timeoutMs) || 5000,
+      }),
+    };
+  }
   if (name === "list_flows") return { flows: await listHubflowCatalog(PROJECT_ROOT) };
   if (name === "get_flow") return { path: args.path, flow: await readHubflow(PROJECT_ROOT, args.path) };
   if (name === "propose_flow_repair") return proposeHubflowRepair(PROJECT_ROOT, args.path, args);
@@ -978,6 +1000,7 @@ const handleMcpTool = async (name, args = {}) => {
     const nativeResult = await handleNativeTool(name, args, {
       waitForEvent: waitForAnyDeviceEvent,
       projectRoot: PROJECT_ROOT,
+      hubPort: activePort,
     });
     if (PIXEL_TOOLS.has(name) && nativeResult?.__mcpImage) {
       return { ...nativeResult, ...pixelNote(nativeResult.__mcpImage) };
@@ -1074,14 +1097,13 @@ const handleMcpTool = async (name, args = {}) => {
           broadcastToDashboards({ kind: "flow.progress", path: args.path, run });
         },
         capture: SCREENSHOT_POLICY.mode === "off" ? undefined : async ({ path }) => {
-          if (!args.target) throw new Error("Pass a native target to capture Hubflow visual evidence");
           const shot = await screenshotNative({ target: args.target });
           const bytes = Buffer.from(shot.__mcpImage.data, "base64");
           writeFileSync(path, bytes);
           const decoded = decodePng(bytes);
           return { target: shot.target, mimeType: "image/png", width: decoded.width, height: decoded.height };
         },
-        collectFailureEvidence: !args.target ? undefined : async () => {
+        collectFailureEvidence: async () => {
           // Read the host-side OS log immediately. A native Fabric crash tears
           // down the JS surface and its socket, so asking the device runtime is
           // both too late and the wrong layer.
@@ -1808,6 +1830,14 @@ const startServer = (port) => serve({
             );
           }
         }
+        return;
+      }
+
+      // Application-level heartbeat. React Native exposes no portable
+      // WebSocket ping frames, so this detects half-open sockets after a hub
+      // restart, a network transition or return from a native activity.
+      if (message.kind === "ping" && ws.data.role === "device") {
+        ws.send(JSON.stringify({ kind: "pong", ts: message.ts ?? Date.now() }));
         return;
       }
 

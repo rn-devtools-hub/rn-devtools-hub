@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 // @ts-expect-error - plain ESM module, no types
-import { BROKEN_IDB_HINT, isBrokenIdb, swipeArgv, appContainerArgv, prefsPlistPath, simulatorFlagArgv, devMenuFabValue, expoSchemeFromProject, DEV_MENU_FAB_KEY, DEV_MENU_ONBOARDING_KEY } from "../server/native.mjs";
+import { BROKEN_IDB_HINT, isBrokenIdb, swipeArgv, adbReverseArgv, appContainerArgv, prefsPlistPath, simulatorFlagArgv, devMenuFabValue, expoSchemeFromProject, DEV_MENU_FAB_KEY, DEV_MENU_ONBOARDING_KEY } from "../server/native.mjs";
 
 const argvOf = swipeArgv as (gesture: Record<string, unknown>) => string[];
 const containerArgv = appContainerArgv as (id: string, app: string) => string[];
@@ -186,5 +186,13 @@ describe("expoSchemeFromProject", () => {
 
   it("degrades when the project has no static Expo config", () => {
     expect(expoSchemeFromProject("/path/that/does/not/exist")).toBeNull();
+  });
+});
+
+describe("adb route recovery", () => {
+  it("pins the reverse mapping to the selected device", () => {
+    expect(adbReverseArgv("emulator-5554", 8973)).toEqual([
+      "adb", "-s", "emulator-5554", "reverse", "tcp:8973", "tcp:8973",
+    ]);
   });
 });

@@ -57,6 +57,29 @@ describe("recorded flow conversion", () => {
 });
 
 describe("hubflow execution", () => {
+  it("scopes event expectations to the cursor captured before each action", async () => {
+    const root = await project();
+    let cursor = 7;
+    const observed: unknown[] = [];
+    const flow = sample({ visualEvidence: { screenshots: "off" }, steps: [{
+      act: { tool: "ui_act", arguments: { action: "tap", by: "testID", value: "order" } },
+      expect: [
+        { tool: "assert", arguments: { kind: "network_response", method: "POST", urlContains: "/orders", status: 201 } },
+        { tool: "wait_for_event", arguments: { type: "screen.ready" } },
+        { tool: "assert", arguments: { kind: "no_crash", since: 3 } },
+      ],
+    }] });
+    const report = await hubflow.runHubflow(flow, {
+      projectRoot: root, getCursor: () => cursor,
+      invoke: async (tool: string, args: any) => {
+        if (tool === "ui_act") cursor = 10;
+        else observed.push(args.since);
+        return { ok: true };
+      },
+    });
+    expect(report.status).toBe("passed");
+    expect(observed).toEqual([7, 7, 3]);
+  });
   it("keeps homonymous scenario reports in separate directories", async () => {
     const root = await project();
     const flow = sample({ visualEvidence: { screenshots: "off" } });

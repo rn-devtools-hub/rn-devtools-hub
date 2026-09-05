@@ -321,7 +321,10 @@ describe("renderFlowMcp", () => {
     const calls = renderFlowMcp(buildFlow(recorded(), events));
     expect(calls[0]).toMatchObject({ tool: "ui_act", arguments: { action: "tap", by: "role" } });
     expect(calls.some((call) => call.tool === "wait_for_event")).toBe(true);
-    expect(calls.filter((call) => call.tool === "assert")).toHaveLength(2);
+    expect(calls.filter((call) => call.tool === "assert")).toHaveLength(4);
+    expect(calls[1]).toMatchObject({ tool: "assert", arguments: {
+      kind: "network_response", method: "POST", urlContains: "/orders", status: 201,
+    } });
   });
 
   it("carries the typed text into the replay", () => {

@@ -27,7 +27,7 @@ const POLL_INTERVAL_MS = 250;
 const MAX_COUNT_BOUND = 200;
 const COUNT_QUERY_LIMIT = MAX_COUNT_BOUND + 1;
 
-export const EVENT_KINDS = new Set(["network_ok", "no_console_error", "no_crash"]);
+export const EVENT_KINDS = new Set(["network_ok", "network_response", "no_console_error", "no_crash"]);
 export const ELEMENT_KINDS = new Set(["visible", "absent", "text", "count"]);
 
 /**
@@ -57,10 +57,47 @@ const summarize = (event) => ({
   payload: event.payload,
 });
 
+/** Responses carry requestId, not necessarily the URL or method. Join before
+ * selecting the window: a request may have started before its cursor. */
+export const withRequestContext = (events) => {
+  const requests = new Map();
+  return (Array.isArray(events) ? events : []).map((event) => {
+    const payload = event.payload ?? {};
+    if (event.type === "network.request" && payload.requestId != null) {
+      requests.set(payload.requestId, payload);
+    }
+    if (event.type !== "network.response" && event.type !== "network.error") return event;
+    const request = requests.get(payload.requestId);
+    return { ...event, payload: {
+      ...payload,
+      url: payload.url ?? request?.url,
+      method: payload.method ?? request?.method,
+    } };
+  });
+};
+
 /** Pure verdict over a set of events. The evidence IS the failure report:
  * an agent must never have to run a second tool to learn what broke. */
 export const evaluateEventAssertion = (kind, events, options = {}) => {
-  const list = Array.isArray(events) ? events : [];
+  const list = withRequestContext(events);
+
+  if (kind === "network_response") {
+    const candidates = list.filter((event) =>
+      (event.type === "network.response" || event.type === "network.error") &&
+      String(event.payload?.url ?? "").includes(options.urlContains) &&
+      String(event.payload?.method ?? "").toUpperCase() === options.method.toUpperCase()
+    );
+    const matches = candidates.filter((event) => event.type === "network.response" &&
+      Number(event.payload?.status) === options.status &&
+      (options.allowMocked === true || event.payload?.mocked !== true));
+    return {
+      ok: matches.length > 0,
+      evidence: (matches.length ? matches : candidates).slice(0, EVIDENCE_LIMIT).map(summarize),
+      checked: { kind, events: candidates.length, matches: matches.length,
+        urlContains: options.urlContains, method: options.method.toUpperCase(),
+        status: options.status, allowMocked: options.allowMocked === true },
+    };
+  }
 
   if (kind === "network_ok") {
     const scope = options.urlContains ? String(options.urlContains) : null;
@@ -72,11 +109,16 @@ export const evaluateEventAssertion = (kind, events, options = {}) => {
       const status = Number(event.payload?.status);
       return Number.isFinite(status) && status >= 400 && inScope(event.payload);
     });
+    const unresolved = scope ? list.filter((event) =>
+      (event.type === "network.response" || event.type === "network.error") && !event.payload?.url
+    ) : [];
     return {
       ok: offenders.length === 0,
       evidence: offenders.slice(0, EVIDENCE_LIMIT).map(summarize),
       checked: {
         kind,
+        claim: "no-observed-network-error",
+        unresolved: unresolved.length,
         events: list.filter((event) => String(event.type).startsWith("network.")).length,
         urlContains: scope,
       },
@@ -166,6 +208,37 @@ export const runAssert = async (args = {}, deps = {}) => {
   const now = deps.now ?? (() => Date.now());
   const startedAt = now();
 
+  if (kind === "network_response") {
+    if (typeof args.urlContains !== "string" || !args.urlContains.trim() ||
+        typeof args.method !== "string" || !/^[A-Za-z]+$/.test(args.method) ||
+        !Number.isInteger(args.status) || args.status < 100 || args.status > 599) {
+      throw new Error('Assertion "network_response" needs urlContains, method and an integer status from 100 to 599');
+    }
+    const timeout = args.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : Number(args.timeoutMs);
+    if (!Number.isFinite(timeout) || timeout < 0 || timeout > 120000) throw new Error("Invalid timeoutMs");
+    const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    // Freeze the start of the observation window while waiting.
+    const floor = startedAt - Math.max(100, Math.min(Number(args.windowMs) || DEFAULT_WINDOW_MS, 300000));
+    for (;;) {
+      const history = withRequestContext(await deps.history());
+      const events = args.since != null ? selectWindow(history, { since: args.since }) :
+        history.filter((event) => (event.ts ?? 0) >= floor);
+      const verdict = evaluateEventAssertion(kind, events, args);
+      if (verdict.ok) return { ...verdict, reason: null, kind, conclusive: true,
+        observation: "response-observed", elapsedMs: now() - startedAt, hint: null };
+      if (now() >= startedAt + timeout) {
+        const capture = deps.capture ? await deps.capture(kind) : { instrumented: null };
+        const conclusive = capture.instrumented === true;
+        return { ...verdict, reason: conclusive ? "assertion-failed" : "observation-unavailable",
+          kind, conclusive, capture, observation: "expected-response-not-observed",
+          elapsedMs: now() - startedAt,
+          hint: conclusive ? "No matching response was observed. Check the method, URL, status and cursor. Mocked responses require allowMocked:true." :
+            "Network observation is unavailable or unknown. Instrument the client, then reproduce the action." };
+      }
+      await sleep(Math.min(POLL_INTERVAL_MS, startedAt + timeout - now()));
+    }
+  }
+
   if (EVENT_KINDS.has(kind)) {
     // A look-back needs the in-flight work to have landed: settleMs is
     // the honest way to say "wait, then judge", instead of pretending a
@@ -175,7 +248,8 @@ export const runAssert = async (args = {}, deps = {}) => {
         Math.min(Number(args.settleMs), 30000)
       );
     }
-    const events = selectWindow(await deps.history(), {
+    const capture = deps.capture ? await deps.capture(kind) : null;
+    const events = selectWindow(withRequestContext(await deps.history()), {
       since: args.since,
       windowMs: args.windowMs,
       now: now(),
@@ -184,8 +258,20 @@ export const runAssert = async (args = {}, deps = {}) => {
       urlContains: args.urlContains,
       ignore: args.ignore,
     });
+    if (verdict.ok && verdict.checked.unresolved > 0) return {
+      ok: false, conclusive: false, kind, reason: "observation-unavailable",
+      checked: verdict.checked, evidence: [], elapsedMs: now() - startedAt,
+      hint: "Some network outcomes have no URL and their request is no longer retained. Reproduce with a fresh cursor before checking this URL scope.",
+    };
+    if (verdict.ok && capture && capture.instrumented !== true) {
+      return { ok: false, reason: "observation-unavailable", kind, conclusive: false,
+        checked: verdict.checked, evidence: [], capture, elapsedMs: now() - startedAt,
+        hint: "The required instrumentation is unavailable or unknown. Enable it and reproduce the action before asserting absence of errors." };
+    }
     return {
       ok: verdict.ok,
+      conclusive: !verdict.ok || capture?.instrumented === true,
+      ...(capture ? { capture } : {}),
       /**
        * A failed assertion is an MCP failure, and failures are grouped by
        * this field. The hint is written for a human and differs per kind,
@@ -228,7 +314,7 @@ export const runAssert = async (args = {}, deps = {}) => {
     }
   }
 
-  const deadline = startedAt + Math.max(0, Math.min(Number(args.timeoutMs) || DEFAULT_TIMEOUT_MS, 120000));
+  const deadline = startedAt + Math.max(0, Math.min(Number(args.timeoutMs ?? DEFAULT_TIMEOUT_MS), 120000));
   const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const selector = {
     by: args.by,
@@ -301,7 +387,7 @@ const selectorProps = {
 export const ASSERT_TOOL = {
   name: "assert",
   description:
-    "Proves a result and returns a structured verdict with the evidence attached on failure. Element kinds (visible, absent, text, count) RETRY until timeoutMs, because a UI is asynchronous. Use count with equals, min or max to prove how many elements a list renders. Event kinds (network_ok, no_console_error, no_crash) LOOK BACK over a window and prove what a screenshot cannot show: a request that failed silently, a console error, an unhandled rejection. Scope the window with since (a cursor from get_events_since, the precise form) or windowMs. Use settleMs to let in-flight work land before judging.",
+    "Checks runtime evidence. network_response RETRIES until timeoutMs for an observed response matching required urlContains, method and status; mocked responses require allowMocked:true. Success carries the response evidence. network_ok means only no observed network error, never that a request completed. Negative event assertions require current capture coverage; unavailable coverage returns ok:false, conclusive:false. no_crash covers captured JS errors and rejections, not native crashes. Element kinds (visible, absent, text, count) retry until timeoutMs. Scope events with since from before the action, or windowMs; settleMs delays negative checks.",
   inputSchema: {
     type: "object",
     required: ["kind"],
@@ -309,18 +395,21 @@ export const ASSERT_TOOL = {
       deviceId: { type: "string" },
       kind: {
         type: "string",
-        enum: ["visible", "absent", "text", "count", "network_ok", "no_console_error", "no_crash"],
+        enum: ["visible", "absent", "text", "count", "network_ok", "network_response", "no_console_error", "no_crash"],
       },
       ...selectorProps,
       text: { type: "string", description: "kind:text, the expected text when it differs from value" },
       equals: { type: "integer", minimum: 0, maximum: 200, description: "kind:count, the exact number of matching elements expected" },
       min: { type: "integer", minimum: 0, maximum: 200, description: "kind:count, lowest acceptable number of matches" },
       max: { type: "integer", minimum: 0, maximum: 200, description: "kind:count, highest acceptable number of matches" },
-      timeoutMs: { type: "integer", minimum: 0, maximum: 120000, description: "Element kinds: retry deadline (default 5000)" },
+      timeoutMs: { type: "integer", minimum: 0, maximum: 120000, description: "Element kinds and network_response: retry deadline (default 5000, 0 checks once)" },
       since: { type: "integer", minimum: 0, description: "Event kinds: judge everything after this cursor" },
       windowMs: { type: "integer", minimum: 100, maximum: 300000, description: "Event kinds: trailing window when no cursor is given (default 5000)" },
       settleMs: { type: "integer", minimum: 0, maximum: 30000, description: "Event kinds: wait before judging, to let in-flight requests land" },
-      urlContains: { type: "string", description: "kind:network_ok, restrict to matching URLs" },
+      urlContains: { type: "string", description: "Network assertions: URL substring, required for network_response" },
+      method: { type: "string", pattern: "^[A-Za-z]+$", description: "network_response: required HTTP method" },
+      status: { type: "integer", minimum: 100, maximum: 599, description: "network_response: required response status" },
+      allowMocked: { type: "boolean", description: "network_response: accept instrumented mocked responses (default false)" },
       ignore: { type: "array", items: { type: "string" }, description: "kind:no_console_error, substrings to tolerate" },
     },
     additionalProperties: false,

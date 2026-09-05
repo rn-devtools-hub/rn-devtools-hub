@@ -7,9 +7,21 @@
 
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain JS module, no types
-import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry, describeCapabilities } from "../server/instrumentation.mjs";
+import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry, describeCapabilities, assertionCapture } from "../server/instrumentation.mjs";
 
 const stateOf = (report: unknown) => ({ report, supported: true });
+
+describe("assertion capture coverage", () => {
+  it("cannot certify crash absence with only one observer installed", () => {
+    expect(assertionCapture(stateOf({ crashes: { errors: true, rejections: false } }), "no_crash"))
+      .toMatchObject({ instrumented: false, scope: "js-errors-and-unhandled-rejections" });
+    expect(assertionCapture(stateOf({ crashes: { errors: true, rejections: true } }), "no_crash").instrumented).toBe(true);
+  });
+  it("leaves old SDK coverage unknown", () => {
+    expect(assertionCapture(stateOf({ console: true }), "no_crash").instrumented).toBeNull();
+    expect(assertionCapture({ report: null, supported: false }, "network_ok").instrumented).toBeNull();
+  });
+});
 
 describe("readInstrumentation", () => {
   it("reads the report a current SDK answers", async () => {

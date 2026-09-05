@@ -60,6 +60,7 @@ export interface InstrumentationReport {
   determinism: boolean;
   originTracking: boolean;
   console: boolean;
+  crashes?: { errors: boolean; rejections: boolean };
   stores: Array<{ name: string; kind: string | null; writable: boolean }>;
   actions: string[];
   previews: string[];
@@ -82,6 +83,7 @@ class Devtools {
   private requestCounter = 0;
   private perfTimer: ReturnType<typeof setInterval> | null = null;
   private consoleAttached = false;
+  private crashCapture = { errors: false, rejections: false };
   private startedAt = Date.now();
   private trackOrigin = false;
   private determinism: ReturnType<typeof installDeterminism> | null = null;
@@ -528,7 +530,7 @@ class Devtools {
     // 1. Global JS errors (ErrorUtils is provided by React Native)
     const globalAny = globalThis as any;
     const errorUtils = globalAny.ErrorUtils;
-    if (errorUtils?.setGlobalHandler) {
+    if (errorUtils?.setGlobalHandler && !this.crashCapture.errors) {
       const previousHandler = errorUtils.getGlobalHandler?.();
       errorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
         try {
@@ -545,11 +547,12 @@ class Devtools {
         }
         previousHandler?.(error, isFatal);
       });
+      this.crashCapture.errors = true;
     }
 
     // 2. Unhandled promise rejections (Hermes API, defensive)
     const hermes = globalAny.HermesInternal;
-    if (hermes?.enablePromiseRejectionTracker) {
+    if (hermes?.enablePromiseRejectionTracker && !this.crashCapture.rejections) {
       try {
         hermes.enablePromiseRejectionTracker({
           allRejections: true,
@@ -566,6 +569,7 @@ class Devtools {
             this.transport?.flush();
           },
         });
+        this.crashCapture.rejections = true;
       } catch {
         // API not available on this runtime: never mind
       }
@@ -624,6 +628,7 @@ class Devtools {
       determinism: this.determinism !== null,
       originTracking: this.trackOrigin,
       console: this.consoleAttached,
+      crashes: { ...this.crashCapture },
       stores: this.stores ? this.stores.names() : [],
       actions: [...this.actions.keys()],
       previews: this.previews ? this.previews.names() : [],

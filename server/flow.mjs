@@ -1,21 +1,16 @@
 /**
  * Flow recording: actions and their consequences.
  *
- * A recorder outside the app can only capture gestures: a tap at these
- * coordinates, a tap on that testID. It cannot state what the tap CAUSED,
- * because it never sees inside. Replaying such a script proves that the
- * taps still land, not that the feature still works.
- *
- * From inside, an action can be paired with what followed it: the request
- * it fired and its status, the screen that became ready, the crash it
- * triggered. What comes out is a causality test, not a gesture replay.
+ * From inside, an action can be paired with observed requests, ready
+ * screens and crashes. The pairing is temporal: background work can emit
+ * events in the same window, so it does not establish causality.
  *
  *   tap    role=button name="Commander"
  *   wait   network.response POST /orders 201
  *   wait   screen.ready Confirmation
  *   assert network_ok
  *
- * The second line is the one no external recorder can write.
+ * Review the captured expectations before adopting a flow as a test.
  */
 
 const NOTABLE_TYPES = new Set([
@@ -146,6 +141,7 @@ const describeConsequence = (event, requests) => {
       method: request.method ?? null,
       path: request.url ? pathOf(request.url) : null,
       status: payload.status ?? null,
+      mocked: payload.mocked === true,
       failed: event.type === "network.error" || Number(payload.status) >= 400,
     };
   }
@@ -194,6 +190,7 @@ export const buildFlow = (recorder, events) => {
       index: act.index ?? null,
       // The source is what turns a failing step into an edit
       source: act.target?.source ?? null,
+      attribution: "temporal",
       consequences,
       failed: consequences.some((entry) => entry.failed),
     };
@@ -217,7 +214,7 @@ const selectorText = (selector = {}) => {
 };
 
 export const renderFlowText = (flow) => {
-  const lines = [`# ${flow.name}`, ""];
+  const lines = [`# ${flow.name}`, "# Events are associated by time; background work may be included.", ""];
   for (const step of flow.steps) {
     // The index belongs on the line: read without it, the script says it
     // acts on "the button", when it acted on the third one
@@ -260,25 +257,31 @@ export const renderFlowMcp = (flow) => {
     });
     for (const consequence of step.consequences) {
       if (consequence.kind !== "wait") continue;
-      calls.push({
-        tool: "wait_for_event",
-        arguments: {
-          type: consequence.type,
-          ...(consequence.path ? { payloadContains: consequence.path } : {}),
-          ...(consequence.screen ? { payloadContains: consequence.screen } : {}),
-        },
-      });
+      calls.push(expectationForEvent(consequence));
     }
     calls.push({ tool: "assert", arguments: { kind: "network_ok", windowMs: 5000 } });
   }
   return calls;
 };
 
+export const expectationForEvent = (event) => {
+  if (event.type === "network.response" && event.path && event.method && Number.isInteger(event.status)) {
+    return { tool: "assert", arguments: { kind: "network_response",
+      urlContains: event.path, method: event.method, status: event.status,
+      ...(event.mocked ? { allowMocked: true } : {}),
+    } };
+  }
+  return { tool: "wait_for_event", arguments: { type: event.type,
+    ...(event.path ? { payloadContains: event.path } : {}),
+    ...(event.screen ? { payloadContains: event.screen } : {}),
+  } };
+};
+
 export const FLOW_TOOLS = [
   {
     name: "start_recording",
     description:
-      "Starts recording the actions performed through ui_act and the events they cause. Everything between this call and stop_recording becomes an exportable flow.",
+      "Records runtime actions and events observed between them. Association is temporal and may include background work. Everything up to stop_recording becomes an exportable flow.",
     inputSchema: {
       type: "object",
       properties: { deviceId: { type: "string" }, name: { type: "string" } },
@@ -295,7 +298,7 @@ export const FLOW_TOOLS = [
   {
     name: "export_flow",
     description:
-      "Exports the recorded flow as an action/consequence sequence: each action is paired with what it CAUSED (the request it fired and its status, the screen that became ready), which an external recorder cannot know. format:\"mcp\" returns the exact tool calls to replay it, \"text\" a readable script, \"json\" the structure. A flow that recorded a failure is reported as not clean rather than exported as if it passed.",
+      "Exports runtime actions and subsequent observed events. attribution:temporal means ordering, not proven causality; review background traffic before using the recording as a test. format:mcp returns replay calls, text a readable script, json the structure. Recorded failures make clean:false.",
     inputSchema: {
       type: "object",
       properties: {

@@ -1882,6 +1882,10 @@ export const installUiAutomation = (host: AutomationHost): AutomationApi => {
       committed: tracker.generation > beforeGeneration,
       action,
       detail: outcome.detail,
+      execution: {
+        mode: action === "tap" || action === "longPress" ? "js-handler" : "runtime-command",
+        nativeGesture: false,
+      },
       /** The element the SELECTOR matched */
       target: await describeMatch(freshMatch ?? target),
       /**

@@ -73,6 +73,11 @@ Every MCP tool failure carries `{code, message, hint, details}`. A declared
 `ok: false` refusal also keeps its original payload and evidence. Follow the
 `hint` before replanning.
 
+Read `execution` after an action. `mode: "js-handler"` means tap or
+longPress invoked the handler inside the runtime. `nativeGesture: false`
+means native hit testing and touch reachability were not exercised. Use
+native actions when the gesture or an overlay blocking touch is under test.
+
 Read `verified` after a `type`. `ok: true` means the action ran;
 `verified: "exact"` means the field holds the text. `transformed` means the
 app rewrote it (mask, maxLength), `unverifiable` means the input is
@@ -96,6 +101,7 @@ without walking any screen at all.
 | Metro timed out resolving that source | `resolve_source` with the returned stack |
 | Act on it | `ui_act`, or `run_action` to skip the path |
 | Did it work? | `assert` |
+| Did the expected HTTP response arrive? | `assert` kind `network_response`, with `urlContains`, `method`, `status`, and `since` |
 | Did anything break that has no pixel? | `assert` kind `network_ok`, `no_console_error`, `no_crash` |
 | How many did it render? | `assert` kind `count`, with `equals`, `min` or `max` |
 | What happened after my action? | `get_events_since`, `wait_for_event` |
@@ -123,12 +129,23 @@ ready. Multiple ready targets are deliberately refused as ambiguous.
 wait_for_event  type: "ui.change"          # the reload landed
 query_ui        by: "role", value: "button", name: "Commander"
 ui_act          action: "tap", by: "role", value: "button", name: "Commander"
-wait_for_event  type: "network.response", payloadContains: "/orders"
+assert          kind: "network_response", urlContains: "/orders", method: "POST", status: 201, since: <cursor from before the tap>
 assert          kind: "visible", by: "text", value: "Commande confirmée"
 assert          kind: "network_ok", since: <cursor from before the tap>
 ```
 
-The last line is what a screenshot would have missed. Take the cursor from
+`network_response` requires an observed response and retains its evidence on
+success. It retries until timeoutMs and excludes mocks unless
+`allowMocked: true`. `network_ok` only checks for observed errors; an empty
+window does not prove a request completed. Negative event assertions require
+current capture coverage. An unavailable observer returns `ok: false`,
+`conclusive: false`, `reason: "observation-unavailable"`. `no_crash` covers
+JS errors and unhandled rejections, not native crashes.
+
+Pass `since` to `wait_for_event` too: it first checks retained events, so it
+can find a ready event emitted during the action.
+
+The last line checks for additional observed network errors. Take the cursor from
 `get_events_since` **before** acting, so the window covers exactly your step
 and nothing else.
 
@@ -182,7 +199,9 @@ save_flow        path: "checkout.hubflow"
 run_flow         path: "tests/hub/checkout.hubflow"
 ```
 
-Each action comes back paired with what it caused. If `clean: false`, the
+Each action comes back paired with subsequently observed events.
+`attribution: "temporal"` does not prove causality: review background
+traffic before treating it as an expectation. If `clean: false`, the
 recording captured a failure: fix it before treating it as a test.
 
 The saved file is versioned in Git. Reports and selected screenshots stay
@@ -258,7 +277,7 @@ one: read it before shipping anything.
 | `scrollToEnd` stops short | A virtualized list only knows the end of what it has rendered. `result.atEnd` says whether the bottom was reached; call again or use `scrollBy` |
 | A native button is unreachable under a floating bubble | That bubble is the expo-dev-menu FAB, in its own window, so it is not in `get_ui_tree` and no selector will ever find it. `set_overlay {visible:false}` hides it on the spot; put it back when you are done. Before a launch, `launch_app hideDevMenuFab` |
 | Element in `get_ui_tree` but not in `query_ui` | It is in a hidden navigator screen. Only pass `includeHidden` if you know why |
-| `assert` fails with an empty `evidence` | The window was wrong. Pass `since` from a cursor taken before the action |
+| `assert` fails with empty `evidence` | Read `reason`, `conclusive` and `capture`: instrumentation may be missing, or the expected event was not observed. Use `since` from before the action |
 | `source` is `null` everywhere | Production build, or a React version without dev bookkeeping |
 | `audit_accessibility` returns `conclusive: false` | One of the two trees came back empty; the report is not a clean bill of health |
 | A screenshot answers with a `note` about assert | This is the second capture with nothing asserted between them. The note is not decoration: the step being checked has an `assert` kind that proves it |

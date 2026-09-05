@@ -61,6 +61,14 @@ describe("selectWindow", () => {
 });
 
 describe("evaluateEventAssertion", () => {
+  it("joins SDK response IDs before applying URL error filters", () => {
+    const verdict = evaluateEventAssertion("network_ok", [
+      event("network.request", { requestId: "r1", method: "POST", url: "https://api/orders" }, 1),
+      event("network.response", { requestId: "r1", status: 500 }, 2),
+    ], { urlContains: "/orders" });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.evidence[0]).toMatchObject({ payload: { url: "https://api/orders", status: 500 } });
+  });
   it("passes network_ok when every response is under 400", () => {
     const verdict = evaluateEventAssertion("network_ok", [
       event("network.response", { status: 200, url: "https://api/x" }, 1),
@@ -133,6 +141,86 @@ describe("evaluateEventAssertion", () => {
 
   it("rejects an unknown kind", () => {
     expect(() => evaluateEventAssertion("no_such_kind", [])).toThrow(/Unknown event assertion/);
+  });
+});
+
+describe("positive network evidence", () => {
+  const args = { kind: "network_response", method: "POST", urlContains: "/orders", status: 201, since: 1, timeoutMs: 0 };
+  const request = event("network.request", { requestId: "order", method: "POST", url: "https://api/orders" }, 1);
+  const response = event("network.response", { requestId: "order", status: 201 }, 2);
+  const capture = async () => ({ instrumented: true });
+
+  it("cannot pass on an empty history", async () => {
+    expect(await runAssert(args, { history: () => [], capture })).toMatchObject({ ok: false, reason: "assertion-failed", conclusive: true });
+  });
+
+  it("reports unavailable observation separately from a failed expectation", async () => {
+    expect(await runAssert(args, { history: () => [], capture: async () => ({ instrumented: false }) }))
+      .toMatchObject({ ok: false, reason: "observation-unavailable", conclusive: false });
+  });
+
+  it("retains success evidence and joins a request from before the cursor", async () => {
+    const result = await runAssert(args, { history: () => [request, response], capture });
+    expect(result).toMatchObject({ ok: true, conclusive: true });
+    expect(result.evidence[0]).toMatchObject({ seq: 2, payload: { method: "POST", status: 201, url: "https://api/orders" } });
+  });
+
+  it.each([
+    { method: "GET" }, { status: 200 }, { urlContains: "/other" }, { since: 2 },
+  ])("rejects mismatched scope %j", async (override) => {
+    expect((await runAssert({ ...args, ...override }, { history: () => [request, response], capture })).ok).toBe(false);
+  });
+
+  it("requires explicit consent to treat a mock as the expected response", async () => {
+    const history = () => [request, { ...response, payload: { ...response.payload as object, mocked: true } }];
+    expect((await runAssert(args, { history, capture })).ok).toBe(false);
+    const accepted = await runAssert({ ...args, allowMocked: true }, { history, capture });
+    expect(accepted.ok).toBe(true);
+    expect(accepted.evidence[0]).toMatchObject({ payload: { mocked: true } });
+  });
+
+  it("waits for the response while preserving the original observation window", async () => {
+    let time = 1000;
+    const result = await runAssert({ ...args, timeoutMs: 500 }, {
+      now: () => time, sleep: async (ms: number) => { time += ms; }, capture,
+      history: () => time > 1000 ? [request, response] : [request],
+    });
+    expect(result).toMatchObject({ ok: true, elapsedMs: 250 });
+  });
+
+  it.each(["network_ok", "no_console_error", "no_crash"])("refuses %s when capture is unknown", async (kind) => {
+    expect(await runAssert({ kind }, { history: () => [], capture: async () => ({ instrumented: null }) }))
+      .toMatchObject({ ok: false, conclusive: false, reason: "observation-unavailable" });
+  });
+
+  it("does not hide an observed failure when instrumentation was later removed", async () => {
+    expect(await runAssert({ kind: "network_ok", since: 1, urlContains: "/orders" }, {
+      history: () => [request, { ...response, payload: { requestId: "order", status: 500 } }],
+      capture: async () => ({ instrumented: false }),
+    })).toMatchObject({ ok: false, conclusive: true, reason: "assertion-failed" });
+  });
+
+  it("includes failures emitted while the instrumentation query is in flight", async () => {
+    const history: unknown[] = [];
+    const result = await runAssert({ kind: "no_crash", since: 0 }, {
+      history: () => history,
+      capture: async () => {
+        history.push(event("crash", { message: "during coverage query" }, 1));
+        return { instrumented: true };
+      },
+    });
+    expect(result).toMatchObject({ ok: false, conclusive: true });
+    expect(result.evidence).toHaveLength(1);
+  });
+
+  it("refuses a URL-scoped absence verdict when request context was evicted", async () => {
+    expect(await runAssert({ kind: "network_ok", since: 0, urlContains: "/orders" }, {
+      history: () => [response], capture,
+    })).toMatchObject({ ok: false, conclusive: false });
+  });
+
+  it("requires a concrete expected response", async () => {
+    await expect(runAssert({ ...args, status: undefined }, { history: () => [] })).rejects.toThrow(/status/);
   });
 });
 

@@ -136,6 +136,25 @@ const capability = (available, enable, tools, details = {}) => ({
   ...details,
 });
 
+/** Current capture coverage, never a claim that the whole app is observed. */
+export const assertionCapture = (state, kind) => {
+  const report = state.report;
+  if (!report) return { instrumented: null, scope: "unknown", note: state.error ?? UNSUPPORTED };
+  if (kind === "network_ok" || kind === "network_response") return {
+    instrumented: report.network?.instrumented ?? null,
+    scope: "instrumented-network-clients",
+    enable: 'devtools.wrapFetch(fetch, "api") or devtools.attachAxios(api, "api")',
+  };
+  if (kind === "no_console_error") return {
+    instrumented: report.console ?? null, scope: "captured-js-console", enable: "devtools.attachConsole()",
+  };
+  return {
+    instrumented: report.crashes ? report.crashes.errors === true && report.crashes.rejections === true : null,
+    scope: "js-errors-and-unhandled-rejections", coverage: report.crashes ?? null,
+    enable: "devtools.attachCrashReporting()",
+  };
+};
+
 /** Turns the runtime attachment report into an agent-readable capability map. */
 export const describeCapabilities = (state) => {
   if (state.report === null) {

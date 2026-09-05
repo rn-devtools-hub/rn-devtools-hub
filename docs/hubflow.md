@@ -1,9 +1,29 @@
 # Hubflow scenarios
 
 A `.hubflow` file is a versioned, reviewable scenario for React Native and
-Expo. It records the action a person performed and the consequences the hub
-can prove from inside the app: UI state, network events, stores, console
-errors and crashes.
+Expo. It records actions executed inside the app runtime and events observed
+between them. The association is temporal: background work may appear in the
+same window, so review the expectations before adopting a recording as a test.
+
+`ui_act` reports `execution.mode` and `execution.nativeGesture:false`.
+Calling a JS handler checks application logic but does not exercise native
+hit testing or prove that a user's touch can reach the element. Use native
+actions when testing touch reachability, overlays or gesture recognition.
+
+Recorded HTTP responses with a known URL, method and status become positive
+`assert` checks with `kind:"network_response"`. They require an observed
+matching response; mocks require explicit `allowMocked:true`, preserved when
+the recording captured one. The runner scopes event expectations without an
+explicit `since` to the cursor before each action. `wait_for_event` checks
+retained events after that cursor before waiting, including events emitted
+while the action was executing.
+
+`network_ok` checks only for observed errors. An empty network window does
+not prove a request completed. Negative event assertions return
+`ok:false, conclusive:false, reason:"observation-unavailable"` when current
+capture coverage is unavailable or unknown. Older SDKs need upgrading to
+report crash coverage. `no_crash` covers captured JS errors and unhandled
+rejections, not native process crashes or periods before instrumentation.
 
 Scenario files normally live under `tests/hub/` and belong in Git. Run
 reports and screenshots live under `.rn-devtools/flows/runs/` and stay local.

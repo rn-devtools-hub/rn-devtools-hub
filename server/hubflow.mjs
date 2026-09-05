@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { expectationForEvent } from "./flow.mjs";
 
 export const HUBFLOW_FORMAT = "rn-devtools-hub/flow";
 export const HUBFLOW_VERSION = 1;
@@ -53,7 +54,7 @@ export const HUBFLOW_TOOLS = [
   },
   {
     name: "run_flow",
-    description: "Runs a validated .hubflow with causal assertions and writes screenshots and a human-readable report under .rn-devtools.",
+    description: "Runs a validated .hubflow with explicit expectations and writes screenshots and a human-readable report under .rn-devtools. Recorded event association is temporal, not proven causality.",
     inputSchema: {
       type: "object",
       required: ["path"],
@@ -258,20 +259,14 @@ export const durableFlowFromRecorded = (recorded, options = {}) => {
       ...(step.index === null || step.index === undefined ? {} : { index: step.index }),
       ...(step.text === null || step.text === undefined ? {} : { text: step.text }),
     } },
-    expect: (step.consequences ?? []).filter((item) => item.kind === "wait" && !item.failed).map((item) => ({
-      tool: "wait_for_event", arguments: {
-        type: item.type,
-        ...(item.path ? { payloadContains: item.path } : {}),
-        ...(item.screen ? { payloadContains: item.screen } : {}),
-      },
-    })),
+    expect: (step.consequences ?? []).filter((item) => item.kind === "wait" && !item.failed).map(expectationForEvent),
     ...(step.source ? { targetEvidence: { source: step.source } } : {}),
   }));
   const flow = {
     format: HUBFLOW_FORMAT, version: HUBFLOW_VERSION, name: recorded.name ?? "recorded-flow",
     ...(options.description ? { description: options.description } : {}),
     ...((Number.isFinite(options.finalCursor) || Number.isFinite(recorded.finalCursor)) ? {
-      recording: { finalCursor: Number(options.finalCursor ?? recorded.finalCursor) },
+      recording: { finalCursor: Number(options.finalCursor ?? recorded.finalCursor), attribution: "temporal" },
     } : {}),
     setup: options.setup ?? [], steps, teardown: options.teardown ?? [],
     visualEvidence: options.visualEvidence ?? { screenshots: "important-and-failure", final: true },
@@ -356,8 +351,18 @@ const invokeCall = async (invoke, call, context) => {
 const summarizeResult = (result) => {
   if (!object(result)) return result === undefined ? null : result;
   const summary = {};
-  for (const key of ["ok", "verified", "timedOut", "reason", "count", "status", "atEnd", "committed"]) {
+  for (const key of ["ok", "verified", "timedOut", "reason", "count", "status", "atEnd", "committed", "execution", "conclusive", "observation"]) {
     if (["string", "number", "boolean"].includes(typeof result[key])) summary[key] = result[key];
+  }
+  if (object(result.execution)) summary.execution = {
+    mode: result.execution.mode ?? null, nativeGesture: result.execution.nativeGesture === true,
+  };
+  if (result.kind === "network_response" && Array.isArray(result.evidence)) {
+    summary.evidence = result.evidence.slice(0, 10).map((event) => ({
+      seq: event.seq ?? null, type: event.type ?? null,
+      status: event.payload?.status ?? null, method: event.payload?.method ?? null,
+      mocked: event.payload?.mocked === true,
+    }));
   }
   if (object(result.event)) {
     summary.event = { type: result.event.type ?? null };
@@ -477,9 +482,14 @@ export const runHubflow = async (flow, options) => {
       report.steps.push(stepReport);
       progress();
       try {
+        const cursor = options.getCursor?.();
         for (const [kind, calls] of [["act", [step.act]], ["expect", step.expect ?? []]]) for (const call of calls) {
           const startedAt = Date.now();
-          const result = await invokeCall(options.invoke, call, { phase: "step", kind, step: index });
+          const eventCheck = call.tool === "wait_for_event" || (call.tool === "assert" &&
+            ["network_response", "network_ok", "no_console_error", "no_crash"].includes(call.arguments?.kind));
+          const scoped = kind === "expect" && eventCheck && Number.isInteger(cursor) && call.arguments?.since == null
+            ? { ...call, arguments: { ...call.arguments, since: cursor } } : call;
+          const result = await invokeCall(options.invoke, scoped, { phase: "step", kind, step: index });
           stepReport.calls.push({ kind, tool: call.tool, status: "passed", durationMs: Date.now() - startedAt, result: summarizeResult(result) });
         }
         stepReport.status = "passed";

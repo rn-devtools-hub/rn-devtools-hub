@@ -29,6 +29,7 @@ import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, b
 import { HUBFLOW_TOOLS, durableFlowFromRecorded, listHubflowCatalog, proposeHubflowRepair, readHubflow, resolveHubflowArtifact, resolveHubflowPath, runHubflow, selectNativeFailureLogs, writeHubflow } from "./hubflow.mjs";
 import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry, describeCapabilities, assertionCapture } from "./instrumentation.mjs";
 import { declaredError, errorEnvelope } from "./errors.mjs";
+import { dashboardLink, dashboardAnnouncement } from "./dashboard-link.mjs";
 import { STORE_SHOT_TOOL, captureStoreScreenshots } from "./storeshots.mjs";
 import { createToolLog, recordToolCall, summarizeTools, readEmptiness, readScreenshotPolicy, screenshotAdvice, PIXEL_TOOLS } from "./tools.mjs";
 import { createPluginHost, LIST_PLUGINS_TOOL } from "./plugins.mjs";
@@ -201,6 +202,7 @@ const COMMAND_TIMEOUT_MS = {
 };
 const MAX_COMMAND_TIMEOUT_MS = 120000;
 const HUB_TOKEN = process.env.RN_DEVTOOLS_TOKEN || crypto.randomUUID().replaceAll("-", "");
+const currentDashboard = () => dashboardLink({ projectName: PROJECT_NAME, port: activePort, token: HUB_TOKEN });
 
 /** @type {Map<string, {ws: any, appName: string, deviceName: string, connectedAt: number, history: any[]}>} */
 const devices = new Map();
@@ -965,6 +967,7 @@ const handleMcpTool = async (name, args = {}) => {
     // difference between reading the right project and another one.
     return {
       project: { name: PROJECT_NAME, directory: PROJECT_ROOT, port: activePort },
+      dashboard: currentDashboard(),
       devices: Array.from(devices.entries()).map(deviceSummary),
     };
   }
@@ -1005,6 +1008,7 @@ const handleMcpTool = async (name, args = {}) => {
     if (PIXEL_TOOLS.has(name) && nativeResult?.__mcpImage) {
       return { ...nativeResult, ...pixelNote(nativeResult.__mcpImage) };
     }
+    if (name === "session_start") return { ...nativeResult, dashboard: currentDashboard() };
     return nativeResult;
   }
   if (SESSION_TOOLS.some((tool) => tool.name === name)) {
@@ -1056,7 +1060,7 @@ const handleMcpTool = async (name, args = {}) => {
       // it is what the device announced when it connected
       if (!response.error) runtime = { ...(response.result ?? {}), appName: contextDevice.appName };
     }
-    return projectContext(PROJECT_ROOT, runtime);
+    return { ...projectContext(PROJECT_ROOT, runtime), dashboard: currentDashboard() };
   }
   const [deviceId, device] = pickDevice(args.deviceId);
   if (!device) throw new Error("No device available");
@@ -1510,7 +1514,7 @@ const handleMcpRequest = async (request, bunServer) => {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: "rn-devtools-hub", version: HUB_VERSION },
-      instructions: "Start with get_project_context, then get_capabilities. Prefer role/name or testID selectors. After an action, wait_for_event and assert the result. Use screenshots only for visual questions. Error results include a code and hint; follow the hint before replanning.",
+      instructions: dashboardAnnouncement(currentDashboard()) + " Start with get_project_context, then get_capabilities. Prefer role/name or testID selectors. After an action, wait_for_event and assert the result. Use screenshots only for visual questions. Error results include a code and hint; follow the hint before replanning.",
     }));
   }
   if (method === "notifications/initialized") return new Response(null, { status: 202 });
@@ -2023,7 +2027,7 @@ if (EXPLICIT_PORT === null && activePort !== DEFAULT_PORT) {
   console.log(`  or point serverUrl at ws://<metro-ip>:${activePort} yourself.`);
   console.log("");
 }
-console.log(`  Dashboard : http://localhost:${activePort}/?token=${HUB_TOKEN}`);
+console.log(`  Dashboard : ${currentDashboard().url}`);
 console.log(`  WebSocket : ws://<local-ip>:${activePort}`);
 console.log(`  Local MCP : http://127.0.0.1:${activePort}/mcp`);
 // A plugin is the one thing here that talks to the outside, so what it

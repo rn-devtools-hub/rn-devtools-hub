@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.22.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.21.0...v0.22.0) (2026-09-05)
+
+### Features
+
+* **mcp:** announce the project dashboard ([4ba8ed2](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/4ba8ed2dec68f800eec53a7798d8e86a4519ca9c))
+
 ## [0.21.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.20.0...v0.21.0) (2026-09-05)
 
 ### Features

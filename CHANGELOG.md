@@ -2,6 +2,12 @@
 
 Generated automatically from conventional commits.
 
+## [0.21.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.20.0...v0.21.0) (2026-09-05)
+
+### Features
+
+* **mcp:** require explicit runtime evidence ([06cb50c](https://github.com/rn-devtools-hub/rn-devtools-hub/commit/06cb50c5e45e851a14558e72b370f5a752a43ac4))
+
 ## [0.20.0](https://github.com/rn-devtools-hub/rn-devtools-hub/compare/v0.19.1...v0.20.0) (2026-09-03)
 
 ### Features

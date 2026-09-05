@@ -1,6 +1,6 @@
 {
   "name": "rn-devtools-hub",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "The agent runtime for React Native and Expo: an MCP server that sees the app the way React sees it, knows which file produced each element, acts without coordinates, and proves it works. Local only, zero dependencies.",
   "license": "MIT",
   "mcpName": "io.github.rn-devtools-hub/rn-devtools-hub",

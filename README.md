@@ -8,7 +8,7 @@
   The agent runtime for React Native. Your agent sees the app the way React
   sees it, knows which file produced each element, acts without coordinates,
   and proves that it works. Zero dependencies, no telemetry or usage
-  counting, everything stays on your machine.
+  counting, with a local hub and SDK.
 </p>
 
 <p align="center">
@@ -123,10 +123,12 @@ bridges to the hub and starts it on demand.
 
 The SDK lives **inside the JavaScript runtime of your app**.
 
-An accessibility-driven tool sees what the OS exposes. A WebDriver-driven one
-sees a black box. An IDE inspector sees the tree but will not act on it. None
-of them can read a component's props, call a handler, intercept a request or
-write to a store, because none of them is inside.
+The SDK executes directly alongside your application code. It reads React's
+tree, invokes handlers, instruments requests and reaches registered stores
+through APIs installed inside the app. The hub receives these capabilities
+over its own local connection, without requiring a debugger protocol session.
+Other tools can access runtime internals through protocols such as CDP;
+the hub's foundation is an explicit in-app SDK and its event contracts.
 
 That position is what the whole product is built on. Everything else follows
 from it:
@@ -143,7 +145,9 @@ from it:
 
 A pure JavaScript SDK in the app (inert in production), a local hub in a single
 process, a dashboard in the browser. Zero dependencies anywhere, including the
-hub. Your data never leaves your machine.
+hub. The hub has no telemetry. MCP results are delivered to your agent and
+may be sent to its model provider. Configured store plugins contact their
+declared vendor endpoints.
 
 ## Features
 
@@ -176,7 +180,7 @@ for a GitHub issue), real-time capability badges, and a local MCP server to
 drive everything from Claude, Cursor or any MCP client.
 
 See [Hubflow scenarios](docs/hubflow.md) to record an exploration, save it
-as a causal E2E test, replay it in CI and inspect its selected success or
+as a runtime regression test, replay it in CI and inspect its selected success or
 failure screenshots in the dashboard.
 
 ## What an agent gets
@@ -192,7 +196,7 @@ failure screenshots in the dashboard.
 | `render_component` | Mount a component inside the running app, under its real providers |
 | `snapshot_baseline`, `compare_snapshot` | A visual diff that names the component owning the changed region |
 | `export_session`, `export_flow` | One correlated timeline, and actions paired with the consequences they caused |
-| `save_flow`, `list_flows`, `get_flow`, `run_flow`, `propose_flow_repair` | Persist a causal scenario, replay it with assertions and screenshots, and create a reviewable repair candidate when a strongly identified target moves |
+| `save_flow`, `list_flows`, `get_flow`, `run_flow`, `propose_flow_repair` | Persist a runtime scenario, replay it with assertions and screenshots, and create a reviewable repair candidate when a strongly identified target moves |
 | `audit_accessibility` | What React renders but the accessibility tree does not expose |
 | `list_plugins`, `asc_*`, `gplay_*` | The release around the app: has the build finished processing, where is the version in review, what is production serving, what do the store reviews say. And driving it: distribute to TestFlight, submit for review, promote a track, widen or halt a staged rollout |
 | `capture_store_screenshots` | Regenerate the App Store and Play screenshots from the running app: devices, locales and screens from a manifest, each reached with the app's own dev actions, captured at native resolution and uploaded. The pixels never enter the agent's context |

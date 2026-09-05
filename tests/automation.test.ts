@@ -800,6 +800,14 @@ describe("installUiAutomation", () => {
   const query = (handlers: Handlers, payload: Record<string, unknown>): Promise<any> =>
     Promise.resolve(handlers.get("ui.query")!(payload)) as Promise<any>;
 
+  it("labels handler invocation without claiming a native gesture", async () => {
+    let pressed = 0;
+    const handlers = mount({ type: "RCTView", props: { testID: "submit", onPress: () => { pressed++; } } });
+    const result = await act(handlers, { action: "tap", by: "testID", value: "submit" });
+    expect(pressed).toBe(1);
+    expect(result.execution).toEqual({ mode: "js-handler", nativeGesture: false });
+  });
+
   /**
    * The defect: candidates were collected with a hard-coded limit of 5
    * while `index` was unbounded, then clamped with Math.min, and the

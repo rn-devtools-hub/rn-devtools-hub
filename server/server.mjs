@@ -27,7 +27,7 @@ import { SESSION_TOOLS, handleSessionTool, openSession, appendEvents, pruneSessi
 import { VISUAL_TOOLS, writeBaseline, readBaseline, baselineTakenAt, decodePng, diffImages, explainDiff, changesSince } from "./visual.mjs";
 import { FLOW_TOOLS, createRecorder, startRecording, stopRecording, recordAct, buildFlow, needsRecordedVariable, renderFlowText, renderFlowMcp } from "./flow.mjs";
 import { HUBFLOW_TOOLS, durableFlowFromRecorded, listHubflowCatalog, proposeHubflowRepair, readHubflow, resolveHubflowArtifact, resolveHubflowPath, runHubflow, selectNativeFailureLogs, writeHubflow } from "./hubflow.mjs";
-import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry, describeCapabilities } from "./instrumentation.mjs";
+import { readInstrumentation, explainEmptyNetwork, explainEmptyRegistry, describeCapabilities, assertionCapture } from "./instrumentation.mjs";
 import { declaredError, errorEnvelope } from "./errors.mjs";
 import { STORE_SHOT_TOOL, captureStoreScreenshots } from "./storeshots.mjs";
 import { createToolLog, recordToolCall, summarizeTools, readEmptiness, readScreenshotPolicy, screenshotAdvice, PIXEL_TOOLS } from "./tools.mjs";
@@ -769,7 +769,7 @@ const MCP_TOOLS = [
   },
   {
     name: "ui_act",
-    description: "Taps, types, submits, focuses or scrolls a visible element through React props. Ambiguous or invalid targets are refused.",
+    description: "Acts inside the app runtime. tap and longPress invoke JS handlers, bypassing native hit testing; execution reports the mode and nativeGesture:false. Use tap_native or swipe_native to test physical reachability or gestures. Ambiguous or invalid targets are refused.",
     inputSchema: { type: "object", required: ["action", "by", "value"], properties: { deviceId: { type: "string" }, action: { type: "string", enum: ["tap", "longPress", "type", "clear", "submit", "scrollTo", "scrollToEnd", "scrollBy", "focus", "blur"] }, by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" }, text: { type: "string" }, recordAs: { type: "string", pattern: "^[A-Z][A-Z0-9_]{1,63}$", description: "For type actions, send text live but persist only ${NAME} in recordings" }, clear: { type: "boolean" }, index: { type: "integer", minimum: 0 }, x: { type: "number" }, y: { type: "number" }, dx: { type: "number", description: "action:scrollBy, horizontal distance in points from the current offset" }, dy: { type: "number", description: "action:scrollBy, vertical distance in points from the current offset (positive scrolls down)" }, within: { type: "object", properties: { by: { type: "string", enum: ["testID", "text", "label", "placeholder", "type", "role"] }, value: { type: "string" }, name: { type: "string" } }, required: ["by", "value"], additionalProperties: false }, includeHidden: { type: "boolean" } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
@@ -781,8 +781,8 @@ const MCP_TOOLS = [
   },
   {
     name: "wait_for_event",
-    description: "Blocks until the device emits a matching event, or until timeoutMs. type is a substring of the event type (e.g. 'screen.ready', 'network.'), payloadContains a substring of the JSON payload. Replaces sleeps after a reload, a tap or a request.",
-    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, type: { type: "string" }, payloadContains: { type: "string" }, timeoutMs: { type: "integer", minimum: 500, maximum: 120000 } }, additionalProperties: false },
+    description: "Waits for a matching event. With since, first checks retained events after that cursor, so events emitted during the action are not missed. Without since, waits for future events only. type and payloadContains are substrings. Use assert network_response to check HTTP method and status.",
+    inputSchema: { type: "object", properties: { deviceId: { type: "string" }, type: { type: "string" }, payloadContains: { type: "string" }, since: { type: "integer", minimum: 0 }, timeoutMs: { type: "integer", minimum: 500, maximum: 120000 } }, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   PROJECT_TOOL,
@@ -1092,6 +1092,7 @@ const handleMcpTool = async (name, args = {}) => {
         flowPath: args.path,
         runId: `${new Date().toISOString().replace(/[:.]/g, "-")}-${String(deviceId).replace(/[^a-z0-9_-]/gi, "-")}`,
         invoke: (tool, toolArgs) => handleMcpTool(tool, { ...resolveFlowVariables(toolArgs), deviceId }),
+        getCursor: () => device.lastSeq ?? 0,
         onProgress: (run) => {
           activeFlowRuns.set(runKey, run);
           broadcastToDashboards({ kind: "flow.progress", path: args.path, run });
@@ -1288,8 +1289,8 @@ const handleMcpTool = async (name, args = {}) => {
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
     }
-    // The cursor is read BEFORE the action: everything after it is a
-    // consequence of the action, which is the whole pairing rule
+    // The cursor is read before acting. Following events are temporally
+    // associated with the action; background work may also emit events.
     const cursorBefore = device.lastSeq ?? 0;
     const response = await sendDeviceCommand(deviceId, command, payload);
     if (response.error) throw new Error(response.error);
@@ -1415,12 +1416,18 @@ const handleMcpTool = async (name, args = {}) => {
     }
     const flow = buildFlow(recorder, device.history);
     if (args.format === "text") return renderFlowText(flow);
-    if (args.format === "mcp") return { name: flow.name, clean: flow.clean, calls: renderFlowMcp(flow) };
+    if (args.format === "mcp") return {
+      name: flow.name, clean: flow.clean, attribution: "temporal", calls: renderFlowMcp(flow),
+      replayNote: "Before each action, read get_events_since and pass its cursor as since to subsequent event expectations. run_flow scopes these automatically. Review background events before adopting this recording as a test.",
+    };
     return flow;
   }
   if (name === "assert") {
     return runAssert(args, {
       history: () => device.history,
+      capture: async (kind) => assertionCapture(await readInstrumentation(
+        (command, payload) => sendDeviceCommand(deviceId, command, payload)
+      ), kind),
       queryUi: async (selector) => {
         const response = await sendDeviceCommand(deviceId, "ui.query", selector);
         if (response.error) throw new Error(response.error);
@@ -1446,6 +1453,7 @@ const handleMcpTool = async (name, args = {}) => {
     const payloadPattern = args.payloadContains ? String(args.payloadContains) : null;
     if (!typePattern && !payloadPattern) throw new Error("Pass at least type or payloadContains");
     const match = (event) => {
+      if (Number.isInteger(args.since) && Number(event.seq ?? 0) <= args.since) return false;
       if (typePattern && !String(event.type).includes(typePattern)) return false;
       if (payloadPattern) {
         try {
@@ -1455,6 +1463,13 @@ const handleMcpTool = async (name, args = {}) => {
       return true;
     };
     return await new Promise((resolve) => {
+      if (Number.isInteger(args.since)) {
+        const observed = device.history.find(match);
+        if (observed) {
+          resolve({ timedOut: false, cursor: device.lastSeq ?? 0, event: observed });
+          return;
+        }
+      }
       const waiter = {
         deviceId,
         match,

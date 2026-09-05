@@ -30,6 +30,21 @@ guesses and one that knows.
 
 ## Before anything else
 
+Before starting each testing or debugging task, announce the project and a
+clickable dashboard link in the user's language, then continue immediately.
+For example: "Project X: [watch the tests](<dashboard.url>). I am starting
+verification."
+
+Use the exact `dashboard.projectName` and `dashboard.url` provided by the hub.
+They are supplied in MCP initialization instructions and in `list_devices`,
+`get_project_context` and `session_start` results. If the link is not yet in
+context, call `list_devices` first; it works even before the app connects.
+Never guess port 8973 or omit the token. Announce once per task and again if
+the project or URL changes. Do not wait for the user to open the link or ask
+for permission to continue. Keep the authenticated local link in the chat,
+not in committed files or public reports. If an older hub returns no link,
+say it is unavailable instead of inventing one.
+
 If the app behaves impossibly (a library is missing, a prop does nothing, a
 feature that worked is gone), call `get_project_context` **first**. It
 returns what the project declares, what the app actually runs, and the

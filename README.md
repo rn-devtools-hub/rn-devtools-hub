@@ -97,6 +97,12 @@ to give the agent something to talk to.
 Any client that speaks only stdio uses `npx rn-devtools-hub mcp`, which
 bridges to the hub and starts it on demand.
 
+When a testing or debugging task starts, the agent is instructed to announce
+the project and its clickable dashboard URL, then continue automatically.
+The hub supplies the actual bound port and current token, including when a
+second project uses a fallback port. The link is also available in the
+`dashboard` field of `list_devices`, `get_project_context` and `session_start`.
+
 ## Screenshots
 
 <p align="center">
